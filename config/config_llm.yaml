@@ -1,8 +1,8 @@
-preferred_endpoint: azure_openai
+preferred_endpoint: openai
 
 endpoints:
   anthropic:
-    api_key_env: ANTHROPIC_API_KEY
+    api_key_env: NLWEB_ANTHROPIC_API_KEY
     llm_type: anthropic
     models:
       high: claude-3-7-sonnet-latest
@@ -37,8 +37,10 @@ endpoints:
     api_key_env: HF_TOKEN
     llm_type: huggingface
     models:
-      high: Qwen/Qwen2.5-72B-Instruct
-      low: Qwen/Qwen2.5-Coder-7B-Instruct
+      high: openai/gpt-oss-20b
+      low: openai/gpt-oss-20b
+    provider: fireworks-ai
+
 
   inception:
     api_key_env: INCEPTION_API_KEY
@@ -62,8 +64,8 @@ endpoints:
     api_endpoint_env: OPENAI_ENDPOINT
     llm_type: openai
     models:
-      high: gpt-4.1
-      low: gpt-4.1-mini
+      high: gpt-4.1-mini
+      low: gpt-4o-mini
 
   snowflake:
     api_key_env: SNOWFLAKE_PAT

@@ -132,8 +132,10 @@ class SummarizeResults(PromptRunner):
         super().__init__(handler)
 
     async def do(self):
-        self.handler.final_ranked_answers = self.handler.final_ranked_answers[:3]
-        response = await self.run_prompt(self.SUMMARIZE_RESULTS_PROMPT_NAME, timeout=20)
+        # Use ALL the final ranked answers that are shown in list view
+        # Don't limit to 3 - use the same results shown to the user
+        # self.handler.final_ranked_answers = self.handler.final_ranked_answers[:3]  # OLD: only used 3
+        response = await self.run_prompt(self.SUMMARIZE_RESULTS_PROMPT_NAME, timeout=20, max_length=1024)
         if (not response):
             return
         self.handler.summary = response["summary"]

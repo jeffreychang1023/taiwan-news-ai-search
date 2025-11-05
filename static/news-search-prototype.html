@@ -1,0 +1,2359 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>台灣新聞 AI 搜尋引擎</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft JhengHei', sans-serif;
+            background: #f5f5f5;
+            color: #1a1a1a;
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 24px;
+        }
+
+        /* Header */
+        header {
+            background: white;
+            border-bottom: 1px solid #e5e5e5;
+            padding: 16px 0;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .header-content {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 20px;
+            font-weight: 700;
+            color: #2563eb;
+        }
+
+        .my-searches {
+            color: #666;
+            text-decoration: none;
+            font-size: 14px;
+            padding: 8px 16px;
+            border-radius: 6px;
+            transition: all 0.2s;
+        }
+
+        .my-searches:hover {
+            background: #f5f5f5;
+            color: #1a1a1a;
+        }
+
+        .btn-new-thread {
+            background: white;
+            border: 1px solid #e5e5e5;
+            color: #666;
+            font-size: 14px;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .btn-new-thread:hover {
+            border-color: #2563eb;
+            color: #2563eb;
+        }
+
+        /* Mode Toggle Switch */
+        .mode-toggle {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            background: white;
+            padding: 6px 12px;
+            border-radius: 8px;
+            border: 1px solid #e5e5e5;
+        }
+
+        .mode-toggle-label {
+            font-size: 13px;
+            color: #666;
+            font-weight: 500;
+        }
+
+        .toggle-switch {
+            position: relative;
+            width: 44px;
+            height: 24px;
+            background: #e5e5e5;
+            border-radius: 12px;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+
+        .toggle-switch.active {
+            background: #2563eb;
+        }
+
+        .toggle-slider {
+            position: absolute;
+            top: 2px;
+            left: 2px;
+            width: 20px;
+            height: 20px;
+            background: white;
+            border-radius: 50%;
+            transition: transform 0.3s;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+
+        .toggle-switch.active .toggle-slider {
+            transform: translateX(20px);
+        }
+
+        /* Main Content */
+        main {
+            min-height: calc(100vh - 200px);
+            padding: 48px 0;
+        }
+
+        /* Initial State */
+        .initial-state {
+            max-width: 800px;
+            margin: 120px auto 0;
+            text-align: center;
+        }
+
+        .initial-state h1 {
+            font-size: 32px;
+            margin-bottom: 16px;
+            color: #1a1a1a;
+        }
+
+        .initial-state p {
+            font-size: 16px;
+            color: #666;
+            margin-bottom: 48px;
+        }
+
+        /* Search Input */
+        .search-container {
+            max-width: 800px;
+            margin: 0 auto 32px;
+        }
+
+        .search-box {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+            padding: 16px;
+            transition: all 0.3s;
+        }
+
+        .search-box:focus-within {
+            box-shadow: 0 4px 16px rgba(37,99,235,0.15);
+        }
+
+        .search-input {
+            width: 100%;
+            border: none;
+            outline: none;
+            font-size: 16px;
+            resize: none;
+            min-height: 80px;
+            font-family: inherit;
+        }
+
+        .search-input::placeholder {
+            color: #999;
+        }
+
+        .search-actions {
+            display: flex;
+            justify-content: flex-end;
+            margin-top: 12px;
+        }
+
+        .btn-search {
+            background: #2563eb;
+            color: white;
+            border: none;
+            padding: 10px 24px;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-search:hover {
+            background: #1d4ed8;
+        }
+
+        .btn-search:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        /* Memory Notification */
+        .memory-notification {
+            background: linear-gradient(135deg, #e8f4f8 0%, #d4e9f2 100%);
+            border-left: 4px solid #2563eb;
+            padding: 16px 20px;
+            border-radius: 8px;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            box-shadow: 0 2px 8px rgba(37, 99, 235, 0.1);
+            transition: opacity 0.3s ease;
+        }
+
+        .memory-icon {
+            font-size: 24px;
+        }
+
+        .memory-text {
+            color: #1a1a1a;
+            font-weight: 500;
+            font-size: 15px;
+            flex: 1;
+        }
+
+        /* Chat UI for Free Conversation Mode */
+        .chat-container {
+            display: none;
+            background: white;
+            border-radius: 12px;
+            padding: 24px;
+            margin-bottom: 24px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        }
+
+        .chat-container.active {
+            display: block;
+        }
+
+        .chat-messages {
+            max-height: 500px;
+            overflow-y: auto;
+            margin-bottom: 20px;
+            padding: 16px;
+            background: #f9fafb;
+            border-radius: 8px;
+        }
+
+        .chat-message {
+            margin-bottom: 16px;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .chat-message.user {
+            align-items: flex-end;
+        }
+
+        .chat-message.assistant {
+            align-items: flex-start;
+        }
+
+        .chat-message-header {
+            font-size: 12px;
+            color: #666;
+            margin-bottom: 4px;
+            font-weight: 600;
+        }
+
+        .chat-message-bubble {
+            max-width: 80%;
+            padding: 12px 16px;
+            border-radius: 12px;
+            line-height: 1.6;
+        }
+
+        .chat-message.user .chat-message-bubble {
+            background: #2563eb;
+            color: white;
+        }
+
+        .chat-message.assistant .chat-message-bubble {
+            background: white;
+            color: #1a1a1a;
+            border: 1px solid #e5e5e5;
+        }
+
+        .chat-reference-info {
+            font-size: 11px;
+            color: #999;
+            margin-top: 8px;
+            padding: 8px 12px;
+            background: #f0f9ff;
+            border-radius: 6px;
+            border-left: 3px solid #2563eb;
+        }
+
+        .chat-input-container {
+            margin-top: 16px;
+            border-top: 1px solid #e5e5e5;
+            padding-top: 16px;
+        }
+
+        .chat-loading {
+            display: none;
+            text-align: center;
+            padding: 16px;
+            color: #666;
+        }
+
+        .chat-loading.active {
+            display: block;
+        }
+
+        .chat-loading-spinner {
+            width: 24px;
+            height: 24px;
+            border: 3px solid #e5e5e5;
+            border-top-color: #2563eb;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 8px;
+        }
+
+        /* Conversation History */
+        .conversation-history {
+            background: white;
+            border-radius: 12px;
+            padding: 20px 24px;
+            margin-bottom: 24px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        }
+
+        .conversation-history-header {
+            font-size: 14px;
+            font-weight: 700;
+            color: #666;
+            margin-bottom: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .conversation-history-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .conversation-history-item {
+            display: flex;
+            gap: 8px;
+            padding: 8px 12px;
+            background: #f9fafb;
+            border-radius: 6px;
+            font-size: 14px;
+            line-height: 1.5;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .conversation-history-item:hover {
+            background: #e8f4f8;
+            border-left: 3px solid #2563eb;
+            padding-left: 9px;
+        }
+
+        .conversation-number {
+            color: #2563eb;
+            font-weight: 600;
+            min-width: 24px;
+        }
+
+        .conversation-text {
+            color: #333;
+            flex: 1;
+        }
+
+        /* Loading State */
+        .loading-state {
+            text-align: center;
+            padding: 48px 0;
+            display: none;
+        }
+
+        .loading-state.active {
+            display: block;
+        }
+
+        .loading-text {
+            font-size: 18px;
+            color: #666;
+            margin-top: 16px;
+        }
+
+        .loading-spinner {
+            width: 48px;
+            height: 48px;
+            border: 4px solid #e5e5e5;
+            border-top-color: #2563eb;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Results Section */
+        .results-section {
+            display: none;
+        }
+
+        .results-section.active {
+            display: block;
+        }
+
+        /* AI Summary */
+        .ai-summary {
+            background: white;
+            border-radius: 12px;
+            padding: 24px;
+            margin-bottom: 32px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        }
+
+        .ai-summary-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 18px;
+            font-weight: 700;
+            margin-bottom: 20px;
+            color: #2563eb;
+        }
+
+        .summary-section {
+            margin-bottom: 20px;
+        }
+
+        .summary-section:last-of-type {
+            margin-bottom: 0;
+        }
+
+        .summary-title {
+            font-weight: 700;
+            margin-bottom: 8px;
+            color: #1a1a1a;
+        }
+
+        .summary-content {
+            color: #333;
+            line-height: 1.7;
+        }
+
+        .timeline-item {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+
+        .timeline-item:last-child {
+            margin-bottom: 0;
+        }
+
+        .entity-item {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+
+        .related-link {
+            color: #2563eb;
+            text-decoration: none;
+            display: inline-block;
+            margin-right: 16px;
+            margin-bottom: 8px;
+        }
+
+        .related-link:hover {
+            text-decoration: underline;
+        }
+
+        .summary-footer {
+            margin-top: 20px;
+            padding-top: 16px;
+            border-top: 1px solid #e5e5e5;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .source-info {
+            font-size: 14px;
+            color: #666;
+        }
+
+        .feedback-buttons {
+            display: flex;
+            gap: 16px;
+        }
+
+        .btn-feedback {
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-size: 14px;
+            color: #666;
+            padding: 4px 8px;
+            border-radius: 4px;
+            transition: all 0.2s;
+        }
+
+        .btn-feedback:hover {
+            background: #f5f5f5;
+        }
+
+        /* View Tabs */
+        .view-tabs {
+            display: flex;
+            gap: 16px;
+            margin-bottom: 16px;
+            border-bottom: 2px solid #e5e5e5;
+        }
+
+        .tab {
+            padding: 12px 24px;
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 600;
+            color: #666;
+            position: relative;
+            transition: all 0.2s;
+        }
+
+        .tab.active {
+            color: #2563eb;
+        }
+
+        .tab.active::after {
+            content: '';
+            position: absolute;
+            bottom: -2px;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: #2563eb;
+        }
+
+        /* Summary Toggle */
+        .summary-toggle {
+            display: none;
+            margin-bottom: 24px;
+        }
+
+        .summary-toggle.active {
+            display: block;
+        }
+
+        .btn-toggle-summary {
+            background: white;
+            border: 1px solid #e5e5e5;
+            padding: 10px 20px;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 600;
+            color: #666;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-toggle-summary:hover {
+            border-color: #2563eb;
+            color: #2563eb;
+        }
+
+        /* Summary Loading */
+        .summary-loading {
+            display: none;
+            text-align: center;
+            padding: 24px;
+            background: white;
+            border-radius: 12px;
+            margin-bottom: 16px;
+            color: #666;
+        }
+
+        .summary-loading.active {
+            display: block;
+        }
+
+        /* News Cards */
+        .news-list {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .news-card {
+            background: white;
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+            transition: all 0.2s;
+        }
+
+        .news-card:hover {
+            box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+        }
+
+        .news-title {
+            font-size: 18px;
+            font-weight: 700;
+            margin-bottom: 12px;
+            line-height: 1.4;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+
+        .news-meta {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            font-size: 14px;
+            color: #666;
+            margin-bottom: 12px;
+        }
+
+        .relevance {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .stars {
+            color: #fbbf24;
+        }
+
+        .news-excerpt {
+            color: #333;
+            line-height: 1.7;
+            margin-bottom: 16px;
+            display: none;
+        }
+
+        .news-excerpt.visible {
+            display: block;
+        }
+
+        .btn-read-more {
+            color: #2563eb;
+            text-decoration: none;
+            font-weight: 600;
+            font-size: 14px;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .btn-read-more:hover {
+            text-decoration: underline;
+        }
+
+        /* Timeline View */
+        .timeline-view {
+            display: none;
+        }
+
+        .timeline-view.active {
+            display: block;
+        }
+
+        .timeline-date {
+            position: relative;
+            padding-left: 40px;
+            margin-bottom: 32px;
+        }
+
+        .timeline-date::before {
+            content: '';
+            position: absolute;
+            left: 12px;
+            top: 12px;
+            bottom: -32px;
+            width: 2px;
+            background: rgba(37,99,235,0.2);
+        }
+
+        .timeline-date:last-child::before {
+            display: none;
+        }
+
+        .timeline-dot {
+            position: absolute;
+            left: 4px;
+            top: 8px;
+            width: 12px;
+            height: 12px;
+            background: #2563eb;
+            border-radius: 50%;
+            border: 3px solid white;
+            box-shadow: 0 0 0 2px #2563eb;
+        }
+
+        .date-label {
+            font-size: 16px;
+            font-weight: 700;
+            color: #2563eb;
+            margin-bottom: 16px;
+        }
+
+        /* Bottom Actions */
+        .bottom-actions {
+            display: flex;
+            justify-content: center;
+            gap: 16px;
+            margin-top: 48px;
+            padding: 24px 0;
+        }
+
+        .btn-action {
+            padding: 12px 24px;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-save {
+            background: white;
+            border: 1px solid #e5e5e5;
+            color: #1a1a1a;
+        }
+
+        .btn-save:hover {
+            border-color: #2563eb;
+            color: #2563eb;
+        }
+
+        .btn-share {
+            background: #2563eb;
+            border: none;
+            color: white;
+        }
+
+        .btn-share:hover {
+            background: #1d4ed8;
+        }
+
+        /* Modal */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.5);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal-overlay.active {
+            display: flex;
+        }
+
+        .modal {
+            background: white;
+            border-radius: 12px;
+            padding: 32px;
+            max-width: 500px;
+            width: 90%;
+        }
+
+        .modal.modal-large {
+            max-width: 700px;
+        }
+
+        /* Saved Sessions List */
+        .saved-sessions-list {
+            max-height: 400px;
+            overflow-y: auto;
+            margin-bottom: 24px;
+        }
+
+        .saved-session-item {
+            padding: 16px;
+            border: 1px solid #e5e5e5;
+            border-radius: 8px;
+            margin-bottom: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .saved-session-item:hover {
+            border-color: #2563eb;
+            background: #f9fafb;
+        }
+
+        .saved-session-title {
+            font-weight: 600;
+            color: #1a1a1a;
+            margin-bottom: 8px;
+        }
+
+        .saved-session-meta {
+            font-size: 13px;
+            color: #666;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .saved-session-queries {
+            font-size: 12px;
+            color: #999;
+        }
+
+        .empty-sessions {
+            text-align: center;
+            padding: 48px 24px;
+            color: #666;
+        }
+
+        .modal-header {
+            font-size: 20px;
+            font-weight: 700;
+            margin-bottom: 24px;
+            text-align: center;
+        }
+
+        .modal-content {
+            margin-bottom: 24px;
+        }
+
+        .modal-description {
+            color: #666;
+            margin-bottom: 16px;
+        }
+
+        .copy-options {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .btn-copy {
+            padding: 12px 16px;
+            border: 1px solid #e5e5e5;
+            border-radius: 8px;
+            background: white;
+            text-align: left;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-size: 14px;
+        }
+
+        .btn-copy:hover {
+            border-color: #2563eb;
+            background: #eff6ff;
+        }
+
+        .modal-tip {
+            background: #eff6ff;
+            padding: 12px;
+            border-radius: 8px;
+            font-size: 14px;
+            color: #666;
+            margin-top: 16px;
+        }
+
+        .modal-actions {
+            display: flex;
+            justify-content: center;
+        }
+
+        .btn-close-modal {
+            padding: 10px 32px;
+            border: 1px solid #e5e5e5;
+            border-radius: 6px;
+            background: white;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+
+        .btn-close-modal:hover {
+            background: #f5f5f5;
+        }
+
+        /* Styling for source links in generated answers */
+        .source-link {
+            color: #3b82f6;
+            /* Blue color for links */
+            text-decoration: none;
+            font-weight: 500;
+            padding: 2px 6px;
+            border-radius: 4px;
+            transition: all 0.2s ease;
+            white-space: nowrap;
+        }
+
+        .source-link:hover {
+            color: #2563eb;
+            /* Darker blue on hover */
+            background-color: #dbeafe;
+            /* Light blue background on hover */
+            text-decoration: underline;
+        }
+
+        /* Ensure summary content has proper spacing for line breaks */
+        .summary-content {
+            line-height: 1.8;
+            /* Better readability */
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="container">
+            <div class="header-content">
+                <div class="logo">
+                    🔍 台灣新聞搜尋
+                </div>
+                <div style="display: flex; gap: 12px; align-items: center;">
+                    <button class="btn-new-thread" id="btnNewThread">
+                        <span>🔄</span>
+                        <span>新對話</span>
+                    </button>
+                    <button class="my-searches" id="btnMySearches" style="border: none; background: none;">我的搜尋</button>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <main>
+        <div class="container">
+            <!-- Initial State -->
+            <div class="initial-state" id="initialState">
+                <h1>用自然語言搜尋最新新聞</h1>
+                <p>隨時掌握事實的全貌，讓 AI 替您整理多家媒體的觀點</p>
+            </div>
+
+            <!-- Search Container -->
+            <div class="search-container" id="searchContainer">
+                <div class="search-box">
+                    <textarea
+                        class="search-input"
+                        id="searchInput"
+                        placeholder="問我任何新聞相關問題，例如：最近台灣資安政策有什麼進展？"
+                    ></textarea>
+                    <div class="search-actions">
+                        <div class="mode-toggle" id="modeToggle">
+                            <span class="mode-toggle-label">自由對話</span>
+                            <div class="toggle-switch" id="toggleSwitch">
+                                <div class="toggle-slider"></div>
+                            </div>
+                        </div>
+                        <button class="btn-search" id="btnSearch">搜尋</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Loading State -->
+            <div class="loading-state" id="loadingState">
+                <div class="loading-spinner"></div>
+                <div class="loading-text">🤖 正在分析您的問題...</div>
+            </div>
+
+            <!-- Results Section -->
+            <div class="results-section" id="resultsSection">
+                <!-- Chat Container for Free Conversation Mode -->
+                <div class="chat-container" id="chatContainer">
+                    <div class="chat-messages" id="chatMessages">
+                        <!-- Chat messages will be populated dynamically -->
+                    </div>
+                    <div class="chat-loading" id="chatLoading">
+                        <div class="chat-loading-spinner"></div>
+                        <div>AI 思考中...</div>
+                    </div>
+                    <div class="chat-input-container" id="chatInputContainer" style="display: none;">
+                        <!-- Input will be moved here in chat mode -->
+                    </div>
+                </div>
+
+                <!-- Conversation History -->
+                <div class="conversation-history" id="conversationHistory" style="display: none;">
+                    <div class="conversation-history-header">對話記錄</div>
+                    <div class="conversation-history-list" id="conversationHistoryList">
+                        <!-- History items will be populated dynamically -->
+                    </div>
+                </div>
+
+                <!-- AI Summary -->
+                <div class="ai-summary" id="aiSummarySection" style="display: none;">
+                    <div class="ai-summary-header">
+                        🤖 AI 生成摘要
+                    </div>
+                    <div id="aiSummaryContent">
+                        <!-- Summary will be populated dynamically from API -->
+                    </div>
+                </div>
+
+                <!-- View Tabs -->
+                <div class="view-tabs">
+                    <button class="tab active" data-view="list">列表視圖</button>
+                    <button class="tab" data-view="timeline">時間軸視圖</button>
+                </div>
+
+                <!-- Summary Toggle (for both list and timeline views) -->
+                <div class="summary-toggle active" id="summaryToggle">
+                    <button class="btn-toggle-summary" id="btnToggleSummary">📝 展開摘要</button>
+                </div>
+
+                <!-- Summary Loading -->
+                <div class="summary-loading" id="summaryLoading">
+                    🤖 摘要生成中...
+                </div>
+
+                <!-- List View -->
+                <div class="news-list" id="listView">
+                    <!-- News cards will be populated dynamically from API -->
+                </div>
+
+                <!-- Timeline View -->
+                <div class="timeline-view" id="timelineView">
+                    <!-- Timeline items will be populated dynamically from API -->
+                </div>
+
+                <!-- Bottom Actions -->
+                <div class="bottom-actions">
+                    <button class="btn-action btn-save">💾 儲存搜尋</button>
+                    <button class="btn-action btn-share" id="btnShare">🔗 分享結果</button>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Share Modal -->
+    <div class="modal-overlay" id="modalOverlay">
+        <div class="modal">
+            <div class="modal-header">🔗 分享這個搜尋結果</div>
+            <div class="modal-content">
+                <div class="modal-description">將搜尋結果複製到：</div>
+                <div class="copy-options">
+                    <button class="btn-copy" id="btnCopyPlainText">📋 複製摘要文字</button>
+                    <button class="btn-copy" id="btnCopyChatGPT">🤖 複製並開啟 ChatGPT</button>
+                    <button class="btn-copy" id="btnCopyClaude">🧑‍💻 複製並開啟 Claude</button>
+                    <button class="btn-copy" id="btnCopyGemini">💎 複製並開啟 Gemini</button>
+                    <button class="btn-copy" id="btnCopyNotebookLM">📓 複製並開啟 NotebookLM</button>
+                </div>
+                <div class="modal-tip">
+                    💡 內容已包含搜尋結果和自由對話紀錄
+                </div>
+            </div>
+            <div class="modal-actions">
+                <button class="btn-close-modal" id="btnCloseModal">關閉</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- My Searches Modal -->
+    <div class="modal-overlay" id="mySearchesModal">
+        <div class="modal modal-large">
+            <div class="modal-header">📚 我的搜尋</div>
+            <div class="modal-content">
+                <div class="saved-sessions-list" id="savedSessionsList">
+                    <!-- Saved sessions will be populated dynamically -->
+                </div>
+            </div>
+            <div class="modal-actions">
+                <button class="btn-close-modal" id="btnCloseMySearches">關閉</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const searchInput = document.getElementById('searchInput');
+        const btnSearch = document.getElementById('btnSearch');
+        const initialState = document.getElementById('initialState');
+        const loadingState = document.getElementById('loadingState');
+        const resultsSection = document.getElementById('resultsSection');
+        const listView = document.getElementById('listView');
+        const timelineView = document.getElementById('timelineView');
+        const btnShare = document.getElementById('btnShare');
+        const modalOverlay = document.getElementById('modalOverlay');
+        const btnCloseModal = document.getElementById('btnCloseModal');
+        const summaryToggle = document.getElementById('summaryToggle');
+        const btnToggleSummary = document.getElementById('btnToggleSummary');
+        const summaryLoading = document.getElementById('summaryLoading');
+        const btnMySearches = document.getElementById('btnMySearches');
+        const mySearchesModal = document.getElementById('mySearchesModal');
+        const btnCloseMySearches = document.getElementById('btnCloseMySearches');
+        const savedSessionsList = document.getElementById('savedSessionsList');
+        const modeToggle = document.getElementById('modeToggle');
+        const toggleSwitch = document.getElementById('toggleSwitch');
+        const chatContainer = document.getElementById('chatContainer');
+        const chatMessagesEl = document.getElementById('chatMessages');
+        const searchContainer = document.getElementById('searchContainer');
+        const chatInputContainer = document.getElementById('chatInputContainer');
+        const chatLoading = document.getElementById('chatLoading');
+
+        let summaryExpanded = false;
+        let summaryGenerated = false;
+
+        // Conversation history tracking
+        let conversationHistory = [];
+
+        // Store complete session data for each query (query, answer, articles)
+        let sessionHistory = [];
+
+        // Store all saved sessions (when user clicks "新對話")
+        // Load from localStorage on startup
+        let savedSessions = [];
+        try {
+            const stored = localStorage.getItem('taiwanNewsSavedSessions');
+            if (stored) {
+                savedSessions = JSON.parse(stored);
+                console.log(`Loaded ${savedSessions.length} saved sessions from localStorage`);
+            }
+        } catch (e) {
+            console.error('Failed to load saved sessions from localStorage:', e);
+        }
+
+        // Mode tracking: 'search' or 'chat'
+        let currentMode = 'search';
+
+        // Chat history for free conversation mode
+        let chatHistory = [];
+
+        // Accumulated articles from ALL searches in this conversation
+        let accumulatedArticles = [];
+
+        // Mode Toggle handler
+        toggleSwitch.addEventListener('click', () => {
+            if (currentMode === 'search') {
+                // Switch to chat mode
+                currentMode = 'chat';
+                toggleSwitch.classList.add('active');
+                btnSearch.textContent = '發送';
+                searchInput.placeholder = '繼續對話...';
+
+                // Show results section and chat container (important for homepage without search results)
+                resultsSection.classList.add('active');
+                chatContainer.classList.add('active');
+
+                // Move search container into chat input area
+                chatInputContainer.appendChild(searchContainer);
+                chatInputContainer.style.display = 'block';
+
+                // Keep news results AND view tabs visible
+                // Don't hide summary toggle - keep it visible
+                // document.getElementById('summaryToggle').style.display = 'none';
+            } else {
+                // Switch back to search mode
+                currentMode = 'search';
+                toggleSwitch.classList.remove('active');
+                btnSearch.textContent = '搜尋';
+                searchInput.placeholder = '問我任何新聞相關問題，例如：最近台灣資安政策有什麼進展？';
+
+                // Move search container back to original position
+                const mainContainer = document.querySelector('main .container');
+                const loadingState = document.getElementById('loadingState');
+                mainContainer.insertBefore(searchContainer, loadingState);
+                chatInputContainer.style.display = 'none';
+
+                // Hide chat container
+                chatContainer.classList.remove('active');
+
+                // Restore last search results if available
+                if (sessionHistory.length > 0) {
+                    const lastSession = sessionHistory[sessionHistory.length - 1];
+                    populateResultsFromAPI(lastSession.data, lastSession.query);
+                }
+            }
+        });
+
+        // New Thread button handler
+        const btnNewThread = document.getElementById('btnNewThread');
+        btnNewThread.addEventListener('click', () => {
+            // Save current session if there's any data
+            if (sessionHistory.length > 0) {
+                const currentSession = {
+                    id: Date.now(),
+                    title: conversationHistory[0] || '未命名搜尋', // Use first query as title
+                    conversationHistory: [...conversationHistory],
+                    sessionHistory: [...sessionHistory],
+                    chatHistory: [...chatHistory], // Save chat messages
+                    accumulatedArticles: [...accumulatedArticles], // Save accumulated articles
+                    createdAt: Date.now()
+                };
+                savedSessions.push(currentSession);
+                console.log('Session saved:', currentSession);
+
+                // Persist to localStorage
+                try {
+                    localStorage.setItem('taiwanNewsSavedSessions', JSON.stringify(savedSessions));
+                    console.log('Saved sessions persisted to localStorage');
+                } catch (e) {
+                    console.error('Failed to save sessions to localStorage:', e);
+                }
+            }
+
+            // Clear conversation history and session data
+            conversationHistory = [];
+            sessionHistory = [];
+            accumulatedArticles = []; // Clear accumulated articles
+            chatHistory = []; // Clear chat history
+
+            // Reset free conversation mode to search mode
+            if (currentMode === 'chat') {
+                currentMode = 'search';
+                toggleSwitch.classList.remove('active');
+                btnSearch.textContent = '搜尋';
+                searchInput.placeholder = '搜尋台灣新聞...';
+
+                // Move search container back to original position
+                const mainContainer = document.querySelector('main .container');
+                const loadingStateEl = document.getElementById('loadingState');
+                mainContainer.insertBefore(searchContainer, loadingStateEl);
+                chatInputContainer.style.display = 'none';
+
+                // Hide and clear chat container
+                chatContainer.classList.remove('active');
+                chatMessagesEl.innerHTML = '';
+            }
+
+            // Reset UI to initial state
+            initialState.style.display = 'block';
+            resultsSection.classList.remove('active');
+            loadingState.classList.remove('active');
+
+            // Clear search input
+            searchInput.value = '';
+
+            // Update UI to reflect cleared history
+            renderConversationHistory();
+
+            // Visual feedback
+            const originalHTML = btnNewThread.innerHTML;
+            btnNewThread.innerHTML = '<span>✓</span><span>已儲存</span>';
+            btnNewThread.style.borderColor = '#059669';
+            btnNewThread.style.color = '#059669';
+
+            setTimeout(() => {
+                btnNewThread.innerHTML = originalHTML;
+                btnNewThread.style.borderColor = '';
+                btnNewThread.style.color = '';
+            }, 1500);
+        });
+
+        // Function to render conversation history
+        function renderConversationHistory() {
+            const historyContainer = document.getElementById('conversationHistory');
+            const historyList = document.getElementById('conversationHistoryList');
+
+            if (conversationHistory.length === 0) {
+                // Hide if no history
+                historyContainer.style.display = 'none';
+                return;
+            }
+
+            // Show and populate history
+            historyContainer.style.display = 'block';
+            historyList.innerHTML = '';
+
+            conversationHistory.forEach((query, index) => {
+                const historyItem = document.createElement('div');
+                historyItem.className = 'conversation-history-item';
+                historyItem.innerHTML = `
+                    <span class="conversation-number">${index + 1}.</span>
+                    <span class="conversation-text">${escapeHTML(query)}</span>
+                `;
+
+                // Add click handler to restore this session
+                historyItem.addEventListener('click', () => {
+                    restoreSession(index);
+                });
+
+                historyList.appendChild(historyItem);
+            });
+        }
+
+        // Function to restore a previous session
+        function restoreSession(sessionIndex) {
+            if (sessionIndex >= 0 && sessionIndex < sessionHistory.length) {
+                const session = sessionHistory[sessionIndex];
+                console.log('Restoring session:', session);
+
+                // Populate UI with the stored session data
+                populateResultsFromAPI(session.data, session.query);
+
+                // Show results section
+                resultsSection.classList.add('active');
+
+                // Scroll to results
+                resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+        }
+
+        // Function to handle streaming SSE requests
+        async function handleStreamingRequest(url, query) {
+            return new Promise((resolve, reject) => {
+                const eventSource = new EventSource(url);
+                let accumulatedData = {};
+                let memoryNotifications = [];
+
+                eventSource.onmessage = (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+                        console.log('SSE message received:', data);
+
+                        // Handle different message types
+                        switch(data.message_type) {
+                            case 'remember':
+                                // Memory request detected!
+                                if (data.item_to_remember) {
+                                    showMemoryNotification(data.item_to_remember);
+                                    memoryNotifications.push(data.item_to_remember);
+                                }
+                                break;
+
+                            case 'complete':
+                                // Stream complete, close connection
+                                console.log('Stream complete. Accumulated data:', accumulatedData);
+                                eventSource.close();
+                                resolve(accumulatedData);
+                                break;
+
+                            default:
+                                // Accumulate other data (nlws, etc.)
+                                console.log('Accumulating data:', data);
+                                Object.assign(accumulatedData, data);
+                                console.log('Accumulated so far:', accumulatedData);
+                                break;
+                        }
+                    } catch (e) {
+                        console.error('Error parsing SSE message:', e);
+                    }
+                };
+
+                eventSource.onerror = (error) => {
+                    console.error('SSE error:', error);
+                    eventSource.close();
+                    // Resolve with whatever we have so far
+                    resolve(accumulatedData);
+                };
+            });
+        }
+
+        // Function to show memory notification
+        function showMemoryNotification(itemToRemember) {
+            // Create notification element
+            const notification = document.createElement('div');
+            notification.className = 'memory-notification';
+            notification.innerHTML = `
+                <span class="memory-icon">💾</span>
+                <span class="memory-text">我會記住：「${escapeHTML(itemToRemember)}」</span>
+            `;
+
+            // Add to results section or create a notification area
+            let notificationArea = document.getElementById('memoryNotificationArea');
+            if (!notificationArea) {
+                notificationArea = document.createElement('div');
+                notificationArea.id = 'memoryNotificationArea';
+                notificationArea.style.cssText = 'margin-bottom: 20px;';
+                resultsSection.insertBefore(notificationArea, resultsSection.firstChild);
+            }
+
+            notificationArea.appendChild(notification);
+
+            // Auto-hide after 5 seconds with fade out
+            setTimeout(() => {
+                notification.style.opacity = '0';
+                setTimeout(() => notification.remove(), 300);
+            }, 5000);
+        }
+
+        // Function to populate UI from API response
+        function populateResultsFromAPI(data, query) {
+            // Get articles from response - prioritize content/results for summarize mode
+            const articles = data.content || data.results || (data.nlws && data.nlws.items) || [];
+
+            // Populate AI Summary section at the top
+            const aiSummarySection = document.getElementById('aiSummarySection');
+            const aiSummaryContent = document.getElementById('aiSummaryContent');
+
+            if (data.summary && data.summary.message) {
+                // We have a summary (from summarize mode)
+                aiSummaryContent.innerHTML = `
+                    <div class="summary-section">
+                        <div class="summary-content">${escapeHTML(data.summary.message)}</div>
+                    </div>
+                    <div class="summary-footer">
+                        <div class="source-info">⚠️ 資料來源：基於 ${articles.length} 則報導生成</div>
+                        <div class="feedback-buttons">
+                            <button class="btn-feedback">👍 有幫助</button>
+                            <button class="btn-feedback">👎 不準確</button>
+                        </div>
+                    </div>
+                `;
+                aiSummarySection.style.display = 'block';
+            } else if (data.nlws && data.nlws.answer) {
+                // We have an AI-generated answer (from generate mode)
+                // Convert markdown links to HTML and preserve <br> tags for proper rendering
+                const formattedAnswer = convertMarkdownToHtml(data.nlws.answer);
+                aiSummaryContent.innerHTML = `
+                    <div class="summary-section">
+                        <div class="summary-content">${formattedAnswer}</div>
+                    </div>
+                    <div class="summary-footer">
+                        <div class="source-info">⚠️ 資料來源：基於 ${articles.length} 則報導生成</div>
+                        <div class="feedback-buttons">
+                            <button class="btn-feedback">👍 有幫助</button>
+                            <button class="btn-feedback">👎 不準確</button>
+                        </div>
+                    </div>
+                `;
+                aiSummarySection.style.display = 'block';
+            } else {
+                aiSummarySection.style.display = 'none';
+            }
+
+            // Clear existing list view content
+            listView.innerHTML = '';
+            timelineView.innerHTML = '';
+
+            if (articles.length === 0) {
+                listView.innerHTML = '<div class="news-card"><div class="news-title">沒有找到相關文章</div></div>';
+                console.warn('No articles found in API response');
+                return;
+            }
+
+            // Group articles by date for timeline view
+            const articlesByDate = {};
+
+            // Populate news cards
+            articles.forEach((article, index) => {
+                const schema = article.schema_object || article;
+                // Score might be at article.score or article.metadata.score
+                let rawScore = article.score || article.metadata?.score || 0;
+
+                // If score is > 1, it's already a percentage (e.g., 85)
+                // If score is <= 1, it's a decimal (e.g., 0.85) and needs to be multiplied by 100
+                const relevancePercent = rawScore > 1 ? Math.round(rawScore) : Math.round(rawScore * 100);
+
+                // For star calculation, normalize to 0-1 range
+                const normalizedScore = rawScore > 1 ? rawScore / 100 : rawScore;
+                const stars = Math.min(5, Math.max(1, Math.round(normalizedScore * 5)));
+                const starsHTML = '★'.repeat(stars) + '☆'.repeat(5 - stars);
+
+                // Extract data with fallbacks
+                const title = schema.headline || schema.name || '無標題';
+
+                // Try multiple locations for publisher/source
+                let publisher = '未知來源';
+                if (schema.publisher?.name) {
+                    publisher = schema.publisher.name;
+                } else if (schema.publisher && typeof schema.publisher === 'string') {
+                    publisher = schema.publisher;
+                } else if (article.site) {
+                    // Use the site field if available (e.g., "ithome")
+                    publisher = article.site.charAt(0).toUpperCase() + article.site.slice(1); // Capitalize first letter
+                } else if (schema.author) {
+                    if (Array.isArray(schema.author) && schema.author.length > 0) {
+                        publisher = schema.author[0].name || schema.author[0];
+                    } else if (typeof schema.author === 'string') {
+                        publisher = schema.author;
+                    }
+                }
+
+                const datePublished = schema.datePublished || new Date().toISOString();
+                const date = new Date(datePublished).toISOString().split('T')[0];
+                const description = schema.description || article.description || '';
+                const url = schema.url || '#';
+
+                // Create card for list view
+                const cardHTML = `
+                    <div class="news-card">
+                        <div class="news-title">${escapeHTML(title)}</div>
+                        <div class="news-meta">
+                            <span>🏢 ${escapeHTML(publisher)}</span>
+                            <span>📅 ${date}</span>
+                            <div class="relevance">
+                                <span class="stars">${starsHTML}</span>
+                                <span>相關度 ${relevancePercent}%</span>
+                            </div>
+                        </div>
+                        ${description ? `<div class="news-excerpt">${escapeHTML(description)}</div>` : ''}
+                        <a href="${escapeHTML(url)}" class="btn-read-more" target="_blank">閱讀全文 →</a>
+                    </div>
+                `;
+
+                listView.innerHTML += cardHTML;
+
+                // Group by date for timeline view
+                if (!articlesByDate[date]) {
+                    articlesByDate[date] = [];
+                }
+                articlesByDate[date].push({
+                    title, publisher, description, url, starsHTML, relevancePercent
+                });
+            });
+
+            // Populate timeline view
+            const sortedDates = Object.keys(articlesByDate).sort().reverse();
+            sortedDates.forEach(date => {
+                const dateArticles = articlesByDate[date];
+                const timelineHTML = `
+                    <div class="timeline-date">
+                        <div class="timeline-dot"></div>
+                        <div class="date-label">${date}</div>
+                        ${dateArticles.map(art => `
+                            <div class="news-card">
+                                <div class="news-title">${escapeHTML(art.title)}</div>
+                                <div class="news-meta">
+                                    <span>🏢 ${escapeHTML(art.publisher)}</span>
+                                    <div class="relevance">
+                                        <span class="stars">${art.starsHTML}</span>
+                                        <span>相關度 ${art.relevancePercent}%</span>
+                                    </div>
+                                </div>
+                                ${art.description ? `<div class="news-excerpt">${escapeHTML(art.description)}</div>` : ''}
+                                <a href="${escapeHTML(art.url)}" class="btn-read-more" target="_blank">閱讀全文 →</a>
+                            </div>
+                        `).join('')}
+                    </div>
+                `;
+                timelineView.innerHTML += timelineHTML;
+            });
+        }
+
+        // Helper function to escape HTML
+        function escapeHTML(str) {
+            if (!str) return '';
+            const div = document.createElement('div');
+            div.textContent = str;
+            return div.innerHTML;
+        }
+
+        // Convert markdown-style links to HTML and preserve HTML line breaks
+        // Converts [來源](url) to clickable <a> tags while keeping <br> tags
+        function convertMarkdownToHtml(text) {
+            if (!text) return '';
+
+            // First escape any potentially dangerous HTML except <br> tags
+            let safe = text
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;");
+
+            // Restore <br> tags
+            safe = safe.replace(/&lt;br&gt;/g, "<br>");
+
+            // Convert markdown links [text](url) to HTML <a> tags
+            // Pattern: [any text](url)
+            safe = safe.replace(/\[([^\]]+)\]\(([^)]+)\)/g, function(match, text, url) {
+                // Decode HTML entities in the URL that we encoded earlier
+                const decodedUrl = url
+                    .replace(/&amp;/g, "&")
+                    .replace(/&lt;/g, "<")
+                    .replace(/&gt;/g, ">");
+
+                return `<a href="${decodedUrl}" class="source-link" target="_blank" rel="noopener noreferrer">${text}</a>`;
+            });
+
+            return safe;
+        }
+
+        // Search functionality
+        btnSearch.addEventListener('click', performSearch);
+        searchInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                performSearch();
+            }
+        });
+
+        async function performSearch() {
+            const query = searchInput.value.trim();
+            if (!query) return;
+
+            // Hide initial state
+            initialState.style.display = 'none';
+
+            // Check current mode
+            if (currentMode === 'chat') {
+                // Free conversation mode - no search, just chat
+                await performFreeConversation(query);
+                return;
+            }
+
+            // Search mode - normal flow
+            // Show loading
+            loadingState.classList.add('active');
+            resultsSection.classList.remove('active');
+
+            try {
+                const base = window.location.origin;
+
+                // Capture conversation history BEFORE this query (for context)
+                const prevQueriesForThisTurn = [...conversationHistory];
+
+                // Make TWO API calls to get both summary and scores
+                // Call 1: Get articles with relevance scores using 'summarize' mode
+                const summarizeUrl = new URL('/ask', base);
+                summarizeUrl.searchParams.append('query', query);
+                summarizeUrl.searchParams.append('site', 'all');
+                summarizeUrl.searchParams.append('generate_mode', 'summarize');
+                summarizeUrl.searchParams.append('streaming', 'false');
+                // Send conversation history for context
+                if (prevQueriesForThisTurn.length > 0) {
+                    summarizeUrl.searchParams.append('prev', JSON.stringify(prevQueriesForThisTurn));
+                }
+
+                const summarizeResponse = await fetch(summarizeUrl.toString());
+                if (!summarizeResponse.ok) {
+                    throw new Error(`API error: ${summarizeResponse.statusText}`);
+                }
+
+                let summarizeData = await summarizeResponse.json();
+                if (Array.isArray(summarizeData) && summarizeData.length > 0) {
+                    summarizeData = summarizeData[0];
+                }
+
+                // Call 2: Get AI-generated summary using 'generate' mode with STREAMING
+                // This allows us to receive memory messages in real-time
+                const generateUrl = new URL('/ask', base);
+                generateUrl.searchParams.append('query', query);
+                generateUrl.searchParams.append('site', 'all');
+                generateUrl.searchParams.append('generate_mode', 'generate');
+                generateUrl.searchParams.append('streaming', 'true'); // Enable streaming for memory messages
+                // Send conversation history for context
+                if (prevQueriesForThisTurn.length > 0) {
+                    generateUrl.searchParams.append('prev', JSON.stringify(prevQueriesForThisTurn));
+                }
+
+                let generateData = await handleStreamingRequest(generateUrl.toString(), query);
+
+                // Debug logging
+                console.log('Generate Data received:', generateData);
+                console.log('Generate Data answer:', generateData.answer);
+                console.log('Summarize Data:', summarizeData);
+
+                // Combine both: use articles with scores from summarize, and AI answer from generate
+                // The SSE stream returns answer directly in the data object, not nested under nlws
+                const combinedData = {
+                    content: summarizeData.content || [], // Articles with scores
+                    nlws: generateData.answer ? { answer: generateData.answer } : null, // AI summary - wrap answer in nlws format
+                    summary: summarizeData.summary || null
+                };
+
+                console.log('Combined Data:', combinedData);
+
+                // Parse and populate the UI with combined data
+                populateResultsFromAPI(combinedData, query);
+
+                // Store complete session data for this query
+                sessionHistory.push({
+                    query: query,
+                    data: combinedData,
+                    timestamp: Date.now()
+                });
+
+                // Accumulate articles from this search for chat mode
+                if (combinedData.content && combinedData.content.length > 0) {
+                    // Add new articles, avoiding duplicates by URL
+                    const existingUrls = new Set(accumulatedArticles.map(art => art.url || art.schema_object?.url));
+                    const newArticles = combinedData.content.filter(art => {
+                        const url = art.url || art.schema_object?.url;
+                        return url && !existingUrls.has(url);
+                    });
+                    accumulatedArticles.push(...newArticles);
+                    console.log(`Accumulated ${newArticles.length} new articles, total: ${accumulatedArticles.length}`);
+                }
+
+                // Add current query to history for NEXT turn
+                conversationHistory.push(query);
+                // Keep only last 10 queries
+                if (conversationHistory.length > 10) {
+                    conversationHistory.shift();
+                    // Also trim sessionHistory to match
+                    sessionHistory.shift();
+                }
+
+                // Update conversation history display
+                renderConversationHistory();
+
+                loadingState.classList.remove('active');
+                resultsSection.classList.add('active');
+
+                // Scroll to results
+                resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            } catch (error) {
+                console.error('Search failed:', error);
+                loadingState.classList.remove('active');
+                alert('搜尋失敗，請稍後再試。Error: ' + error.message);
+            }
+        }
+
+        // Free Conversation Mode function
+        async function performFreeConversation(query) {
+            // Add user message to chat
+            addChatMessage('user', query);
+
+            // Clear input
+            searchInput.value = '';
+
+            // Show loading in chatbox (not global loading)
+            chatLoading.classList.add('active');
+            resultsSection.classList.add('active');
+
+            try {
+                const base = window.location.origin;
+
+                // Build conversation context including:
+                // 1. Original search queries from conversationHistory
+                // 2. Recent chat messages from chatHistory
+                // 3. IMPORTANT: Include the original search topic explicitly
+                const searchQueries = conversationHistory.slice(); // All search queries
+                const recentChatHistory = chatHistory.slice(-4); // Last 4 chat messages
+                const chatQueries = recentChatHistory.filter(msg => msg.role === 'user').map(msg => msg.content);
+
+                // Combine: original search context + recent chat
+                const allPrevQueries = [...searchQueries, ...chatQueries];
+
+                // Use ALL accumulated articles as reference for UI display
+                let referenceContext = '';
+                if (accumulatedArticles.length > 0) {
+                    referenceContext = `參考資料：基於 ${accumulatedArticles.length} 則新聞（來自 ${conversationHistory.length} 次搜尋）`;
+                }
+
+                console.log('=== Free Conversation Debug ===');
+                console.log('Current query:', query);
+                console.log('Search queries (from conversationHistory):', searchQueries);
+                console.log('Chat queries (from chatHistory):', chatQueries);
+                console.log('All prev queries being sent:', allPrevQueries);
+                console.log('Total accumulated articles:', accumulatedArticles.length);
+
+                // Call with prev parameter (like normal conversation)
+                const chatUrl = new URL('/ask', base);
+                chatUrl.searchParams.append('query', query); // Send original query, backend handles context
+                chatUrl.searchParams.append('site', 'all');
+                chatUrl.searchParams.append('generate_mode', 'generate');
+                chatUrl.searchParams.append('streaming', 'true');
+                chatUrl.searchParams.append('free_conversation', 'true'); // Backend flag for free chat mode
+
+                // Send full context: original search + chat history
+                if (allPrevQueries.length > 0) {
+                    chatUrl.searchParams.append('prev', JSON.stringify(allPrevQueries));
+                }
+
+                console.log('Chat URL:', chatUrl.toString());
+
+                let chatData = await handleStreamingRequest(chatUrl.toString(), query);
+
+                // Add assistant response to chat
+                if (chatData.answer) {
+                    addChatMessage('assistant', chatData.answer, referenceContext);
+                } else {
+                    addChatMessage('assistant', '抱歉，我無法回答這個問題。');
+                }
+
+                chatLoading.classList.remove('active');
+
+                // Scroll chat to bottom
+                chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+            } catch (error) {
+                console.error('Chat failed:', error);
+                chatLoading.classList.remove('active');
+                addChatMessage('assistant', '抱歉，發生錯誤。請稍後再試。');
+            }
+        }
+
+        // Add message to chat UI
+        function addChatMessage(role, content, referenceInfo = null) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `chat-message ${role}`;
+
+            const headerText = role === 'user' ? '你' : 'AI 助理';
+
+            // For assistant messages, convert markdown links and render HTML
+            let formattedContent = content;
+            if (role === 'assistant') {
+                formattedContent = convertMarkdownToHtml(content);
+            } else {
+                formattedContent = escapeHTML(content);
+            }
+
+            let messageHTML = `
+                <div class="chat-message-header">${headerText}</div>
+                <div class="chat-message-bubble">${formattedContent}</div>
+            `;
+
+            if (referenceInfo && role === 'assistant') {
+                messageHTML += `<div class="chat-reference-info">📚 ${referenceInfo}</div>`;
+            }
+
+            messageDiv.innerHTML = messageHTML;
+            chatMessagesEl.appendChild(messageDiv);
+
+            // Store in chat history
+            chatHistory.push({ role, content, timestamp: Date.now() });
+
+            // Scroll to bottom
+            chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+        }
+
+        // View tabs
+        const tabs = document.querySelectorAll('.tab');
+        tabs.forEach(tab => {
+            tab.addEventListener('click', () => {
+                const view = tab.dataset.view;
+
+                // Update active tab
+                tabs.forEach(t => t.classList.remove('active'));
+                tab.classList.add('active');
+
+                // Switch views
+                if (view === 'list') {
+                    listView.style.display = 'flex';
+                    timelineView.classList.remove('active');
+                    summaryToggle.classList.add('active');
+                } else {
+                    listView.style.display = 'none';
+                    timelineView.classList.add('active');
+                    summaryToggle.classList.add('active'); // Keep toggle visible in timeline view too
+                }
+            });
+        });
+
+        // Summary toggle
+        btnToggleSummary.addEventListener('click', () => {
+            if (!summaryExpanded) {
+                // Expand summary - just show the descriptions that are already loaded
+                showSummaries();
+                summaryExpanded = true;
+                btnToggleSummary.textContent = '📝 收起摘要';
+            } else {
+                // Collapse summary
+                hideSummaries();
+                summaryExpanded = false;
+                btnToggleSummary.textContent = '📝 展開摘要';
+            }
+        });
+
+        function showSummaries() {
+            // Show excerpts in both list and timeline views
+            const listExcerpts = listView.querySelectorAll('.news-excerpt');
+            listExcerpts.forEach(excerpt => excerpt.classList.add('visible'));
+
+            const timelineExcerpts = timelineView.querySelectorAll('.news-excerpt');
+            timelineExcerpts.forEach(excerpt => excerpt.classList.add('visible'));
+        }
+
+        function hideSummaries() {
+            // Hide excerpts in both list and timeline views
+            const listExcerpts = listView.querySelectorAll('.news-excerpt');
+            listExcerpts.forEach(excerpt => excerpt.classList.remove('visible'));
+
+            const timelineExcerpts = timelineView.querySelectorAll('.news-excerpt');
+            timelineExcerpts.forEach(excerpt => excerpt.classList.remove('visible'));
+        }
+
+        // Share modal
+        btnShare.addEventListener('click', () => {
+            modalOverlay.classList.add('active');
+        });
+
+        btnCloseModal.addEventListener('click', () => {
+            modalOverlay.classList.remove('active');
+        });
+
+        modalOverlay.addEventListener('click', (e) => {
+            if (e.target === modalOverlay) {
+                modalOverlay.classList.remove('active');
+            }
+        });
+
+        // My Searches modal handlers
+        btnMySearches.addEventListener('click', () => {
+            renderSavedSessions();
+            mySearchesModal.classList.add('active');
+        });
+
+        btnCloseMySearches.addEventListener('click', () => {
+            mySearchesModal.classList.remove('active');
+        });
+
+        mySearchesModal.addEventListener('click', (e) => {
+            if (e.target === mySearchesModal) {
+                mySearchesModal.classList.remove('active');
+            }
+        });
+
+        // Function to render saved sessions
+        function renderSavedSessions() {
+            savedSessionsList.innerHTML = '';
+
+            if (savedSessions.length === 0) {
+                savedSessionsList.innerHTML = '<div class="empty-sessions">尚無儲存的搜尋記錄</div>';
+                return;
+            }
+
+            // Render sessions in reverse order (newest first)
+            savedSessions.slice().reverse().forEach((session) => {
+                const sessionItem = document.createElement('div');
+                sessionItem.className = 'saved-session-item';
+
+                const date = new Date(session.createdAt);
+                const dateStr = date.toLocaleDateString('zh-TW', {
+                    year: 'numeric',
+                    month: 'short',
+                    day: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit'
+                });
+
+                // Count chat messages if they exist
+                const chatCount = session.chatHistory ? session.chatHistory.length : 0;
+                const chatInfo = chatCount > 0 ? ` • ${chatCount} 則對話` : '';
+
+                sessionItem.innerHTML = `
+                    <div class="saved-session-title">${escapeHTML(session.title)}</div>
+                    <div class="saved-session-meta">
+                        <span class="saved-session-queries">${session.conversationHistory.length} 個查詢${chatInfo}</span>
+                        <span>${dateStr}</span>
+                    </div>
+                `;
+
+                sessionItem.addEventListener('click', () => {
+                    loadSavedSession(session);
+                    mySearchesModal.classList.remove('active');
+                });
+
+                savedSessionsList.appendChild(sessionItem);
+            });
+        }
+
+        // Function to load a saved session
+        function loadSavedSession(session) {
+            console.log('Loading saved session:', session);
+
+            // Restore conversation history and session data
+            conversationHistory = [...session.conversationHistory];
+            sessionHistory = [...session.sessionHistory];
+
+            // Restore chat history and accumulated articles (if they exist)
+            chatHistory = session.chatHistory ? [...session.chatHistory] : [];
+            accumulatedArticles = session.accumulatedArticles ? [...session.accumulatedArticles] : [];
+
+            // Render the last query's results
+            if (sessionHistory.length > 0) {
+                const lastSession = sessionHistory[sessionHistory.length - 1];
+                populateResultsFromAPI(lastSession.data, lastSession.query);
+            }
+
+            // Update conversation history display
+            renderConversationHistory();
+
+            // Restore chat UI if there were chat messages
+            if (chatHistory.length > 0) {
+                console.log(`Restoring ${chatHistory.length} chat messages`);
+                chatMessagesEl.innerHTML = ''; // Clear existing messages
+
+                // Re-render all chat messages
+                chatHistory.forEach(msg => {
+                    const messageDiv = document.createElement('div');
+                    messageDiv.className = `chat-message ${msg.role}`;
+
+                    const headerText = msg.role === 'user' ? '你' : 'AI 助理';
+
+                    // Format content based on role
+                    let formattedContent = msg.content;
+                    if (msg.role === 'assistant') {
+                        formattedContent = convertMarkdownToHtml(msg.content);
+                    } else {
+                        formattedContent = escapeHTML(msg.content);
+                    }
+
+                    messageDiv.innerHTML = `
+                        <div class="chat-message-header">${headerText}</div>
+                        <div class="chat-message-bubble">${formattedContent}</div>
+                    `;
+
+                    chatMessagesEl.appendChild(messageDiv);
+                });
+
+                // Show chat container if we restored messages
+                chatContainer.classList.add('active');
+
+                // Optionally switch to chat mode
+                currentMode = 'chat';
+                toggleSwitch.classList.add('active');
+                btnSearch.textContent = '發送';
+                searchInput.placeholder = '繼續對話...';
+
+                // Move search container into chat area
+                chatInputContainer.appendChild(searchContainer);
+                chatInputContainer.style.display = 'block';
+
+                // Scroll to bottom of chat
+                chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+            }
+
+            // Show results section and hide initial state
+            initialState.style.display = 'none';
+            resultsSection.classList.add('active');
+
+            // Scroll to results
+            resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+
+        // ===== Export/Share Functions =====
+
+        // Helper: Clean HTML content for different export formats
+        function cleanHTMLContent(content, format = 'plain') {
+            if (!content) return '';
+
+            if (format === 'plain') {
+                // Strip all HTML and markdown links
+                return content
+                    .replace(/<br\s*\/?>/gi, '\n')
+                    .replace(/<[^>]+>/g, '')
+                    .replace(/\[來源\]\([^\)]+\)/g, '')
+                    .replace(/\[([^\]]+)\]\([^\)]+\)/g, '$1'); // Keep link text only
+            } else if (format === 'markdown') {
+                // Keep markdown, convert <br> to newlines
+                return content.replace(/<br\s*\/?>/gi, '\n\n');
+            }
+
+            return content;
+        }
+
+        // Helper: Get top 10 articles from the most recent search
+        function getTop10Articles() {
+            if (sessionHistory.length === 0) return [];
+            const lastSession = sessionHistory[sessionHistory.length - 1];
+            if (!lastSession.data || !lastSession.data.content) return [];
+            return lastSession.data.content.slice(0, 10);
+        }
+
+        // Format content for plain text export
+        function formatPlainText() {
+            let content = '';
+            const date = new Date().toLocaleDateString('zh-TW', {
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric'
+            });
+
+            content += `台灣新聞搜尋結果\n`;
+            content += `日期：${date}\n`;
+            content += `${'='.repeat(50)}\n\n`;
+
+            // Search queries
+            if (conversationHistory.length > 0) {
+                content += `【搜尋查詢】\n`;
+                conversationHistory.forEach((query, idx) => {
+                    content += `${idx + 1}. ${query}\n`;
+                });
+                content += `\n`;
+            }
+
+            // AI answers from search results
+            if (sessionHistory.length > 0) {
+                content += `【AI 分析摘要】\n`;
+                sessionHistory.forEach((session, idx) => {
+                    if (session.data && session.data.answer) {
+                        const plainAnswer = cleanHTMLContent(session.data.answer, 'plain');
+                        content += `${plainAnswer}\n\n`;
+                    }
+                });
+            }
+
+            // Free conversation messages
+            if (chatHistory.length > 0) {
+                content += `【自由對話紀錄】\n`;
+                chatHistory.forEach(msg => {
+                    const icon = msg.role === 'user' ? '👤 你' : '🤖 AI';
+                    const plainContent = cleanHTMLContent(msg.content, 'plain');
+                    content += `${icon}：${plainContent}\n\n`;
+                });
+            }
+
+            // Top 10 articles
+            const top10 = getTop10Articles();
+            if (top10.length > 0) {
+                content += `【相關新聞文章（${top10.length} 篇）】\n`;
+                top10.forEach((article, idx) => {
+                    const title = article.name || article.schema_object?.headline || '無標題';
+                    const source = article.schema_object?.publisher?.name || article.site || '未知來源';
+                    const date = article.schema_object?.datePublished?.split('T')[0] || '未知日期';
+                    const desc = article.description || article.ranking?.description || '';
+
+                    content += `${idx + 1}. ${title}\n`;
+                    content += `   來源：${source} | 日期：${date}\n`;
+                    if (desc) {
+                        content += `   ${desc}\n`;
+                    }
+                    content += `\n`;
+                });
+            }
+
+            return content;
+        }
+
+        // Format content for AI chatbot (ChatGPT/Claude/Gemini)
+        function formatForAIChatbot() {
+            let content = '';
+
+            // Opening context
+            if (conversationHistory.length > 0) {
+                content += `我剛搜尋了關於「${conversationHistory[0]}」的台灣新聞，以下是搜尋結果：\n\n`;
+            }
+
+            // Search queries
+            if (conversationHistory.length > 1) {
+                content += `【搜尋查詢】\n`;
+                conversationHistory.forEach((query, idx) => {
+                    content += `${idx + 1}. ${query}\n`;
+                });
+                content += `\n`;
+            }
+
+            // AI analysis
+            if (sessionHistory.length > 0) {
+                content += `【AI 分析摘要】\n`;
+                sessionHistory.forEach((session, idx) => {
+                    if (session.data && session.data.answer) {
+                        const cleanAnswer = cleanHTMLContent(session.data.answer, 'markdown');
+                        content += `${cleanAnswer}\n\n`;
+                    }
+                });
+            }
+
+            // Free conversation
+            if (chatHistory.length > 0) {
+                content += `【自由對話紀錄】\n`;
+                chatHistory.forEach(msg => {
+                    const icon = msg.role === 'user' ? '👤 你' : '🤖 AI';
+                    const cleanContent = cleanHTMLContent(msg.content, 'markdown');
+                    content += `${icon}：${cleanContent}\n\n`;
+                });
+            }
+
+            // Articles with URLs
+            const top10 = getTop10Articles();
+            if (top10.length > 0) {
+                content += `【相關新聞來源（${top10.length} 篇）】\n`;
+                top10.forEach((article, idx) => {
+                    const title = article.name || article.schema_object?.headline || '無標題';
+                    const url = article.url || article.schema_object?.url || '';
+                    const source = article.schema_object?.publisher?.name || article.site || '';
+                    const date = article.schema_object?.datePublished?.split('T')[0] || '';
+                    const desc = article.description || article.ranking?.description || '';
+
+                    content += `${idx + 1}. ${title}\n`;
+                    if (url) content += `   網址：${url}\n`;
+                    if (source || date) content += `   來源：${source} | 日期：${date}\n`;
+                    if (desc) content += `   摘要：${desc}\n`;
+                    content += `\n`;
+                });
+            }
+
+            content += `---\n請基於以上資訊幫我進行分析。`;
+
+            return content;
+        }
+
+        // Format content for NotebookLM (rich markdown with full details)
+        function formatForNotebookLM() {
+            let content = '';
+            const date = new Date().toLocaleDateString('zh-TW', {
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric'
+            });
+
+            // Title
+            if (conversationHistory.length > 0) {
+                content += `# 台灣新聞搜尋：${conversationHistory[0]}\n\n`;
+            } else {
+                content += `# 台灣新聞搜尋結果\n\n`;
+            }
+
+            content += `**搜尋日期**: ${date}\n\n`;
+            content += `---\n\n`;
+
+            // Search queries
+            if (conversationHistory.length > 0) {
+                content += `## 搜尋查詢\n\n`;
+                conversationHistory.forEach((query, idx) => {
+                    content += `${idx + 1}. ${query}\n`;
+                });
+                content += `\n`;
+            }
+
+            // AI analysis
+            if (sessionHistory.length > 0) {
+                content += `## AI 分析摘要\n\n`;
+                sessionHistory.forEach((session, idx) => {
+                    if (session.data && session.data.answer) {
+                        const cleanAnswer = cleanHTMLContent(session.data.answer, 'markdown');
+                        content += `${cleanAnswer}\n\n`;
+                    }
+                });
+            }
+
+            // Free conversation
+            if (chatHistory.length > 0) {
+                content += `## 自由對話紀錄\n\n`;
+                chatHistory.forEach(msg => {
+                    const role = msg.role === 'user' ? '**你**' : '**AI 助理**';
+                    const cleanContent = cleanHTMLContent(msg.content, 'markdown');
+                    content += `${role}: ${cleanContent}\n\n`;
+                });
+            }
+
+            // Detailed articles
+            const top10 = getTop10Articles();
+            if (top10.length > 0) {
+                content += `## 相關新聞來源（${top10.length} 篇）\n\n`;
+                top10.forEach((article, idx) => {
+                    const title = article.name || article.schema_object?.headline || '無標題';
+                    const url = article.url || article.schema_object?.url || '';
+                    const source = article.schema_object?.publisher?.name || article.site || '';
+                    const date = article.schema_object?.datePublished?.split('T')[0] || '';
+                    const desc = article.description || article.ranking?.description || '';
+
+                    content += `### ${idx + 1}. ${title}\n\n`;
+                    if (source) content += `- **來源**: ${source}\n`;
+                    if (date) content += `- **日期**: ${date}\n`;
+                    if (url) content += `- **網址**: ${url}\n`;
+                    if (desc) content += `\n${desc}\n`;
+                    content += `\n---\n\n`;
+                });
+            }
+
+            return content;
+        }
+
+        // Copy to clipboard and optionally open URL
+        async function copyAndOpen(text, url = null, buttonElement) {
+            const originalText = buttonElement.textContent;
+
+            try {
+                await navigator.clipboard.writeText(text);
+
+                // Visual feedback
+                buttonElement.textContent = '✓ 已複製！';
+                buttonElement.style.borderColor = '#059669';
+                buttonElement.style.color = '#059669';
+
+                // Open URL if provided
+                if (url) {
+                    window.open(url, '_blank');
+                }
+
+                setTimeout(() => {
+                    buttonElement.textContent = originalText;
+                    buttonElement.style.borderColor = '';
+                    buttonElement.style.color = '';
+                }, 2000);
+
+            } catch (err) {
+                console.error('複製失敗:', err);
+                buttonElement.textContent = '✗ 複製失敗';
+                setTimeout(() => {
+                    buttonElement.textContent = originalText;
+                }, 2000);
+            }
+        }
+
+        // Button handlers
+        const btnCopyPlainText = document.getElementById('btnCopyPlainText');
+        const btnCopyChatGPT = document.getElementById('btnCopyChatGPT');
+        const btnCopyClaude = document.getElementById('btnCopyClaude');
+        const btnCopyGemini = document.getElementById('btnCopyGemini');
+        const btnCopyNotebookLM = document.getElementById('btnCopyNotebookLM');
+
+        btnCopyPlainText.addEventListener('click', () => {
+            const content = formatPlainText();
+            copyAndOpen(content, null, btnCopyPlainText);
+        });
+
+        btnCopyChatGPT.addEventListener('click', () => {
+            const content = formatForAIChatbot();
+            copyAndOpen(content, 'https://chat.openai.com/', btnCopyChatGPT);
+        });
+
+        btnCopyClaude.addEventListener('click', () => {
+            const content = formatForAIChatbot();
+            copyAndOpen(content, 'https://claude.ai/', btnCopyClaude);
+        });
+
+        btnCopyGemini.addEventListener('click', () => {
+            const content = formatForAIChatbot();
+            copyAndOpen(content, 'https://gemini.google.com/', btnCopyGemini);
+        });
+
+        btnCopyNotebookLM.addEventListener('click', () => {
+            const content = formatForNotebookLM();
+            copyAndOpen(content, 'https://notebooklm.google.com/', btnCopyNotebookLM);
+        });
+
+        // Feedback buttons
+        const feedbackButtons = document.querySelectorAll('.btn-feedback');
+        feedbackButtons.forEach(btn => {
+            btn.addEventListener('click', () => {
+                const originalText = btn.textContent;
+                btn.textContent = btn.textContent.includes('👍') ? '✓ 已回饋' : '✓ 已回報';
+                btn.style.color = '#059669';
+                
+                setTimeout(() => {
+                    btn.textContent = originalText;
+                    btn.style.color = '';
+                }, 2000);
+            });
+        });
+
+        // Save button
+        const btnSave = document.querySelector('.btn-save');
+        btnSave.addEventListener('click', () => {
+            const originalText = btnSave.textContent;
+            btnSave.textContent = '✓ 已儲存';
+            btnSave.style.borderColor = '#059669';
+            btnSave.style.color = '#059669';
+            
+            setTimeout(() => {
+                btnSave.textContent = originalText;
+                btnSave.style.borderColor = '';
+                btnSave.style.color = '';
+            }, 2000);
+        });
+    </script>
+</body>
+</html>

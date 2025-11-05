@@ -201,43 +201,98 @@ class QdrantVectorClient(RetrievalClientBase):
     async def collection_exists(self, collection_name: Optional[str] = None) -> bool:
         """
         Check if a collection exists in Qdrant.
-        
+
         Args:
             collection_name: Name of the collection to check
-            
+
         Returns:
             bool: True if the collection exists, False otherwise
         """
         collection_name = collection_name or self.default_collection_name
         client = await self._get_qdrant_client()
-        
+
         try:
             return await client.collection_exists(collection_name)
         except Exception as e:
             logger.error(f"Error checking if collection '{collection_name}' exists: {str(e)}")
             return False
-    
-    async def create_collection(self, collection_name: Optional[str] = None, 
+
+    async def _ensure_text_indexes(self, collection_name: str):
+        """
+        Ensure text indexes exist on name and schema_json fields for hybrid search.
+
+        Args:
+            collection_name: Name of the collection
+        """
+        client = await self._get_qdrant_client()
+
+        try:
+            # Create text index on 'name' field for title matching
+            logger.info(f"Creating text index on 'name' field for collection '{collection_name}'")
+            await client.create_payload_index(
+                collection_name=collection_name,
+                field_name="name",
+                field_schema=models.TextIndexParams(
+                    type=models.TextIndexType.TEXT,
+                    tokenizer=models.TokenizerType.WORD,
+                    min_token_len=1,
+                    max_token_len=20,
+                    lowercase=True,
+                )
+            )
+            logger.info(f"Successfully created text index on 'name' field")
+        except Exception as e:
+            # Index might already exist
+            if "already exists" in str(e).lower() or "index" in str(e).lower():
+                logger.debug(f"Text index on 'name' field already exists or error creating: {e}")
+            else:
+                logger.warning(f"Could not create text index on 'name': {e}")
+
+        try:
+            # Create text index on 'schema_json' field for full-text search
+            logger.info(f"Creating text index on 'schema_json' field for collection '{collection_name}'")
+            await client.create_payload_index(
+                collection_name=collection_name,
+                field_name="schema_json",
+                field_schema=models.TextIndexParams(
+                    type=models.TextIndexType.TEXT,
+                    tokenizer=models.TokenizerType.WORD,
+                    min_token_len=1,
+                    max_token_len=20,
+                    lowercase=True,
+                )
+            )
+            logger.info(f"Successfully created text index on 'schema_json' field")
+        except Exception as e:
+            # Index might already exist
+            if "already exists" in str(e).lower() or "index" in str(e).lower():
+                logger.debug(f"Text index on 'schema_json' field already exists or error creating: {e}")
+            else:
+                logger.warning(f"Could not create text index on 'schema_json': {e}")
+
+    async def create_collection(self, collection_name: Optional[str] = None,
                               vector_size: int = 1536) -> bool:
         """
         Create a collection in Qdrant if it doesn't exist.
-        
+
         Args:
             collection_name: Name of the collection to create
             vector_size: Size of the embedding vectors
-        
+
         Returns:
             bool: True if created, False if already exists
         """
         collection_name = collection_name or self.default_collection_name
         client = await self._get_qdrant_client()
-        
+
         try:
             # Check if collection exists
             if await client.collection_exists(collection_name):
                 logger.info(f"Collection '{collection_name}' already exists")
+                # Ensure text indexes exist for hybrid search
+                await self._ensure_text_indexes(collection_name)
                 return False
-            
+
             # Create collection
             logger.info(f"Creating collection '{collection_name}' with vector size {vector_size}")
             await client.create_collection(
@@ -245,8 +300,12 @@ class QdrantVectorClient(RetrievalClientBase):
                 vectors_config=models.VectorParams(size=vector_size, distance=models.Distance.COSINE),
             )
             logger.info(f"Successfully created collection '{collection_name}'")
+
+            # Create text indexes for hybrid search
+            await self._ensure_text_indexes(collection_name)
+
             return True
-        
+
         except Exception as e:
             logger.error(f"Error creating collection '{collection_name}': {str(e)}")
             # Try again if collection doesn't exist
@@ -257,6 +316,7 @@ class QdrantVectorClient(RetrievalClientBase):
                         vectors_config=models.VectorParams(size=vector_size, distance=models.Distance.COSINE),
                     )
                     logger.info(f"Successfully created collection '{collection_name}' on second attempt")
+                    await self._ensure_text_indexes(collection_name)
                     return True
                 except Exception as e2:
                     logger.error(f"Error creating collection on second attempt: {str(e2)}")
@@ -466,14 +526,15 @@ class QdrantVectorClient(RetrievalClientBase):
     def _create_site_filter(self, site: Union[str, List[str]]):
         """
         Create a Qdrant filter for site filtering.
-        
+
         Args:
             site: Site or list of sites to filter by
-            
+
         Returns:
             Optional[models.Filter]: Qdrant filter object or None for all sites
         """
-        if site == "all":
+        # No filter for "all" or None (search all sites)
+        if site == "all" or site is None:
             return None
 
         if isinstance(site, list):
@@ -526,6 +587,7 @@ class QdrantVectorClient(RetrievalClientBase):
             List[List[str]]: List of search results in format [url, text_json, name, site]
         """
         collection_name = collection_name or self.default_collection_name
+        print(f"========== QDRANT SEARCH CALLED: num_results={num_results}, site={site} ==========")
         logger.info(f"Starting Qdrant search - collection: {collection_name}, site: {site}, num_results: {num_results}")
         logger.debug(f"Query: {query}")
         
@@ -540,26 +602,247 @@ class QdrantVectorClient(RetrievalClientBase):
             # Get client and prepare filter
             client = await self._get_qdrant_client()
             filter_condition = self._create_site_filter(site)
-            
+
             # Ensure collection exists before searching
             collection_created = not await self.ensure_collection_exists(collection_name, len(embedding))
             if collection_created:
                 logger.info(f"Collection '{collection_name}' was just created. Returning empty results.")
                 results = []
             else:
-                # Perform the search
-                search_result = (
-                    await client.search(
-                        collection_name=collection_name,
-                        query_vector=embedding,
-                        limit=num_results,
-                        query_filter=filter_condition,
-                        with_payload=True,
-                    )
+                # Use hybrid search: combine vector similarity with keyword matching
+                logger.info(f"Performing hybrid search (vector + keyword) for query: {query[:50]}...")
+
+                # Extract Chinese keywords for keyword search (2+ character words)
+                import re
+
+                # For Chinese text, extract individual 2-4 character sequences as keywords
+                # This is a simple approach that works reasonably well without requiring
+                # a full Chinese word segmentation library
+                chinese_text = ''.join(re.findall(r'[\u4e00-\u9fff]+', query))
+                chinese_keywords = []
+                if chinese_text:
+                    # Extract 2-character keywords
+                    for i in range(len(chinese_text) - 1):
+                        word = chinese_text[i:i+2]
+                        if word not in chinese_keywords:
+                            chinese_keywords.append(word)
+                    # Extract 3-character keywords
+                    for i in range(len(chinese_text) - 2):
+                        word = chinese_text[i:i+3]
+                        if word not in chinese_keywords:
+                            chinese_keywords.append(word)
+                    # Extract 4-character keywords
+                    for i in range(len(chinese_text) - 3):
+                        word = chinese_text[i:i+4]
+                        if word not in chinese_keywords:
+                            chinese_keywords.append(word)
+
+                english_keywords = [w.lower() for w in re.findall(r'[a-zA-Z]{2,}', query)]
+                all_keywords = chinese_keywords + english_keywords
+
+                logger.debug(f"Extracted {len(all_keywords)} keywords for hybrid search")
+
+                # Identify critical domain keywords that should be required
+                # First, find which domain(s) the query is about
+                domain_indicators = ['零售', '金融', '製造', '醫療', '教育', '政府', '農業', '運輸',
+                                    '物流', '通訊', '媒體', '娛樂', '旅遊', '餐飲', '房地產', '能源']
+
+                # Define domain-specific company/entity names that indicate the domain
+                # This helps match articles about retail companies even if "零售" isn't mentioned
+                domain_entities = {
+                    '零售': ['walmart', 'target', 'amazon', 'momo', '7-eleven', '全家', 'familymart',
+                            '統一超商', '家樂福', 'carrefour', '好市多', 'costco', 'pchome', '蝦皮', 'shopee',
+                            '零售it', 'retail'],
+                    '金融': ['fintech', '金融科技', '銀行', 'bank', '證券', '保險', '投資', '花旗', '摩根'],
+                    '製造': ['tsmc', '台積電', '鴻海', 'foxconn', '製造業', '工廠', 'factory'],
+                }
+
+                # Find which domains are mentioned in the query
+                query_domains = [domain for domain in domain_indicators if domain in query]
+
+                if query_domains:
+                    logger.info(f"===== HYBRID SEARCH V2 ACTIVE ===== Query domains detected: {query_domains} - will filter results to only include articles containing these domains or related entities")
+
+                # Retrieve more candidates for keyword re-ranking
+                # CRITICAL: Need to retrieve many more results because vector search alone
+                # ranks keyword-matching articles very low (e.g., retail articles at rank 127+)
+                # With keywords, we need a much larger pool for boosting to work effectively
+                retrieval_limit = min(500, num_results * 10) if all_keywords else num_results
+
+                # Perform standard vector search
+                search_result = await client.search(
+                    collection_name=collection_name,
+                    query_vector=embedding,
+                    limit=retrieval_limit,
+                    query_filter=filter_condition,
+                    with_payload=True,
                 )
-                
+
+                # Apply keyword boosting to results
+                if all_keywords:
+                    scored_results = []
+                    on_topic_results = []  # Results that match critical keywords
+                    off_topic_results = []  # Results that don't match critical keywords
+
+                    for point in search_result:
+                        base_score = point.score
+                        keyword_boost = 0
+
+                        # Extract payload
+                        payload = point.payload
+                        name = payload.get("name", "").lower()
+                        schema_json = payload.get("schema_json", "").lower()
+
+                        # Check if article contains the query's domain(s) or related entities
+                        # Check both the domain keyword itself (e.g., "零售") AND company names (e.g., "walmart")
+                        has_critical_keyword = False
+                        if query_domains:
+                            # First check for negative indicators - publications that are about OTHER domains
+                            # These mention retail/finance/etc. but are not ABOUT that domain
+                            negative_indicators = {
+                                '零售': ['fintech周報', 'fintech週報', 'fintech雙周報',
+                                        'martech周報', 'martech週報', 'martech雙周報',
+                                        'cloud周報', 'cloud週報', 'cloud雙周報',
+                                        'ai趨勢周報', 'ai趨勢週報', 'ai趨勢雙周報',
+                                        '金融科技', '台積電', 'tsmc', '趨勢科技', '鴻海', 'vmware', '博通'],
+                                '金融': ['零售it', 'retail', 'martech周報', 'martech週報', 'martech雙周報'],
+                                '製造': ['零售it', 'retail', 'fintech周報', 'fintech週報', 'fintech雙周報'],
+                            }
+
+                            is_negative = False
+                            for domain in query_domains:
+                                if domain in negative_indicators:
+                                    for neg_indicator in negative_indicators[domain]:
+                                        if neg_indicator in name.lower():
+                                            is_negative = True
+                                            break
+                                if is_negative:
+                                    break
+
+                            # If article has negative indicators, skip it
+                            if is_negative:
+                                has_critical_keyword = False
+                            else:
+                                # Check for positive indicators
+                                # STRICTER: Require domain keyword in TITLE or known entity in title/body
+                                for domain in query_domains:
+                                    # Check if domain keyword is in TITLE (not just anywhere in content)
+                                    if domain.lower() in name:
+                                        has_critical_keyword = True
+                                        break
+
+                                    # Check domain-specific entity names (can be in title or body)
+                                    if domain in domain_entities:
+                                        for entity in domain_entities[domain]:
+                                            if entity.lower() in name or entity.lower() in schema_json:
+                                                has_critical_keyword = True
+                                                break
+                                    if has_critical_keyword:
+                                        break
+
+                        # Calculate keyword boost
+                        for keyword in all_keywords:
+                            keyword_lower = keyword.lower()
+                            # VERY strong boost for keywords in title (3-4 char keywords get higher weight)
+                            if keyword_lower in name:
+                                # Longer keywords are more specific and should get higher boost
+                                if len(keyword) >= 3:
+                                    keyword_boost += 3.0  # 300% boost for 3+ char keywords in title
+                                else:
+                                    keyword_boost += 1.0  # 100% boost for 2-char keywords in title
+                            # Moderate boost for keywords in body
+                            elif keyword_lower in schema_json:
+                                if len(keyword) >= 3:
+                                    keyword_boost += 0.5  # 50% boost for 3+ char keywords in body
+                                else:
+                                    keyword_boost += 0.1  # 10% boost for 2-char keywords in body
+
+                        # Combined score: base similarity * (1 + keyword boost)
+                        # Example: 0.27 base * (1 + 6.0 boost for 零售+零售業 in title) = 1.89
+                        # This beats 0.51 base with no keyword match
+                        final_score = base_score * (1 + keyword_boost)
+
+                        # Apply recency boost for temporal queries at retrieval level
+                        # This is CRITICAL because we only pass top N results to the LLM ranker
+                        temporal_keywords = ['最新', '最近', '近期', 'latest', 'recent', '新', '現在', '目前', '當前']
+                        is_temporal_query = any(keyword in query for keyword in temporal_keywords)
+
+                        if is_temporal_query:
+                            try:
+                                # Parse publication date from schema_json
+                                import json
+                                from datetime import datetime, timezone
+                                schema_dict = json.loads(payload.get("schema_json", "{}"))
+                                date_published = schema_dict.get('datePublished', '')
+
+                                if date_published:
+                                    date_str = date_published.split('T')[0] if 'T' in date_published else date_published
+                                    pub_date = datetime.strptime(date_str, '%Y-%m-%d').replace(tzinfo=timezone.utc)
+                                    now = datetime.now(timezone.utc)
+                                    days_old = (now - pub_date).days
+
+                                    # HARD CUTOFF: For temporal queries, exclude articles older than 3 years
+                                    # This prevents old articles from appearing even with high keyword scores
+                                    if days_old > 1095:  # 3 years
+                                        final_score = 0.0  # Completely exclude
+                                        continue  # Skip adding to results
+
+                                    # STRONG recency multipliers for temporal queries
+                                    # Last 6 months: 2.5x boost (very recent)
+                                    # 6-12 months: 1.8x boost (recent)
+                                    # 1-2 years: 1.0x (neutral)
+                                    # 2-3 years: 0.5x (old - strong penalty)
+                                    if days_old <= 180:
+                                        recency_multiplier = 2.5
+                                    elif days_old <= 365:
+                                        recency_multiplier = 1.8
+                                    elif days_old <= 730:
+                                        recency_multiplier = 1.0
+                                    else:  # 730-1095 days (2-3 years)
+                                        recency_multiplier = 0.5
+
+                                    final_score = final_score * recency_multiplier
+                            except:
+                                # If we can't parse date, don't apply recency boost
+                                pass
+
+                        # Separate on-topic vs off-topic results
+                        if query_domains and has_critical_keyword:
+                            on_topic_results.append((final_score, point))
+                        elif query_domains and not has_critical_keyword:
+                            off_topic_results.append((final_score, point))
+                        else:
+                            # No domain filtering in query, all results are valid
+                            scored_results.append((final_score, point))
+
+                    # Combine results: ONLY return on-topic results for domain-specific queries
+                    if query_domains:
+                        on_topic_results.sort(key=lambda x: x[0], reverse=True)
+                        off_topic_results.sort(key=lambda x: x[0], reverse=True)
+
+                        # ONLY use on-topic results - no backfill
+                        # User has hundreds of retail articles, so we should have enough
+                        scored_results = on_topic_results
+                        logger.info(f"Hybrid search: {len(on_topic_results)} on-topic results (strict domain filtering, no backfill)")
+
+                        if len(off_topic_results) > 0:
+                            logger.debug(f"Filtered out {len(off_topic_results)} off-topic results")
+                    else:
+                        # No domain filtering in query, sort all results
+                        scored_results.sort(key=lambda x: x[0], reverse=True)
+
+                    # Take top num_results
+                    top_results = [point for _, point in scored_results[:num_results]]
+
+                    logger.info(f"Hybrid search: retrieved {len(search_result)} candidates, returning top {len(top_results)} results")
+                    logger.debug(f"Top 5 boosted scores: {[(f'{r[0]:.3f}', r[1].payload.get('name', '')[:40]) for r in scored_results[:5]]}")
+                else:
+                    # No keywords, use vector results as-is
+                    top_results = search_result[:num_results]
+                    logger.info(f"No keywords found, using pure vector search: {len(top_results)} results")
+
                 # Format the results
-                results = self._format_results(search_result)
+                results = self._format_results(top_results)
             
             retrieve_time = time.time() - start_retrieve
             

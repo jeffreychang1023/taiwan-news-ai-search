@@ -11,6 +11,7 @@ Backwards compatibility is not guaranteed at this time.
 from core.utils.utils import log
 from core.llm import ask_llm
 import asyncio
+from datetime import datetime, timezone
 import json
 from core.utils.json_utils import trim_json
 from core.prompts import find_prompt, fill_prompt
@@ -374,6 +375,55 @@ The user's question is: {request.query}. The item's description is {item.descrip
         if (self.ranking_type == Ranking.FAST_TRACK and self.handler.state.should_abort_fast_track()):
             logger.info("Fast track aborted after ranking tasks completed")
             return
+
+        # Apply recency boost for temporal queries
+        temporal_keywords = ['最新', '最近', '近期', 'latest', 'recent', '新', '現在', '目前', '當前']
+        is_temporal_query = any(keyword in self.handler.query for keyword in temporal_keywords)
+
+        if is_temporal_query:
+            logger.info(f"[TEMPORAL BOOST] Applying recency boost for temporal query: '{self.handler.query}'")
+            now = datetime.now(timezone.utc)
+
+            for result in self.rankedAnswers:
+                try:
+                    schema_obj = result.get('schema_object', {})
+                    date_published = schema_obj.get('datePublished', 'Unknown')
+
+                    if date_published != 'Unknown':
+                        # Parse date
+                        date_str = date_published.split('T')[0] if 'T' in date_published else date_published
+                        pub_date = datetime.strptime(date_str, '%Y-%m-%d').replace(tzinfo=timezone.utc)
+
+                        # Calculate days old
+                        days_old = (now - pub_date).days
+
+                        # Apply recency multiplier based on age
+                        # For temporal queries, recency is CRITICAL
+                        # Last 6 months: 2.0x boost (very recent)
+                        # 6-12 months: 1.5x boost (recent)
+                        # 1-2 years: 1.0x (neutral)
+                        # 2-3 years: 0.7x (old - penalty)
+                        # 3+ years: 0.5x (very old - strong penalty)
+                        if days_old <= 180:  # Last 6 months
+                            recency_multiplier = 2.0
+                        elif days_old <= 365:  # 6-12 months
+                            recency_multiplier = 1.5
+                        elif days_old <= 730:  # 1-2 years
+                            recency_multiplier = 1.0
+                        elif days_old <= 1095:  # 2-3 years
+                            recency_multiplier = 0.7
+                        else:  # 3+ years
+                            recency_multiplier = 0.5
+                        original_score = result['ranking']['score']
+                        boosted_score = min(100, original_score * recency_multiplier)
+                        result['ranking']['score'] = boosted_score
+
+                        if recency_multiplier > 1.0:
+                            logger.debug(f"[TEMPORAL BOOST] {result['name'][:40]}: {original_score:.0f} -> {boosted_score:.0f} (days_old={days_old}, mult={recency_multiplier}x)")
+                except Exception as e:
+                    logger.debug(f"Could not apply recency boost: {e}")
+                    pass
+
     
         filtered = [r for r in self.rankedAnswers if r['ranking']['score'] > 51]
         ranked = sorted(filtered, key=lambda x: x['ranking']["score"], reverse=True)

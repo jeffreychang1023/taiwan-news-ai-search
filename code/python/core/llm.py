@@ -159,7 +159,7 @@ async def ask_llm(
     schema: Dict[str, Any],
     provider: Optional[str] = None,
     level: str = "low",
-    timeout: int = 8,
+    timeout: int = 60,
     query_params: Optional[Dict[str, Any]] = None,
     max_length: int = 512
 ) -> Dict[str, Any]:
@@ -229,6 +229,7 @@ async def ask_llm(
         # Get the provider instance based on llm_type
         try:
             provider_instance = _get_provider(llm_type)
+            logger.debug(f"DEBUG: Using provider_name='{provider_name}', llm_type='{llm_type}', model_id='{model_id}'")
         except ValueError as e:
             error_msg = str(e)
             logger.error(error_msg)
@@ -236,9 +237,9 @@ async def ask_llm(
         
         # Simply call the provider's get_completion method without locking
         # Each provider should handle thread-safety internally
-        logger.debug(f"Calling {llm_type} provider completion for endpoint {provider_name} with max_tokens={max_length}")
+        logger.debug(f"Calling {llm_type} provider completion for endpoint {provider_name} with max_completion_tokens={max_length}")
         result = await asyncio.wait_for(
-            provider_instance.get_completion(prompt, schema, model=model_id, timeout=timeout, max_tokens=max_length),
+            provider_instance.get_completion(prompt, schema, model=model_id, timeout=timeout, max_completion_tokens=max_length),
             timeout=timeout
         )
         logger.debug(f"{provider_name} response received, size: {len(str(result))} chars")

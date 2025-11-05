@@ -29,22 +29,24 @@
       <promptString>
         The user is querying the site {request.site} which has {site.itemType}s.
         Rewrite the query, incorporating the context of the previous queries and answers.
-        Keep the decontextualized query short and do not reference the site. 
+        Keep the decontextualized query short and do not reference the site.
 
-        If the query very clearly does not reference earlier queries, 
-        don't change the query. Err on the side of incorporating the context of the 
-        previous queries. If you are not sure whether this is a brand new query, 
-        or follow up, it is likely a follow up. Try your best to incorporate the 
+        IMPORTANT: Respond in the same language as the user's query. If the query is in Chinese, respond in Chinese. If in English, respond in English.
+
+        If the query very clearly does not reference earlier queries,
+        don't change the query. Err on the side of incorporating the context of the
+        previous queries. If you are not sure whether this is a brand new query,
+        or follow up, it is likely a follow up. Try your best to incorporate the
         context from the previous queries.
 
-        The user's query is: {request.rawQuery}. 
+        The user's query is: {request.rawQuery}.
         Previous queries were: {request.previousQueries}.
        <!-- Previous answers (title + url)provided were: {request.prevAnswers}. -->
       </promptString>
       <returnStruc>
         {
           "requires_decontextualization": "True or False",
-          "decontextualized_query": "The rewritten query, if decontextualization is required"
+          "decontextualized_query": "The rewritten query in the same language as the user's query, if decontextualization is required"
         }
       </returnStruc>
     </Prompt>
@@ -201,35 +203,100 @@
     <Prompt ref="RankingPrompt">
       <promptString>
         Assign a score between 0 and 100 to the following item
-        based on how relevant it is to the user's question. Use your knowledge from other sources, about the item, to make a judgement. 
-        If the score is above 50, provide a short description of the item highlighting the relevance to the user's question, without mentioning the user's question.
-        Provide an explanation of the relevance of the item to the user's question, without mentioning the user's question or the score or explicitly mentioning the term relevance.
-        If the score is below 75, in the description, include the reason why it is still relevant.
+        based on how relevant it is to the user's question.
+
+        CRITICAL: For the description field, focus ONLY on factual content from the article:
+        - Extract 2-3 key facts with specific details (company names, statistics, technologies, projects)
+        - DO NOT write meta-commentary like "該文章探討了..." or "與...有一定的相關性" or "來源於可信的..."
+        - State WHAT the article covers, not WHY it's relevant
+        - Example GOOD: "Target使用AI模擬未來訂單情況，協助供應鏈管理和門市人力配置。系統能預測需求並提前調整資源。"
+        - Example BAD: "該文章探討了零售業如何利用AI技術改善供應鏈管理，與台灣零售科技業的發展有一定的相關性，且來源於可信的新聞網站。"
+
         The description you generate should be in the same language as the item's description.
-          
 
         The user's question is: \"{request.query}\". The item's description in schema.org format is \"{item.description}\".
       </promptString>
       <returnStruc>
         {
           "score": "integer between 0 and 100",
-          "description": "short description of the item"
+          "description": "2-3 factual sentences with specific details, NO meta-commentary about the article itself"
         }
       </returnStruc>
     </Prompt>
 
     <Prompt ref="RankingPromptForGenerate">
       <promptString>
-        Assign a score between 0 and 100 to the following item
-        based on useful it might be to answering the user's question. 
-        The user's question is: \"{request.query}\".
-        The item in schema.org format is: \"{item.description}\". Include a 
-        short description of the item in the description field.
+        You are a sophisticated news search ranker. Evaluate this article across multiple signals:
+
+        **USER QUERY**: "{request.query}"
+
+        **ARTICLE**: {item.description}
+
+        **METADATA**:
+        - Published: {item.datePublished}
+        - Age: {item.age_days} days old
+        - Source: {item.source}
+
+        Evaluate the article on these dimensions:
+
+        1. **Semantic Relevance (0-100)**: How well does the article's content match the user's information need? Consider:
+           - Topic alignment and conceptual overlap
+           - Language-aware matching (Chinese queries can match Chinese content semantically)
+           - Depth of coverage on the query topic
+           - CRITICAL: If query asks for "最新" (latest) or "最近" (recent), heavily penalize old articles (>180 days) even if topically relevant
+
+        2. **Keyword Matching (0-100)**: Presence and frequency of query terms. Consider:
+           - Exact keyword matches (higher weight)
+           - Partial matches and synonyms (lower weight)
+           - Term frequency and prominence in title/content
+
+        3. **Freshness (0-100)**: Recency value for news content. Use this scoring guide:
+           - 0-7 days old: 90-100 (very fresh)
+           - 8-30 days old: 70-89 (recent)
+           - 31-90 days old: 40-69 (moderately old)
+           - 91-180 days old: 20-39 (old)
+           - 180-365 days old: 10-19 (very old)
+           - 365+ days old: 0-9 (obsolete)
+           - CRITICAL: If query contains temporal keywords like "最新/最近/latest/recent", articles older than 180 days should score 0-15 on freshness
+
+        4. **Source Authority (0-100)**: Publisher credibility and topical expertise:
+           - Recognized tech/news publishers (e.g., iThome, TechCrunch): 80-100
+           - Established mainstream media: 60-79
+           - Niche/specialized sources: 40-59
+           - Unknown/unverified sources: 0-39
+
+        **TEMPORAL QUERY DETECTION**:
+        If the query contains temporal keywords (最新/最近/latest/recent/新/new), adjust the weighting:
+        - Semantic Relevance: 30%
+        - Keyword Matching: 20%
+        - Freshness: 40% (DOUBLED from 20%)
+        - Source Authority: 10%
+
+        Otherwise use standard weighting:
+        - Semantic Relevance: 40%
+        - Keyword Matching: 25%
+        - Freshness: 20%
+        - Source Authority: 15%
+
+        Calculate the **Final Score** using the appropriate weighting based on whether temporal keywords are detected.
+
+        IMPORTANT: Write the description in the same language as the user's question.
+
+        CRITICAL: For the description field, focus ONLY on factual content from the article:
+        - Extract 2-3 key facts with specific details (company names, statistics, technologies)
+        - DO NOT write meta-commentary like "該文章探討了..." or "對於了解...有參考價值"
+        - State WHAT the article covers, not WHY it's relevant
+        - Example GOOD: "Momo使用GenAI檢測違規商品，準確率達99%，並透過Gemini提升推薦點擊率40%。"
+        - Example BAD: "該文章探討了零售科技的應用，對於了解台灣零售科技業的發展有一定的參考價值。"
       </promptString>
       <returnStruc>
         {
-          "score" : "integer between 0 and 100",
-          "description" : "short description of the item"
+          "semantic_score": "integer 0-100",
+          "keyword_score": "integer 0-100",
+          "freshness_score": "integer 0-100",
+          "authority_score": "integer 0-100",
+          "final_score": "integer 0-100 (weighted average)",
+          "description": "2-3 factual sentences with specific details, NO meta-commentary about the article itself"
         }
       </returnStruc>
     </Prompt>
@@ -237,47 +304,147 @@
     
     <Prompt ref="SynthesizePromptForGenerate">
       <promptString>
-        Given the following items, synthesize an answer to the user's question. 
-        You do not need to include all the items, but you should include the most relevant ones.
-        For each of the items included in the answer, provide the URL of the item in 
-        the 'urls' field of the structured output. Make sure to include 
-        the URL for every one of the items. Do not include the URL in the answer field.
+        Given the following items, synthesize a comprehensive answer to the user's question.
+        IMPORTANT: Answer in the same language as the user's question. If the question is in Chinese, answer in Chinese. If in English, answer in English.
+
+        CRITICAL OUTPUT FORMAT:
+        - You MUST return a JSON object with a "paragraphs" field containing an ARRAY of 3-4 paragraph strings
+        - Each element of the array is ONE complete paragraph
+        - DO NOT return an "answer" field - use "paragraphs" array instead
+        - Each paragraph should be 80-150 Chinese characters (or 100-200 words for English)
+        - Total content should be 300-450 Chinese characters minimum
+
+        JSON OUTPUT EXAMPLE:
+        {
+          "paragraphs": [
+            "第一段內容...（直接回答問題）",
+            "第二段內容...（提供具體例子和數據）",
+            "第三段內容...（分析趨勢）",
+            "第四段內容...（未來展望，可選）"
+          ],
+          "urls": ["https://example.com/article1", "https://example.com/article2"]
+        }
+
+        MANDATORY PARAGRAPH STRUCTURE:
+
+        PARAGRAPH 1 - Direct Answer (寫2-3句):
+        - Directly answer what the user asked
+        - State the main finding or trend
+        - Keep concise but informative
+
+        PARAGRAPH 2 - Detailed Evidence (寫3-5句，這段要最詳細):
+        - Provide SPECIFIC examples from MULTIPLE articles
+        - Include: company names (like Momo, Walmart, Amazon, 統一, PChome)
+        - Include: specific technologies (like GenAI, AI排班, 個人化推薦)
+        - Include: concrete numbers and statistics (like 99%準確率, 40%提升, 150萬員工)
+        - Mention at least 2-3 different companies or cases
+        - This paragraph should be 120-150 characters minimum for Chinese
+
+        PARAGRAPH 3 - Trends and Analysis (寫2-4句):
+        - Analyze the broader industry trends
+        - Discuss what these developments mean for the retail/finance/manufacturing sector
+        - Identify common patterns across the articles
+        - Explain why these developments are significant
+
+        PARAGRAPH 4 - Implications and Things to Watch (optional, 寫2-3句):
+        - Based on the TRENDS you observed in Paragraph 3, discuss implications
+        - "Things to watch for" or "areas worth monitoring" are acceptable
+        - Ground everything in patterns from the articles - no invented predictions
+        - If you cannot ground implications in evidence, skip this paragraph entirely
+
+        CRITICAL RULES:
+        - Synthesize information from MULTIPLE articles (not just one)
+        - Include specific company names, product names, and statistics
+        - Use actual data from the articles (numbers, percentages, concrete examples)
+        - MANDATORY: Return each paragraph as a separate string element in the 'paragraphs' array
+        - MANDATORY: For EVERY article you reference, you MUST include its URL in the 'urls' array
+        - The 'urls' array should contain ALL URLs of articles you used information from
+        - ABSOLUTELY DO NOT include URLs or hyperlinks in the paragraph text itself - NO (https://...) or [text](url) formatting
+        - When mentioning information from an article, just cite the source naturally (e.g., "根據報導" or "according to reports") without the URL
+
         The user's question is: {request.query}.
         The items are: {request.answers}.
       </promptString>
       <returnStruc>
         {
-          "answer" : "string",
-          "urls" : "urls of the items included in the answer"
+          "paragraphs" : "array of 3-4 paragraph strings, each paragraph should be 80-150 characters for Chinese (or 100-200 words for English). Each element is one complete paragraph.",
+          "urls" : "array of urls of the items included in the answer"
         }
       </returnStruc>
     </Prompt>
 
      <Prompt ref="SummarizeResultsPrompt">
       <promptString>
-        Given the following items, summarize the results as an answer to the user's question. `
-        The user's question is: {request.query}. 
+        Given the following items, provide a comprehensive summary that answers the user's question.
+        IMPORTANT: Respond in the same language as the user's question. If the question is in Chinese, respond in Chinese. If in English, respond in English.
+
+        CRITICAL: You MUST carefully read and analyze the ACTUAL CONTENT of each article. Look at the article titles, descriptions, and all available details. Do not write generic summaries.
+
+        CRITICAL LENGTH REQUIREMENT: Your summary MUST be at least 100-200 Chinese characters (or 150-300 words for English). Write in paragraph form with at least 2-3 paragraphs.
+
+        Structure your comprehensive summary as follows:
+
+        Paragraph 1 (Main Findings):
+        - Summarize the KEY findings from the articles
+        - Include specific details: company names, technologies mentioned, statistics, concrete examples
+        - Reference multiple articles, not just one
+        - Be specific about what each article discusses
+
+        Paragraph 2 (Synthesis and Analysis):
+        - Identify common themes or patterns across the articles
+        - Analyze the broader trends or insights
+        - Provide context about why these findings matter
+
+        Paragraph 3 (Connection to Query):
+        - Explicitly explain how these findings answer the user's specific question
+        - Connect the article content back to what the user was asking about
+        - Provide a clear conclusion or takeaway
+
+        IMPORTANT REQUIREMENTS:
+        - Base your summary on the ACTUAL article content provided, including titles, descriptions, and metadata
+        - Include specific details from the articles (company names, products, technologies, numbers)
+        - Synthesize across multiple articles
+        - Write at least 100-200 Chinese characters (or equivalent)
+        - Use multiple paragraphs, not a single paragraph
+
+        The user's question is: {request.query}.
         The items are: {request.answers}.
       </promptString>
       <returnStruc>
         {
-          "summary" : "string"
+          "summary" : "string in the same language as the user's question (MUST be 100-200+ characters for Chinese, 2-3 paragraphs)"
         }
       </returnStruc>
     </Prompt>
 
     <Prompt ref="DescriptionPromptForGenerate">
       <promptString>
-        The item with the following description is used to answer the user's question. 
-        Please provide a description of the item, in the context of the user's question
-        and the overall answer.
-        The user's question is: {request.query}.
-        The overall answer is: {request.answer}.
-        The item is: {item.description}.
+        Extract and summarize the 3 most important points from this article that relate to the user's query.
+
+        CRITICAL REQUIREMENTS:
+        - Focus ONLY on concrete facts, not meta-commentary about the article
+        - Include SPECIFIC details: company names, technologies, statistics, projects, timelines
+        - Write 2-3 concise sentences stating WHAT the article covers, not WHY it's relevant
+        - DO NOT explain relevance unless the connection to the query is very unclear
+        - DO NOT write meta-statements like "該文章詳細介紹了..." or "與用戶問題高度相關" or "來源於可信的..."
+
+        GOOD EXAMPLES:
+        ✓ "統一資訊與樺漢科技推出AI服務機器人平臺，支援餐飲業及零售業的生成式AI應用。平臺整合語音辨識、影像辨識等功能，已在超過50家門市部署。"
+        ✓ "Momo使用生成式AI檢測違規商品內容，準確率達99%，並透過Gemini優化個人化推薦，使點擊率提升40%。"
+        ✓ "Walmart推出多項GenAI工具供150萬員工使用，包括自動化商品描述生成、AI排班系統，節省400萬開發時數。"
+
+        BAD EXAMPLES (avoid these):
+        ✗ "該文章詳細介紹了台灣零售科技業的最新發展，特別是AI服務機器人平臺的推出，與用戶問題高度相關，且來源於可信的科技新聞網站。"
+        ✗ "本文探討了零售科技的應用，對於了解當前市場趨勢具有高度參考價值。"
+
+        FORMAT: 2-3 sentences, 60-100 Chinese characters total, pure factual content only
+
+        User's query: {request.query}
+        Article content: {item.description}
       </promptString>
       <returnStruc>
         {
-          "description" : "string"
+          "description" : "string (2-3 factual sentences, 60-100 characters, NO meta-commentary about the article itself)"
         }
       </returnStruc>
     </Prompt>
@@ -440,19 +607,22 @@
     <Prompt ref="RankingPrompt">
       <promptString>
         Assign a score between 0 and 100 to the following item
-        based on how relevant it is to the user's question. Use your knowledge from other sources, about the item, to make a judgement. 
-        If the score is above 50, provide a short description of the item highlighting the relevance to the user's question, without mentioning the user's question.
-        Provide an explanation of the relevance of the item to the user's question, without mentioning the user's question or the score or explicitly mentioning the term relevance.
-        If the score is below 75, in the description, include the reason why it is still relevant.
+        based on how relevant it is to the user's question.
 
         If the item is not a Recipe, it should get a substantially lower score.
+
+        CRITICAL: For the description field, focus ONLY on factual content:
+        - Extract 2-3 key facts with specific details (ingredients, cooking methods, preparation time)
+        - DO NOT write meta-commentary about the recipe
+        - State WHAT the recipe is and key characteristics
+        - Keep it factual and specific
 
         The user's question is: \"{request.query}\". The item's description in schema.org format is \"{item.description}\".
       </promptString>
       <returnStruc>
         {
           "score": "integer between 0 and 100",
-          "description": "short description of the item"
+          "description": "2-3 factual sentences with specific details"
         }
       </returnStruc>
     </Prompt>
@@ -730,13 +900,20 @@
       <promptString>
         Assign a score between 0 and 100 to the following statistical data point
         based on how relevant it is to the user's question about demographic or economic indicators.
-        The user's question is: "{request.query}". 
+
+        CRITICAL: For the description field, focus ONLY on factual content:
+        - State the specific data point, metric, and value
+        - Include relevant context (time period, location, comparison)
+        - DO NOT write meta-commentary about the data
+        - Keep it factual and specific
+
+        The user's question is: "{request.query}".
         The data point is: "{item.description}".
       </promptString>
       <returnStruc>
         {
           "score": "integer between 0 and 100",
-          "description": "short description of the data point"
+          "description": "2-3 factual sentences with specific details"
         }
       </returnStruc>
     </Prompt>
@@ -765,20 +942,344 @@
         <promptString>
           Assign a score between 0 and 100 to the following item from {item.source_site}
           based on how relevant it is to the user's question across all sites.
-          
+
           Consider that this result is being compared against results from multiple different sites,
           so factor in the credibility and relevance of the source site as well.
 
+          CRITICAL: For the description field, focus ONLY on factual content from the article:
+          - Extract 2-3 key facts with specific details (company names, statistics, technologies, projects)
+          - DO NOT write meta-commentary like "該文章探討了..." or "與...有一定的相關性" or "來源於可信的..."
+          - State WHAT the article covers, not WHY it's relevant or WHERE it comes from
+          - Example GOOD: "Target使用AI模擬未來訂單情況，協助供應鏈管理和門市人力配置。系統能預測需求並提前調整資源。"
+          - Example BAD: "該文章探討了零售業如何利用AI技術改善供應鏈管理，與台灣零售科技業的發展有一定的相關性，且來源於可信的新聞網站。"
+
           The description you generate should be in the same language as the item's description.
-          
-          The user's question is: "{request.query}". 
+
+          The user's question is: "{request.query}".
           The item's description is: "{item.description}".
           Source site: {item.source_site}
         </promptString>
         <returnStruc>
           {
             "score": "integer between 0 and 100",
-            "description": "short description of the item highlighting cross-site relevance"
+            "description": "2-3 factual sentences with specific details, NO meta-commentary about the article itself"
+          }
+        </returnStruc>
+      </Prompt>
+
+      <Prompt ref="RankingPromptForGenerate">
+        <promptString>
+          You are a sophisticated news search ranker. Evaluate this article across multiple signals:
+
+          **USER QUERY**: "{request.query}"
+
+          **ARTICLE**: {item.description}
+
+          **METADATA**:
+          - Published: {item.datePublished}
+          - Age: {item.age_days} days old
+          - Source: {item.source}
+
+          Evaluate the article on these dimensions:
+
+          1. **Semantic Relevance (0-100)**: How well does the article's content match the user's information need? Consider:
+             - Topic alignment and conceptual overlap
+             - Language-aware matching (Chinese queries can match Chinese content semantically)
+             - Depth of coverage on the query topic
+             - CRITICAL: If query asks for "最新" (latest) or "最近" (recent), heavily penalize old articles (>180 days) even if topically relevant
+
+          2. **Keyword Matching (0-100)**: Presence and frequency of query terms. Consider:
+             - Exact keyword matches (higher weight)
+             - Partial matches and synonyms (lower weight)
+             - Term frequency and prominence in title/content
+
+          3. **Freshness (0-100)**: Recency value for news content. Use this scoring guide:
+             - 0-7 days old: 90-100 (very fresh)
+             - 8-30 days old: 70-89 (recent)
+             - 31-90 days old: 40-69 (moderately old)
+             - 91-180 days old: 20-39 (old)
+             - 180-365 days old: 10-19 (very old)
+             - 365+ days old: 0-9 (obsolete)
+             - CRITICAL: If query contains temporal keywords like "最新/最近/latest/recent", articles older than 180 days should score 0-15 on freshness
+
+          4. **Source Authority (0-100)**: Publisher credibility and topical expertise:
+             - Recognized tech/news publishers (e.g., iThome, TechCrunch): 80-100
+             - Established mainstream media: 60-79
+             - Niche/specialized sources: 40-59
+             - Unknown/unverified sources: 0-39
+
+          **TEMPORAL QUERY DETECTION**:
+          If the query contains temporal keywords (最新/最近/latest/recent/新/new), adjust the weighting:
+          - Semantic Relevance: 30%
+          - Keyword Matching: 20%
+          - Freshness: 40% (DOUBLED from 20%)
+          - Source Authority: 10%
+
+          Otherwise use standard weighting:
+          - Semantic Relevance: 40%
+          - Keyword Matching: 25%
+          - Freshness: 20%
+          - Source Authority: 15%
+
+          Calculate the **Final Score** using the appropriate weighting based on whether temporal keywords are detected.
+
+          IMPORTANT: Write the description in the same language as the user's question.
+
+          CRITICAL: For the description field, focus ONLY on factual content from the article:
+          - Extract 2-3 key facts with specific details (company names, statistics, technologies)
+          - DO NOT write meta-commentary like "該文章探討了..." or "對於了解...有參考價值"
+          - State WHAT the article covers, not WHY it's relevant
+          - Example GOOD: "Momo使用GenAI檢測違規商品，準確率達99%，並透過Gemini提升推薦點擊率40%。"
+          - Example BAD: "該文章探討了零售科技的應用，對於了解台灣零售科技業的發展有一定的參考價值。"
+        </promptString>
+        <returnStruc>
+          {
+            "semantic_score": "integer 0-100",
+            "keyword_score": "integer 0-100",
+            "freshness_score": "integer 0-100",
+            "authority_score": "integer 0-100",
+            "final_score": "integer 0-100 (weighted average)",
+            "description": "2-3 factual sentences with specific details, NO meta-commentary about the article itself"
+          }
+        </returnStruc>
+      </Prompt>
+
+      <Prompt ref="SynthesizePromptForGenerate">
+        <promptString>
+          Given the following items, synthesize a comprehensive answer to the user's question.
+
+          CURRENT DATE: Today is {system.current_date}. You are answering questions based on news articles. Do not make predictions about the future.
+
+          IMPORTANT: Answer in the same language as the user's question. If the question is in Chinese, answer in Chinese. If in English, answer in English.
+
+          CRITICAL OUTPUT FORMAT:
+          - You MUST return a JSON object with a "paragraphs" field containing an ARRAY of 3-4 paragraph strings
+          - Each element of the array is ONE complete paragraph
+          - DO NOT return an "answer" field - use "paragraphs" array instead
+          - Paragraph 4 is optional - only include if you can ground implications in observed trends
+          - Each paragraph should be 100-180 Chinese characters (or 120-250 words for English)
+          - Total content should be 400-600 Chinese characters minimum (longer is better if information-dense)
+          - Quality over brevity: Include all specific details even if it makes paragraphs longer
+
+          JSON OUTPUT EXAMPLE:
+          {
+            "paragraphs": [
+              "第一段內容...（直接回答問題，包含具體公司名稱）",
+              "第二段內容...（提供具體例子和數據，至少3家公司、3個數字）",
+              "第三段內容...（分析已發生的趨勢，不預測未來）",
+              "第四段內容...（基於證據的啟示，可選）"
+            ],
+            "urls": ["https://example.com/article1", "https://example.com/article2"]
+          }
+
+          MANDATORY PARAGRAPH STRUCTURE:
+
+          PARAGRAPH 1 - Direct Answer (寫2-3句):
+          - Directly answer what the user asked with SPECIFIC information
+          - NO vague statements like "零售業積極運用AI技術" or "many companies are adopting AI"
+          - YES specific statements: "台灣零售業者如Momo、PChome、統一超商都已部署生成式AI系統"
+          - State concrete findings with at least 2 specific company/technology names
+          - Keep concise but information-dense
+
+          PARAGRAPH 2 - Detailed Evidence (寫3-5句，這段要最詳細且最具體):
+          - MANDATORY: Include at least 3 specific company names with their implementations
+          - MANDATORY: Include at least 3 concrete numbers/statistics (percentages, amounts, dates)
+          - MANDATORY: Include at least 3 specific technology names or product names
+          - Each sentence must contain: [Company] + [Technology/Action] + [Specific Result/Number]
+          - BAD EXAMPLE: "許多零售商使用AI來提升效率和改善客戶體驗"
+          - GOOD EXAMPLE: "Momo使用GenAI檢測違規商品，準確率達99%，並透過Gemini優化個人化推薦，使點擊率提升40% (https://...)。Walmart推出GenAI工具供150萬員工使用，包括自動生成商品描述、AI排班系統，節省400萬開發時數 (https://...)。"
+          - This paragraph should be 150-200 characters minimum for Chinese
+
+          PARAGRAPH 3 - Trends and Analysis (寫2-4句，需包含具體數據或事實):
+          - NO vague analysis like "AI正在改變零售業" or "this represents a significant trend"
+          - YES specific patterns with evidence: "從供應鏈管理到門市營運，至少5家主要零售商都在2024年部署了AI系統"
+          - Reference specific timeframes, adoption rates, or market data when discussing trends
+          - Connect multiple concrete examples to show the pattern
+          - Every analytical statement must be grounded in specific facts from the articles
+
+          PARAGRAPH 4 - Implications and Things to Watch (optional, 寫2-3句):
+          - Based on the TRENDS you observed in Paragraph 3, discuss implications
+          - "Things to watch for" or "areas worth monitoring" are acceptable
+          - Ground everything in patterns from the articles - no invented predictions
+          - BAD EXAMPLE: "預計2025年AI投資將增加30%" (fabricated future statistic)
+          - GOOD EXAMPLE: "考慮到已有5家零售商在2024年部署AI系統，其他業者可能也會跟進類似技術" (reasonable extrapolation from observed trend)
+          - GOOD EXAMPLE: "這些發展顯示供應鏈管理和客戶服務是值得關注的重點領域" (grounded in evidence)
+          - If articles quote company-announced plans, you may mention those with citation
+          - If you cannot ground implications in evidence, skip this paragraph entirely
+
+          CRITICAL RULES - HIGH INFORMATION DENSITY REQUIRED:
+
+          **Specificity Requirements:**
+          - NEVER use vague language: "許多公司", "積極發展", "不斷優化", "many companies", "actively developing"
+          - ALWAYS use specific names, numbers, and concrete facts
+          - Minimum per answer: 4+ company names, 4+ specific numbers/statistics, 3+ technology/product names
+          - Each factual statement must be verifiable from the source articles
+
+          **FORBIDDEN Phrases (DO NOT USE THESE):**
+          - ❌ "零售業積極運用AI技術" → ✅ "Momo、PChome、全聯都已部署GenAI系統"
+          - ❌ "提升了營運效率" → ✅ "將處理時間從2小時縮短至15分鐘，效率提升87%"
+          - ❌ "獲得良好成效" → ✅ "點擊率提升40%，錯誤率降低至1%以下"
+          - ❌ "many retailers are adopting AI" → ✅ "Walmart, Target, Amazon have deployed AI systems affecting 500,000+ employees"
+          - ❌ "improving customer experience" → ✅ "reduced wait time by 35% and increased satisfaction scores from 3.2 to 4.5"
+
+          **Grounding Requirements:**
+          - Every statement must be traceable to source articles
+          - Reasonable extrapolation from trends is acceptable (e.g., "other companies may follow suit")
+          - Invented statistics or baseless predictions are NOT acceptable
+          - ❌ BAD: "預計2025年將增加30%" (invented number)
+          - ✅ GOOD: "考慮到目前趨勢，此領域值得持續關注" (grounded in observed patterns)
+
+          **Citation Rules:**
+          - Synthesize information from MULTIPLE articles (not just one)
+          - MANDATORY: Return each paragraph as a separate string element in the 'paragraphs' array
+          - MANDATORY: For EVERY article you reference, you MUST include its URL in the 'urls' array
+          - MANDATORY: When you mention specific information from an article, you MUST immediately follow it with the URL in this exact format: (https://...)
+          - Example: "Momo使用GenAI檢測違規商品，準確率達99% (https://www.ithome.com.tw/article/12345)。"
+          - Every factual claim or example MUST have its source URL in parentheses immediately after the statement
+          - Do NOT use markdown format like [來源](url) - use plain URLs in parentheses like (https://...)
+
+          The user's question is: {request.query}.
+          The items are: {request.answers}.
+        </promptString>
+        <returnStruc>
+          {
+            "paragraphs" : "array of 3-4 paragraph strings (NOT 4), each paragraph should be 100-180 characters for Chinese (or 120-250 words for English). Each element is one complete paragraph. DO NOT include future predictions.",
+            "urls" : "array of urls of the items included in the answer"
+          }
+        </returnStruc>
+      </Prompt>
+
+      <Prompt ref="DescriptionPromptForGenerate">
+        <promptString>
+          Extract and summarize the 3 most important points from this article that relate to the user's query.
+
+          CRITICAL REQUIREMENTS:
+          - Focus ONLY on concrete facts, not meta-commentary about the article
+          - Include SPECIFIC details: company names, technologies, statistics, projects, timelines
+          - Write 2-3 concise sentences stating WHAT the article covers, not WHY it's relevant
+          - DO NOT explain relevance unless the connection to the query is very unclear
+          - DO NOT write meta-statements like "該文章詳細介紹了..." or "與用戶問題高度相關" or "來源於可信的..."
+
+          GOOD EXAMPLES:
+          ✓ "統一資訊與樺漢科技推出AI服務機器人平臺，支援餐飲業及零售業的生成式AI應用。平臺整合語音辨識、影像辨識等功能，已在超過50家門市部署。"
+          ✓ "Momo使用生成式AI檢測違規商品內容，準確率達99%，並透過Gemini優化個人化推薦，使點擊率提升40%。"
+          ✓ "Walmart推出多項GenAI工具供150萬員工使用，包括自動化商品描述生成、AI排班系統，節省400萬開發時數。"
+
+          BAD EXAMPLES (avoid these):
+          ✗ "該文章詳細介紹了台灣零售科技業的最新發展，特別是AI服務機器人平臺的推出，與用戶問題高度相關，且來源於可信的科技新聞網站。"
+          ✗ "本文探討了零售科技的應用，對於了解當前市場趨勢具有高度參考價值。"
+
+          FORMAT: 2-3 sentences, 60-100 Chinese characters total, pure factual content only
+
+          User's query: {request.query}
+          Article content: {item.description}
+        </promptString>
+        <returnStruc>
+          {
+            "description" : "string (2-3 factual sentences, 60-100 characters, NO meta-commentary about the article itself)"
+          }
+        </returnStruc>
+      </Prompt>
+
+      <Prompt ref="RankingPromptForGenerate_MultiSignal">
+        <promptString>
+          You are a sophisticated news search ranker. Evaluate this article across multiple signals:
+
+          **USER QUERY**: "{request.query}"
+
+          **ARTICLE**: {item.description}
+
+          **METADATA**:
+          - Published: {item.datePublished}
+          - Age: {item.age_days} days old
+          - Source: {item.source}
+
+          Evaluate the article on these dimensions:
+
+          1. **Semantic Relevance (0-100)**: How well does the article's content match the user's information need? Consider:
+             - Topic alignment and conceptual overlap
+             - Language-aware matching (Chinese queries can match Chinese content semantically)
+             - Depth of coverage on the query topic
+             - CRITICAL: If query asks for "最新" (latest) or "最近" (recent), heavily penalize old articles (>180 days) even if topically relevant
+
+          2. **Keyword Matching (0-100)**: Presence and frequency of query terms. Consider:
+             - Exact keyword matches (higher weight)
+             - Partial matches and synonyms (lower weight)
+             - Term frequency and prominence in title/content
+
+          3. **Freshness (0-100)**: Recency value for news content. Use this scoring guide:
+             - 0-7 days old: 90-100 (very fresh)
+             - 8-30 days old: 70-89 (recent)
+             - 31-90 days old: 40-69 (moderately old)
+             - 91-180 days old: 20-39 (old)
+             - 180-365 days old: 10-19 (very old)
+             - 365+ days old: 0-9 (obsolete)
+             - CRITICAL: If query contains temporal keywords like "最新/最近/latest/recent", articles older than 180 days should score 0-15 on freshness
+
+          4. **Source Authority (0-100)**: Publisher credibility and topical expertise:
+             - Recognized tech/news publishers (e.g., iThome, TechCrunch): 80-100
+             - Established mainstream media: 60-79
+             - Niche/specialized sources: 40-59
+             - Unknown/unverified sources: 0-39
+
+          **TEMPORAL QUERY DETECTION**:
+          If the query contains temporal keywords (最新/最近/latest/recent/新/new), adjust the weighting:
+          - Semantic Relevance: 30%
+          - Keyword Matching: 20%
+          - Freshness: 40% (DOUBLED from 20%)
+          - Source Authority: 10%
+
+          Otherwise use standard weighting:
+          - Semantic Relevance: 40%
+          - Keyword Matching: 25%
+          - Freshness: 20%
+          - Source Authority: 15%
+
+          Calculate the **Final Score** using the appropriate weighting based on whether temporal keywords are detected.
+
+          IMPORTANT: Write the description in the same language as the user's question.
+        </promptString>
+        <returnStruc>
+          {
+            "semantic_score": "integer 0-100",
+            "keyword_score": "integer 0-100",
+            "freshness_score": "integer 0-100",
+            "authority_score": "integer 0-100",
+            "final_score": "integer 0-100 (weighted average)",
+            "description": "short description in same language as query"
+          }
+        </returnStruc>
+      </Prompt>
+
+      <Prompt ref="DiversityReranking">
+        <promptString>
+          You are optimizing search results for diversity while maintaining relevance.
+
+          **USER QUERY**: "{request.query}"
+
+          **RANKED ARTICLES** (in order of relevance):
+          {request.ranked_items}
+
+          Your task: Reorder these articles to maximize diversity while keeping highly relevant items near the top.
+
+          Apply these diversity principles:
+
+          1. **Topic Diversity**: Avoid clustering articles about the exact same sub-topic
+          2. **Source Diversity**: Spread articles from the same publisher
+          3. **Temporal Diversity**: Mix recent and slightly older articles for broader perspective
+          4. **Angle Diversity**: Prioritize different perspectives/angles on the topic
+
+          **Balancing Rule**:
+          - Top 3 positions: Prioritize pure relevance (minimal reordering)
+          - Positions 4-10: Balance relevance (70%) with diversity (30%)
+          - Positions 11+: Balance relevance (60%) with diversity (40%)
+
+          Return the reordered list with justification for major moves.
+        </promptString>
+        <returnStruc>
+          {
+            "reordered_indices": "array of integers representing new order (0-indexed)",
+            "diversity_notes": "brief explanation of key reordering decisions"
           }
         </returnStruc>
       </Prompt>

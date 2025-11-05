@@ -16,6 +16,8 @@ import core.ranking as ranking
 from misc.logger.logging_config_helper import get_configured_logger
 from core.config import CONFIG
 import asyncio
+from datetime import datetime, timezone, timedelta
+import json
 
 logger = get_configured_logger("fast_track")
 
@@ -48,6 +50,10 @@ class FastTrack:
         if (len(self.handler.prev_queries) > 0):
             logger.debug(f"Fast track not eligible: {len(self.handler.prev_queries)} previous queries present")
             return False
+        # Skip fast track for free conversation mode - no vector search needed
+        if self.handler.free_conversation:
+            logger.info("Fast track not eligible: free_conversation mode - skipping vector search")
+            return False
         logger.info("Query is eligible for fast track")
         return True
         
@@ -58,19 +64,63 @@ class FastTrack:
             return
         
         logger.info("Starting fast track processing")
-        
+
         self.handler.retrieval_done_event.set()  # Use event instead of flag
-        
+
         try:
-           
+            # Detect if query has temporal keywords
+            temporal_keywords = ['最新', '最近', '近期', 'latest', 'recent', '新', '現在', '目前', '當前']
+            is_temporal_query = any(keyword in self.handler.query for keyword in temporal_keywords)
+
+            if is_temporal_query:
+                logger.info(f"[FASTTRACK-TEMPORAL] Temporal query detected: '{self.handler.query}' - retrieving 150 items")
+                num_to_retrieve = 150
+            else:
+                logger.info(f"[FASTTRACK-TEMPORAL] Non-temporal query - retrieving 50 items")
+                num_to_retrieve = 50
+
             items = await search(
-                self.handler.query, 
+                self.handler.query,
                 self.handler.site,
                 query_params=self.handler.query_params,
-                handler=self.handler
+                handler=self.handler,
+                num_results=num_to_retrieve
             )
+
+            # Pre-filter by date for temporal queries
+            if is_temporal_query and len(items) > 0:
+                cutoff_date = datetime.now(timezone.utc) - timedelta(days=365)
+                filtered_items = []
+
+                for url, json_str, name, site in items:
+                    try:
+                        schema_obj = json.loads(json_str)
+                        date_published = schema_obj.get('datePublished', 'Unknown')
+
+                        if date_published != 'Unknown':
+                            # Parse date
+                            date_str = date_published.split('T')[0] if 'T' in date_published else date_published
+                            pub_date = datetime.strptime(date_str, '%Y-%m-%d')
+                            pub_date = pub_date.replace(tzinfo=timezone.utc)
+
+                            # Keep only recent articles
+                            if pub_date >= cutoff_date:
+                                filtered_items.append([url, json_str, name, site])
+                    except Exception as e:
+                        # If we can't parse the date, skip this article for temporal queries
+                        logger.debug(f"Could not parse date for temporal filtering: {e}")
+                        pass
+
+                # If we filtered too aggressively, take top 50 anyway
+                if len(filtered_items) < 50:
+                    logger.info(f"[FASTTRACK-TEMPORAL] Only {len(filtered_items)} recent articles, using all {len(items)} retrieved")
+                    items = items[:80]
+                else:
+                    logger.info(f"[FASTTRACK-TEMPORAL] Filtered {len(items)} → {len(filtered_items)} recent articles (last 365 days)")
+                    items = filtered_items[:80]
+
             self.handler.final_retrieved_items = items
-          
+
             if (not self.handler.query_done and not self.handler.abort_fast_track_event.is_set()):
                 self.handler.fastTrackRanker = ranking.Ranking(self.handler, items, ranking.Ranking.FAST_TRACK)
                 await self.handler.fastTrackRanker.do()

@@ -11,6 +11,7 @@ Backwards compatibility is not guaranteed at this time.
 
 from xml.etree import ElementTree as ET
 import json 
+from datetime import datetime
 import os  # Add this import
 from misc.logger.logging_config_helper import get_configured_logger
 from core.llm import ask_llm
@@ -145,6 +146,8 @@ def get_prompt_variable_value(variable, handler):
         value = getattr(handler, 'item_name', '')
     elif variable == "request.details_requested":
         value = getattr(handler, 'details_requested', '')
+    elif variable == "system.current_date":
+        value = datetime.now().strftime("%Y-%m-%d")
     else:
         logger.warning(f"Unknown variable: {variable}")
         value = ""
@@ -187,9 +190,9 @@ def get_cached_values(site, item_type, prompt_name):
     logger.debug(f"Cache miss for prompt: {cache_key}")
     return None
 
-def find_prompt(site, item_type, prompt_name):  
-    if (site):
-        site = site[0]
+def find_prompt(site, item_type, prompt_name):
+    if isinstance(site, list):
+        site = site[0] if site else None
     if (prompt_roots == []):
         logger.debug("Prompt roots not initialized, initializing now")
         init_prompts()
@@ -353,9 +356,9 @@ class PromptRunner:
     def __init__(self, handler):
         self.handler = handler
 
-    async def run_prompt(self, prompt_name, level="low", verbose=False, timeout=8):
-        prompt_runner_logger.info(f"Running prompt: {prompt_name} with level={level}, timeout={timeout}s")
-        
+    async def run_prompt(self, prompt_name, level="low", verbose=False, timeout=8, max_length=512):
+        prompt_runner_logger.info(f"Running prompt: {prompt_name} with level={level}, timeout={timeout}s, max_length={max_length}")
+
         try:
             prompt_str, ans_struc = self.get_prompt(prompt_name)
             if (prompt_str is None):
@@ -363,15 +366,15 @@ class PromptRunner:
                     print(f"Prompt {prompt_name} not found")
                 prompt_runner_logger.debug(f"Cannot run prompt '{prompt_name}' - prompt not found")
                 return None
-        
+
             prompt_runner_logger.debug(f"Filling prompt template with handler data")
             prompt = fill_prompt(prompt_str, self.handler)
             if (verbose):
                 print(f"Prompt: {prompt}")
             prompt_runner_logger.debug(f"Filled prompt length: {len(prompt)} chars")
-            
-            prompt_runner_logger.info(f"Calling LLM with level={level}")
-            response = await ask_llm(prompt, ans_struc, level=level, timeout=timeout, query_params=self.handler.query_params)
+
+            prompt_runner_logger.info(f"Calling LLM with level={level}, max_length={max_length}")
+            response = await ask_llm(prompt, ans_struc, level=level, timeout=timeout, query_params=self.handler.query_params, max_length=max_length)
             
             if response is None:
                 prompt_runner_logger.warning(f"LLM returned None for prompt '{prompt_name}'")

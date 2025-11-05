@@ -61,6 +61,15 @@ def get_param(query_params, param_name, param_type=str, default_value=None):
         elif param_type == list:
             if isinstance(value, list):
                 return value
+            # Try JSON parsing first for proper array handling
+            try:
+                import json
+                parsed = json.loads(value)
+                if isinstance(parsed, list):
+                    return parsed
+            except (json.JSONDecodeError, ValueError):
+                pass
+            # Fallback to simple comma-split
             return [item.strip() for item in value.strip('[]').split(',') if item.strip()]
         else:
             raise ValueError(f"Unsupported parameter type: {param_type}")

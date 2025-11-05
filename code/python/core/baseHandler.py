@@ -15,6 +15,8 @@ import time
 import uuid
 from typing import List
 from core.schemas import Message
+from datetime import datetime, timezone, timedelta
+import json
 import core.query_analysis.decontextualize as decontextualize
 import core.query_analysis.analyze_query as analyze_query
 import core.query_analysis.memory as memory   
@@ -101,6 +103,10 @@ class NLWebHandler:
         # should we just list the results or try to summarize the results or use the results to generate an answer
         # Valid values are "none","summarize" and "generate"
         self.generate_mode = get_param(query_params, "generate_mode", str, "none")
+
+        # Free conversation mode - skip vector search and use conversation context only
+        free_conversation = get_param(query_params, "free_conversation", str, "false")
+        self.free_conversation = free_conversation not in ["False", "false", "0", None]
         # the items that have been retrieved from the vector database, could be before decontextualization.
         # See below notes on fasttrack
         self.retrieved_items = []
@@ -249,6 +255,7 @@ class NLWebHandler:
 
 
     async def runQuery(self):
+        print(f"========== NLWEBHANDLER.runQuery() CALLED for query: {self.query}, generate_mode: {self.generate_mode} ==========")
         logger.info(f"Starting query execution for conversation_id: {self.conversation_id}")
         try:
             # Send begin-nlweb-response message at the start
@@ -263,9 +270,22 @@ class NLWebHandler:
             # Check if query is done regardless of whether FastTrack worked
             if (self.query_done):
                 return self.return_value
-                
+
+            # Cache results BEFORE PostRanking for generate mode reuse
+            # Must cache before PostRanking because summarize mode exits inside PostRanking
+            if self.generate_mode in ["none", "summarize"] and hasattr(self, 'final_ranked_answers') and self.final_ranked_answers:
+                try:
+                    from core.results_cache import get_results_cache
+                    cache = get_results_cache()
+                    # Use query+site as fallback key if conversation_id is empty
+                    cache_key = self.conversation_id if self.conversation_id else f"{self.query}_{self.site}"
+                    cache.store(cache_key, self.final_ranked_answers, self.query)
+                    print(f"[CACHE] Stored {len(self.final_ranked_answers)} results for key {cache_key}")
+                except Exception as e:
+                    logger.warning(f"Failed to cache results: {e}")
+
             await post_ranking.PostRanking(self).do()
-            
+
             self.return_value["conversation_id"] = self.conversation_id
             
             # Send end-nlweb-response message at the end
@@ -306,7 +326,7 @@ class NLWebHandler:
      #   tasks.append(asyncio.create_task(analyze_query.DetectMultiItemTypeQuery(self).do()))
      #   tasks.append(asyncio.create_task(analyze_query.DetectQueryType(self).do()))
      #   tasks.append(asyncio.create_task(relevance_detection.RelevanceDetection(self).do()))
-     #   tasks.append(asyncio.create_task(memory.Memory(self).do()))
+        tasks.append(asyncio.create_task(memory.Memory(self).do()))
      #   tasks.append(asyncio.create_task(required_info.RequiredInfo(self).do()))
         
         try:
@@ -329,16 +349,70 @@ class NLWebHandler:
             if not site_supports_standard_retrieval(self.site):
                 self.final_retrieved_items = []
                 self.retrieval_done_event.set()
+            # Skip retrieval for free conversation mode - use conversation context only
+            elif self.free_conversation:
+                logger.info("[FREE_CONVERSATION] Skipping vector search - using conversation context only")
+                print("[FREE_CONVERSATION] Skipping vector search - using conversation context only")
+                self.final_retrieved_items = []
+                self.retrieval_done_event.set()
             else:
+                # Detect if query has temporal keywords
+                temporal_keywords = ['最新', '最近', '近期', 'latest', 'recent', '新', '現在', '目前', '當前']
+                is_temporal_query = any(keyword in self.query for keyword in temporal_keywords)
+
+                if is_temporal_query:
+                    logger.info(f"[TEMPORAL] Temporal query detected: '{self.query}' - retrieving 150 items for date filtering")
+                    num_to_retrieve = 150
+                else:
+                    logger.info(f"[TEMPORAL] Non-temporal query: '{self.query}' - retrieving 50 items")
+                    num_to_retrieve = 50
+
+                print(f"[NLWEBHANDLER] About to call search() with num_results={num_to_retrieve}")
                 items = await search(
-                    self.decontextualized_query, 
+                    self.decontextualized_query,
                     self.site,
                     query_params=self.query_params,
-                    handler=self
+                    handler=self,
+                    num_results=num_to_retrieve
                 )
-                self.final_retrieved_items = items
+                print(f"[NLWEBHANDLER] search() returned {len(items)} items")
+
+                # Pre-filter by date for temporal queries
+                if is_temporal_query and len(items) > 0:
+                    cutoff_date = datetime.now(timezone.utc) - timedelta(days=365)
+                    filtered_items = []
+
+                    for url, json_str, name, site in items:
+                        try:
+                            schema_obj = json.loads(json_str)
+                            date_published = schema_obj.get('datePublished', 'Unknown')
+
+                            if date_published != 'Unknown':
+                                # Parse date
+                                date_str = date_published.split('T')[0] if 'T' in date_published else date_published
+                                pub_date = datetime.strptime(date_str, '%Y-%m-%d')
+                                pub_date = pub_date.replace(tzinfo=timezone.utc)
+
+                                # Keep only recent articles
+                                if pub_date >= cutoff_date:
+                                    filtered_items.append([url, json_str, name, site])
+                        except Exception as e:
+                            # If we can't parse the date, skip this article for temporal queries
+                            logger.debug(f"Could not parse date for temporal filtering: {e}")
+                            pass
+
+                    # If we filtered too aggressively, take top 50 anyway
+                    if len(filtered_items) < 50:
+                        logger.info(f"[TEMPORAL] Only {len(filtered_items)} recent articles found, using all {len(items)} retrieved")
+                        self.final_retrieved_items = items[:80]
+                    else:
+                        logger.info(f"[TEMPORAL] Filtered {len(items)} → {len(filtered_items)} recent articles (last 365 days)")
+                        self.final_retrieved_items = filtered_items[:80]
+                else:
+                    self.final_retrieved_items = items
+
                 self.retrieval_done_event.set()
-        
+
         logger.info("Preparation phase completed")
 
     def decontextualizeQuery(self):

@@ -1,5 +1,4 @@
-preferred_provider: azure_openai
-
+preferred_provider: openai
 providers:
   azure_openai:
     api_key_env: AZURE_OPENAI_API_KEY
@@ -27,7 +26,7 @@ providers:
     model: gemini-embedding-exp-03-07
 
   openai:
-    api_key_env: OPENAI_API_KEY
+    api_key_env: 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
     api_endpoint_env: OPENAI_ENDPOINT
     model: text-embedding-3-small
 
@@ -36,3 +35,7 @@ providers:
     api_endpoint_env: SNOWFLAKE_ACCOUNT_URL
     api_version_env: "2024-10-01"
     model: snowflake-arctic-embed-m-v1.5
+
+  huggingface:
+    api_key_env: HF_TOKEN
+    model: sentence-transformers/all-MiniLM-L6-v2

@@ -10,8 +10,11 @@ Backwards compatibility is not guaranteed at this time.
 
 import asyncio
 import os
+import io
 import sys
 from dotenv import load_dotenv
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
 
 
 async def main():

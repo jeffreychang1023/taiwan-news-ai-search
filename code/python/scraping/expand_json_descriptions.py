@@ -287,8 +287,8 @@ Do not include introduction phrases like "This site offers" - start directly wit
                         {"role": "system", "content": "You are an expert at analyzing websites and creating concise, practical descriptions focused on content and offerings rather than business history."},
                         {"role": "user", "content": prompt}
                     ],
-                    max_tokens=800,
-                    temperature=0.7
+                    max_completion_tokens=800,
+                    
                 )
                 return response.choices[0].message.content.strip()
                 
@@ -296,7 +296,7 @@ Do not include introduction phrases like "This site offers" - start directly wit
                 response = await asyncio.to_thread(
                     self.client.messages.create,
                     model=self.model,
-                    max_tokens=800,
+                    max_completion_tokens=800,
                     temperature=0.7,
                     messages=[
                         {"role": "user", "content": prompt}

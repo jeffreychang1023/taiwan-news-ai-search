@@ -452,3 +452,21 @@ old_code/set_keys.sh
 .vscode/settings.json
 /static/ta/ba
 static/.DS_Store
+
+# Additional ignores for deployment
+myenv311/
+qdrant_data/
+.ipynb_checkpoints/
+testing/
+.claude/settings.local.json
+.claude/past convos/
+*.py_old
+*.py_before_*
+*_backup
+*.backup
+test_*.py
+check_*.py
+analyze_*.py
+retry_*.py
+upload_*.py
+truncate_*.py

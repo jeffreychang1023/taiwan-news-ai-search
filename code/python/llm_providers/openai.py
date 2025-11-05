@@ -21,10 +21,8 @@ import threading
 from misc.logger.logging_config_helper import get_configured_logger
 from misc.logger.logger import LogLevel
 
-
 from llm_providers.llm_provider import LLMProvider
 
-from misc.logger.logging_config_helper import get_configured_logger, LogLevel
 logger = get_configured_logger("llm")
 
 
@@ -35,10 +33,9 @@ class ConfigurationError(RuntimeError):
     pass
 
 
-
 class OpenAIProvider(LLMProvider):
     """Implementation of LLMProvider for OpenAI API."""
-    
+
     _client_lock = threading.Lock()
     _client = None
 
@@ -47,7 +44,6 @@ class OpenAIProvider(LLMProvider):
         """
         Retrieve the OpenAI API key from environment or raise an error.
         """
-        # Get the API key from the preferred provider config
         provider_config = CONFIG.llm_endpoints["openai"]
         api_key = provider_config.api_key
         return api_key
@@ -57,7 +53,7 @@ class OpenAIProvider(LLMProvider):
         """
         Configure and return an asynchronous OpenAI client.
         """
-        with cls._client_lock:  # Thread-safe client initialization
+        with cls._client_lock:
             if cls._client is None:
                 api_key = cls.get_api_key()
                 cls._client = AsyncOpenAI(api_key=api_key)
@@ -68,12 +64,16 @@ class OpenAIProvider(LLMProvider):
         """
         Construct the system and user message sequence enforcing a JSON schema.
         """
+        # Create a more explicit system message with the exact field names
+        schema_fields = ", ".join([f'"{k}"' for k in schema.keys()])
         return [
             {
                 "role": "system",
                 "content": (
-                    f"Provide a valid JSON response matching this schema: "
-                    f"{json.dumps(schema)}"
+                    f"You are an AI that only responds with valid JSON. "
+                    f"CRITICAL: Your response MUST contain EXACTLY these fields: {schema_fields}. "
+                    f"Do not add, remove, or rename any fields. "
+                    f"Schema: {json.dumps(schema)}"
                 )
             },
             {"role": "user", "content": prompt}
@@ -89,50 +89,63 @@ class OpenAIProvider(LLMProvider):
         if not match:
             logger.error("Failed to parse JSON from content: %r", content)
             return {}
-        return json.loads(match.group(1))
+        try:
+            return json.loads(match.group(1))
+        except json.JSONDecodeError as e:
+            logger.error("JSON decode error: %s", e)
+            return {}
 
     async def get_completion(
         self,
         prompt: str,
         schema: Dict[str, Any],
         model: Optional[str] = None,
-        temperature: float = 0.7,
-        max_tokens: int = 2048,
-        timeout: float = 30.0,
+        temperature: float = 0.1,
+        max_completion_tokens: int = 2048,
+        timeout: float = 60.0,
         **kwargs
     ) -> Dict[str, Any]:
         """
         Send an async chat completion request and return parsed JSON output.
         """
-        # If model not provided, get it from config
         if model is None:
             provider_config = CONFIG.llm_endpoints["openai"]
-            # Use the 'high' model for completions by default
             model = provider_config.models.high
-        
+
         client = self.get_client()
         messages = self._build_messages(prompt, schema)
 
         try:
+            # Use JSON mode to enforce structured output
             response = await asyncio.wait_for(
                 client.chat.completions.create(
                     model=model,
                     messages=messages,
                     temperature=temperature,
-                    max_tokens=max_tokens,
+                    max_completion_tokens=max_completion_tokens,
+                    response_format={"type": "json_object"},
+                    **kwargs
                 ),
                 timeout
             )
         except asyncio.TimeoutError:
             logger.error("Completion request timed out after %s seconds", timeout)
             return {}
-
-        try:
-            return self.clean_response(response.choices[0].message.content)
         except Exception as e:
-            logger.error(f"Error processing OpenAI response: {e}")
+            logger.error("Error calling OpenAI API: %s", e)
             return {}
 
+        # Try parsing the response multiple ways
+        content = getattr(response.choices[0].message, "content", "")
+        result = self.clean_response(content)
+        if not result:
+            # As a last resort, try full content directly
+            try:
+                result = json.loads(content)
+            except Exception:
+                logger.error("Failed to parse OpenAI response as JSON: %r", content)
+                return {}
+        return result
 
 
 # Create a singleton instance
