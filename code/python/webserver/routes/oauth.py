@@ -140,7 +140,12 @@ async def oauth_callback_handler(request: web.Request) -> web.Response:
     
     # Serve the oauth-callback.html file
     try:
-        static_dir = Path(__file__).parent.parent.parent.parent.parent / 'static'
+        # Use NLWEB_STATIC_DIR if available, otherwise fall back to path calculation
+        env_static_dir = os.environ.get('NLWEB_STATIC_DIR')
+        if env_static_dir:
+            static_dir = Path(env_static_dir)
+        else:
+            static_dir = Path(__file__).parent.parent.parent.parent.parent / 'static'
         callback_file = static_dir / 'oauth-callback.html'
         
         if not callback_file.exists():
