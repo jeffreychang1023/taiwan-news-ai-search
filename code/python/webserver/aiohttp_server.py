@@ -36,11 +36,18 @@ class AioHTTPServer:
         self.app: Optional[web.Application] = None
         self.runner: Optional[web.AppRunner] = None
         self.site: Optional[web.TCPSite] = None
-        
+
     def _load_config(self, config_path: str) -> Dict[str, Any]:
         """Load configuration from YAML file"""
-        base_path = Path(__file__).parent.parent.parent.parent
-        config_file = base_path / config_path
+        # Use NLWEB_CONFIG_DIR if available, otherwise fall back to path calculation
+        config_dir = os.environ.get('NLWEB_CONFIG_DIR')
+        if config_dir:
+            # config_path is like "config/config_webserver.yaml", extract just the filename
+            config_filename = Path(config_path).name
+            config_file = Path(config_dir) / config_filename
+        else:
+            base_path = Path(__file__).parent.parent.parent.parent
+            config_file = base_path / config_path
         
         if not config_file.exists():
             logger.warning(f"Config file not found at {config_file}, using defaults")

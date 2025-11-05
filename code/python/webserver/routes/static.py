@@ -10,13 +10,21 @@ logger = logging.getLogger(__name__)
 
 def setup_static_routes(app: web.Application):
     """Setup static file serving routes"""
-    
+
     config = app.get('config', {})
     static_dir = config.get('static_directory', '../static')
-    
-    # Convert to absolute path
-    base_path = Path(__file__).parent.parent.parent.parent.parent
-    static_path = base_path / static_dir.lstrip('../')
+
+    # Use NLWEB_STATIC_DIR environment variable if available
+    env_static_dir = os.environ.get('NLWEB_STATIC_DIR')
+    if env_static_dir:
+        static_path = Path(env_static_dir)
+    elif static_dir.startswith('/'):
+        # Absolute path in config
+        static_path = Path(static_dir)
+    else:
+        # Convert relative path to absolute
+        base_path = Path(__file__).parent.parent.parent.parent.parent
+        static_path = base_path / static_dir.lstrip('../')
     
     if not static_path.exists():
         logger.warning(f"Static directory not found at {static_path}")
