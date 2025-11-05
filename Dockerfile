@@ -35,10 +35,10 @@ RUN groupadd -r nlweb && \
 
 USER nlweb
 
-# Copy application code
-COPY code/ /app/
-COPY static/ /app/static/
-COPY config/ /app/config/
+# Copy application code with correct ownership
+COPY --chown=nlweb:nlweb code/ /app/
+COPY --chown=nlweb:nlweb static/ /app/static/
+COPY --chown=nlweb:nlweb config/ /app/config/
 
 # Copy installed packages from builder stage
 COPY --from=builder /usr/local/lib/python3.13/site-packages /usr/local/lib/python3.13/site-packages
