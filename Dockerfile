@@ -52,6 +52,7 @@ ENV NLWEB_OUTPUT_DIR=/app
 ENV PYTHONPATH=/app
 ENV PORT=8000
 ENV NLWEB_CONFIG_DIR=/app/config
+ENV NLWEB_STATIC_DIR=/app/static
 
 # Command to run the application
 CMD ["python", "python/app-file.py"]
