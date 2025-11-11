@@ -40,6 +40,9 @@ from core.config import CONFIG
 import time
 logger = get_configured_logger("nlweb_handler")
 
+# Analytics logging
+from core.query_logger import get_query_logger
+
 API_VERSION = "0.1"
 
 class NLWebHandler:
@@ -257,6 +260,31 @@ class NLWebHandler:
     async def runQuery(self):
         print(f"========== NLWEBHANDLER.runQuery() CALLED for query: {self.query}, generate_mode: {self.generate_mode} ==========")
         logger.info(f"Starting query execution for conversation_id: {self.conversation_id}")
+
+        # Analytics: Generate unique query ID and log query start
+        self.query_id = f"query_{int(time.time() * 1000)}_{uuid.uuid4().hex[:8]}"
+        print(f"[DEBUG] Generated query_id: {self.query_id}")
+        query_logger = get_query_logger()
+        print(f"[DEBUG] Got query_logger: {query_logger}")
+        query_start_time = time.time()
+
+        try:
+            print(f"[DEBUG] About to call log_query_start")
+            query_logger.log_query_start(
+                query_id=self.query_id,
+                user_id=self.oauth_id or "anonymous",
+                query_text=self.query,
+                site=str(self.site) if isinstance(self.site, list) else self.site,
+                mode=self.generate_mode or "list",
+                decontextualized_query=self.decontextualized_query,
+                conversation_id=self.conversation_id,
+                model=self.model
+            )
+            print(f"[DEBUG] Successfully called log_query_start")
+        except Exception as e:
+            print(f"[DEBUG] EXCEPTION in log_query_start: {e}")
+            logger.warning(f"Failed to log query start: {e}")
+
         try:
             # Send begin-nlweb-response message at the start
             await self.message_sender.send_begin_response()
@@ -287,18 +315,52 @@ class NLWebHandler:
             await post_ranking.PostRanking(self).do()
 
             self.return_value["conversation_id"] = self.conversation_id
-            
+
             # Send end-nlweb-response message at the end
             await self.message_sender.send_end_response()
-            
+
+            # Analytics: Log query completion
+            try:
+                query_end_time = time.time()
+                total_latency_ms = (query_end_time - query_start_time) * 1000
+
+                num_results = 0
+                if hasattr(self, 'final_ranked_answers') and self.final_ranked_answers:
+                    num_results = len(self.final_ranked_answers)
+
+                query_logger.log_query_complete(
+                    query_id=self.query_id,
+                    latency_total_ms=total_latency_ms,
+                    num_results_retrieved=getattr(self, 'num_retrieved', 0),
+                    num_results_ranked=getattr(self, 'num_ranked', 0),
+                    num_results_returned=num_results,
+                    cost_usd=getattr(self, 'estimated_cost', 0),
+                    error_occurred=False
+                )
+            except Exception as e:
+                logger.warning(f"Failed to log query completion: {e}")
+
             # Return both return_value and messages (converted to dicts for backward compatibility)
             return self.return_value, [msg.to_dict() for msg in self.messages]
         except Exception as e:
             traceback.print_exc()
-            
+
+            # Analytics: Log query error
+            try:
+                query_end_time = time.time()
+                total_latency_ms = (query_end_time - query_start_time) * 1000
+                query_logger.log_query_complete(
+                    query_id=self.query_id,
+                    latency_total_ms=total_latency_ms,
+                    error_occurred=True,
+                    error_message=str(e)
+                )
+            except Exception as log_err:
+                logger.warning(f"Failed to log query error: {log_err}")
+
             # Send end-nlweb-response even on error
             await self.message_sender.send_end_response(error=True)
-            
+
             raise
     
     async def prepare(self):

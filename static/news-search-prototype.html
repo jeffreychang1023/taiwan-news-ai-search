@@ -1142,6 +1142,9 @@
         </div>
     </div>
 
+    <!-- Analytics Tracker -->
+    <script src="/static/analytics-tracker-sse.js"></script>
+
     <script>
         const searchInput = document.getElementById('searchInput');
         const btnSearch = document.getElementById('btnSearch');
@@ -1192,6 +1195,57 @@
 
         // Mode tracking: 'search' or 'chat'
         let currentMode = 'search';
+
+        // ==================== ANALYTICS INITIALIZATION ====================
+        const analyticsTracker = new AnalyticsTrackerSSE('/api/analytics/event');
+        let currentAnalyticsQueryId = null;
+
+        // Event delegation: Track all clicks on article links
+        document.addEventListener('click', (event) => {
+            const link = event.target.closest('.btn-read-more, a[href]');
+            if (!link) return;
+
+            const newsCard = link.closest('.news-card');
+            if (!newsCard) return;
+
+            const url = link.href;
+            const allCards = document.querySelectorAll('.news-card');
+            const position = Array.from(allCards).indexOf(newsCard);
+
+            if (currentAnalyticsQueryId && url) {
+                analyticsTracker.trackClick(url, position);
+            }
+        });
+
+        // MutationObserver: Auto-track article displays
+        const articleObserver = new MutationObserver((mutations) => {
+            mutations.forEach(mutation => {
+                mutation.addedNodes.forEach(node => {
+                    if (node.nodeType === 1 && node.classList && node.classList.contains('news-card')) {
+                        const link = node.querySelector('a[href]');
+                        if (link && currentAnalyticsQueryId) {
+                            const allCards = document.querySelectorAll('.news-card');
+                            const position = Array.from(allCards).indexOf(node);
+                            const url = link.href;
+
+                            analyticsTracker.trackResultDisplayed(url, position, {
+                                title: node.querySelector('.news-title')?.textContent || ''
+                            });
+
+                            node.dataset.analyticsUrl = url;
+                            node.dataset.analyticsPosition = position;
+                            analyticsTracker.observeResult(node);
+                        }
+                    }
+                });
+            });
+        });
+
+        articleObserver.observe(document.getElementById('listView'), { childList: true, subtree: true });
+        articleObserver.observe(document.getElementById('timelineView'), { childList: true, subtree: true });
+
+        console.log('[Analytics] Tracker initialized');
+        // ==================== END ANALYTICS INITIALIZATION ====================
 
         // Chat history for free conversation mode
         let chatHistory = [];
@@ -1648,6 +1702,11 @@
             const query = searchInput.value.trim();
             if (!query) return;
 
+            // Analytics: Start tracking query
+            currentAnalyticsQueryId = `query_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
+            analyticsTracker.startQuery(currentAnalyticsQueryId, query);
+            console.log('[Analytics] Tracking query:', currentAnalyticsQueryId);
+
             // Hide initial state
             initialState.style.display = 'none';
 
@@ -1770,6 +1829,10 @@
         async function performFreeConversation(query) {
             // Add user message to chat
             addChatMessage('user', query);
+
+            // Analytics: Track chat query
+            currentAnalyticsQueryId = `chat_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
+            analyticsTracker.startQuery(currentAnalyticsQueryId, query);
 
             // Clear input
             searchInput.value = '';

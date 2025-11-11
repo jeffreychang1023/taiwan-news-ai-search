@@ -9,6 +9,12 @@ from .conversation import setup_conversation_routes
 from .chat import setup_chat_routes
 from .oauth import setup_oauth_routes
 
+# Analytics routes (from parent webserver directory)
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from analytics_handler import register_analytics_routes
+
 
 def setup_routes(app):
     """Setup all routes for the application"""
@@ -20,6 +26,15 @@ def setup_routes(app):
     setup_conversation_routes(app)
     setup_chat_routes(app)
     setup_oauth_routes(app)
+
+    # Register analytics routes with correct database path
+    # Database is in code/python/data/analytics/ because that's where the server runs from
+    try:
+        register_analytics_routes(app, db_path="data/analytics/query_logs.db")
+    except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Failed to register analytics routes: {e}", exc_info=True)
 
 
 __all__ = ['setup_routes']

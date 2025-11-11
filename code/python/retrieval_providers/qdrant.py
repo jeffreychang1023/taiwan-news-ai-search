@@ -23,6 +23,9 @@ from core.retriever import RetrievalClientBase
 from misc.logger.logging_config_helper import get_configured_logger
 from misc.logger.logger import LogLevel
 
+# Analytics logging
+from core.query_logger import get_query_logger
+
 logger = get_configured_logger("qdrant_client")
 
 class QdrantVectorClient(RetrievalClientBase):
@@ -843,9 +846,87 @@ class QdrantVectorClient(RetrievalClientBase):
 
                 # Format the results
                 results = self._format_results(top_results)
-            
+
+                # Analytics: Log retrieved documents with scores
+                handler = kwargs.get('handler')
+                print(f"[DEBUG QDRANT] handler: {handler}")
+                print(f"[DEBUG QDRANT] handler has query_id: {hasattr(handler, 'query_id') if handler else False}")
+                if handler:
+                    print(f"[DEBUG QDRANT] handler.query_id: {getattr(handler, 'query_id', 'NOT SET')}")
+                if handler and hasattr(handler, 'query_id'):
+                    print(f"[DEBUG QDRANT] About to log {len(results)} retrieved documents")
+                    query_logger = get_query_logger()
+                    try:
+                        # Map scores back to results by URL
+                        # Handle both keyword-boosted and pure vector search cases
+                        score_map = {}
+
+                        if all_keywords and 'scored_results' in locals():
+                            # Keyword boosting was applied
+                            for final_score, point in scored_results[:num_results]:
+                                url = point.payload.get("url", "")
+                                if url:
+                                    score_map[url] = {
+                                        'vector_score': point.score,  # Original vector similarity score
+                                        'final_score': final_score,   # After keyword + recency boosting
+                                    }
+                        else:
+                            # Pure vector search - use top_results directly
+                            for point in top_results:
+                                url = point.payload.get("url", "")
+                                if url:
+                                    score_map[url] = {
+                                        'vector_score': point.score,
+                                        'final_score': point.score,  # No boosting applied
+                                    }
+
+                        # Log each retrieved document
+                        for position, result in enumerate(results):
+                            if len(result) >= 4:
+                                url = result[0]
+                                schema_json = result[1]
+                                name = result[2]
+                                site_name = result[3]
+
+                                # Get scores from map
+                                score_data = score_map.get(url, {})
+                                vector_score = score_data.get('vector_score', 0.0)
+                                final_score = score_data.get('final_score', 0.0)
+
+                                # Parse description from schema_json
+                                description = ""
+                                try:
+                                    if schema_json:
+                                        schema_dict = json.loads(schema_json)
+                                        description = schema_dict.get('description', '') or schema_dict.get('articleBody', '')
+                                        if isinstance(description, list):
+                                            description = ' '.join(description)
+                                        description = description[:500] if description else ""  # Limit length
+                                except:
+                                    pass
+
+                                query_logger.log_retrieved_document(
+                                    query_id=handler.query_id,
+                                    doc_url=url,
+                                    doc_title=name,
+                                    doc_description=description,
+                                    retrieval_position=position,
+                                    vector_similarity_score=float(vector_score),
+                                    keyword_boost_score=0.0,  # We don't track individual keyword boost separately
+                                    final_retrieval_score=float(final_score),
+                                    doc_source='qdrant_hybrid_search'
+                                )
+
+                        logger.info(f"Analytics: Logged {len(results)} retrieved documents for query {handler.query_id}")
+                        print(f"[DEBUG QDRANT] Successfully logged {len(results)} retrieved documents")
+                    except Exception as e:
+                        print(f"[DEBUG QDRANT] EXCEPTION while logging: {e}")
+                        import traceback
+                        traceback.print_exc()
+                        logger.warning(f"Failed to log retrieved documents: {e}")
+
             retrieve_time = time.time() - start_retrieve
-            
+
             logger.log_with_context(
                 LogLevel.INFO,
                 "Qdrant search completed",
@@ -857,7 +938,7 @@ class QdrantVectorClient(RetrievalClientBase):
                     "embedding_dim": len(embedding),
                 }
             )
-            
+
             return results
             
         except Exception as e:
@@ -985,7 +1066,7 @@ class QdrantVectorClient(RetrievalClientBase):
             List[List[str]]: List of search results
         """
         # This is just a convenience wrapper around the regular search method with site="all"
-        return await self.search(query, "all", num_results, collection_name, query_params)
+        return await self.search(query, "all", num_results, collection_name, query_params, **kwargs)
     
     async def get_sites(self, collection_name: Optional[str] = None) -> List[str]:
         """

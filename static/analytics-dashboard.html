@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NLWeb Analytics Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        .header {
+            background: white;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+            margin-bottom: 30px;
+        }
+
+        .header h1 {
+            color: #333;
+            font-size: 32px;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            color: #666;
+            font-size: 16px;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .stat-card {
+            background: white;
+            padding: 25px;
+            border-radius: 12px;
+            box-shadow: 0 5px 20px rgba(0, 0, 0, 0.1);
+            transition: transform 0.2s;
+        }
+
+        .stat-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
+        }
+
+        .stat-label {
+            font-size: 14px;
+            color: #666;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 10px;
+        }
+
+        .stat-value {
+            font-size: 36px;
+            font-weight: bold;
+            color: #333;
+        }
+
+        .stat-sub {
+            font-size: 12px;
+            color: #999;
+            margin-top: 8px;
+        }
+
+        .data-table {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 5px 20px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+            margin-bottom: 30px;
+        }
+
+        .table-header {
+            padding: 20px 25px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .table-header h2 {
+            font-size: 20px;
+        }
+
+        .table-content {
+            overflow-x: auto;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        thead {
+            background: #f8f9fa;
+        }
+
+        th, td {
+            padding: 15px 25px;
+            text-align: left;
+            border-bottom: 1px solid #eee;
+        }
+
+        th {
+            font-weight: 600;
+            color: #666;
+            font-size: 13px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        td {
+            color: #333;
+            font-size: 14px;
+        }
+
+        tr:hover {
+            background: #f8f9fa;
+        }
+
+        .controls {
+            background: white;
+            padding: 20px 25px;
+            border-radius: 12px;
+            box-shadow: 0 5px 20px rgba(0, 0, 0, 0.1);
+            margin-bottom: 30px;
+            display: flex;
+            gap: 15px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .controls label {
+            font-weight: 600;
+            color: #666;
+            font-size: 14px;
+        }
+
+        .controls select,
+        .controls button {
+            padding: 10px 20px;
+            border: 2px solid #667eea;
+            border-radius: 8px;
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .controls select {
+            background: white;
+            color: #333;
+        }
+
+        .controls button {
+            background: #667eea;
+            color: white;
+            font-weight: 600;
+        }
+
+        .controls button:hover {
+            background: #5568d3;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.3);
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: white;
+            font-size: 18px;
+        }
+
+        .export-btn {
+            margin-left: auto;
+            background: #10b981;
+            border-color: #10b981;
+        }
+
+        .export-btn:hover {
+            background: #059669;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #666;
+        }
+
+        .empty-state svg {
+            width: 80px;
+            height: 80px;
+            margin-bottom: 20px;
+            opacity: 0.3;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📊 NLWeb Analytics Dashboard</h1>
+            <p>Query analytics and user interaction tracking for ML training data collection</p>
+        </div>
+
+        <div class="controls">
+            <label for="timeRange">Time Range:</label>
+            <select id="timeRange">
+                <option value="1">Last 24 hours</option>
+                <option value="7" selected>Last 7 days</option>
+                <option value="30">Last 30 days</option>
+                <option value="90">Last 90 days</option>
+                <option value="365">Last year</option>
+            </select>
+
+            <button onclick="loadData()">🔄 Refresh</button>
+            <button class="export-btn" onclick="exportTrainingData()">📥 Export Training Data</button>
+        </div>
+
+        <div id="stats" class="stats-grid">
+            <!-- Stats will be populated here -->
+        </div>
+
+        <div class="data-table">
+            <div class="table-header">
+                <h2>Recent Queries</h2>
+            </div>
+            <div class="table-content">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Query</th>
+                            <th>Site</th>
+                            <th>Mode</th>
+                            <th>Results</th>
+                            <th>Latency</th>
+                            <th>Cost</th>
+                            <th>CTR</th>
+                            <th>Timestamp</th>
+                        </tr>
+                    </thead>
+                    <tbody id="queriesTable">
+                        <!-- Queries will be populated here -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="data-table">
+            <div class="table-header">
+                <h2>Top Clicked Results</h2>
+            </div>
+            <div class="table-content">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>URL</th>
+                            <th>Title</th>
+                            <th>Clicks</th>
+                            <th>Avg Position</th>
+                            <th>Avg Dwell Time</th>
+                        </tr>
+                    </thead>
+                    <tbody id="clicksTable">
+                        <!-- Top clicked results will be populated here -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // API endpoint base URL (adjust as needed)
+        const API_BASE = '/api/analytics';
+
+        // Load dashboard data
+        async function loadData() {
+            const timeRange = document.getElementById('timeRange').value;
+
+            try {
+                // Load stats
+                const statsRes = await fetch(`${API_BASE}/stats?days=${timeRange}`);
+                const stats = await statsRes.json();
+                displayStats(stats);
+
+                // Load recent queries
+                const queriesRes = await fetch(`${API_BASE}/queries?days=${timeRange}&limit=50`);
+                const queries = await queriesRes.json();
+                displayQueries(queries);
+
+                // Load top clicks
+                const clicksRes = await fetch(`${API_BASE}/top_clicks?days=${timeRange}&limit=20`);
+                const clicks = await clicksRes.json();
+                displayClicks(clicks);
+            } catch (error) {
+                console.error('Error loading analytics data:', error);
+                showError('Failed to load analytics data. Make sure the backend is running.');
+            }
+        }
+
+        function displayStats(stats) {
+            const statsContainer = document.getElementById('stats');
+
+            const statCards = [
+                {
+                    label: 'Total Queries',
+                    value: stats.total_queries || 0,
+                    sub: `${stats.queries_per_day?.toFixed(1) || 0} per day`
+                },
+                {
+                    label: 'Avg Latency',
+                    value: `${(stats.avg_latency_ms / 1000).toFixed(2)}s`,
+                    sub: 'End-to-end response time'
+                },
+                {
+                    label: 'Total Cost',
+                    value: `$${stats.total_cost_usd?.toFixed(2) || 0}`,
+                    sub: `$${stats.cost_per_query?.toFixed(3) || 0} per query`
+                },
+                {
+                    label: 'Click-Through Rate',
+                    value: `${(stats.click_through_rate * 100).toFixed(1)}%`,
+                    sub: 'Users clicking on results'
+                },
+                {
+                    label: 'Error Rate',
+                    value: `${(stats.error_rate * 100).toFixed(1)}%`,
+                    sub: 'Failed queries'
+                },
+                {
+                    label: 'Training Samples',
+                    value: stats.training_samples || 0,
+                    sub: 'Labeled interactions'
+                }
+            ];
+
+            statsContainer.innerHTML = statCards.map(card => `
+                <div class="stat-card">
+                    <div class="stat-label">${card.label}</div>
+                    <div class="stat-value">${card.value}</div>
+                    <div class="stat-sub">${card.sub}</div>
+                </div>
+            `).join('');
+        }
+
+        function displayQueries(queries) {
+            const table = document.getElementById('queriesTable');
+
+            if (!queries || queries.length === 0) {
+                table.innerHTML = `
+                    <tr>
+                        <td colspan="8" style="text-align: center; padding: 40px; color: #999;">
+                            No queries found. Start using NLWeb to collect data!
+                        </td>
+                    </tr>
+                `;
+                return;
+            }
+
+            table.innerHTML = queries.map(q => `
+                <tr>
+                    <td title="${q.query_text}">${truncate(q.query_text, 50)}</td>
+                    <td>${q.site || 'all'}</td>
+                    <td>${q.mode || 'list'}</td>
+                    <td>${q.num_results_returned || 0}</td>
+                    <td>${(q.latency_total_ms / 1000).toFixed(2)}s</td>
+                    <td>$${q.cost_usd?.toFixed(3) || 0}</td>
+                    <td>${q.ctr ? (q.ctr * 100).toFixed(1) + '%' : 'N/A'}</td>
+                    <td>${formatTimestamp(q.timestamp)}</td>
+                </tr>
+            `).join('');
+        }
+
+        function displayClicks(clicks) {
+            const table = document.getElementById('clicksTable');
+
+            if (!clicks || clicks.length === 0) {
+                table.innerHTML = `
+                    <tr>
+                        <td colspan="5" style="text-align: center; padding: 40px; color: #999;">
+                            No click data yet. User interactions will appear here.
+                        </td>
+                    </tr>
+                `;
+                return;
+            }
+
+            table.innerHTML = clicks.map(c => `
+                <tr>
+                    <td><a href="${c.doc_url}" target="_blank" style="color: #667eea; text-decoration: none;">
+                        ${truncate(c.doc_url, 60)}
+                    </a></td>
+                    <td>${truncate(c.doc_title || 'Untitled', 40)}</td>
+                    <td><strong>${c.click_count}</strong></td>
+                    <td>${c.avg_position?.toFixed(1) || 'N/A'}</td>
+                    <td>${c.avg_dwell_time ? formatDuration(c.avg_dwell_time) : 'N/A'}</td>
+                </tr>
+            `).join('');
+        }
+
+        async function exportTrainingData() {
+            const timeRange = document.getElementById('timeRange').value;
+
+            try {
+                const response = await fetch(`${API_BASE}/export_training_data?days=${timeRange}`);
+                const blob = await response.blob();
+
+                // Create download link
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `nlweb_training_data_${Date.now()}.csv`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                window.URL.revokeObjectURL(url);
+            } catch (error) {
+                console.error('Error exporting training data:', error);
+                alert('Failed to export training data');
+            }
+        }
+
+        // Utility functions
+        function truncate(str, maxLen) {
+            return str && str.length > maxLen ? str.substring(0, maxLen) + '...' : str;
+        }
+
+        function formatTimestamp(ts) {
+            const date = new Date(ts * 1000);
+            return date.toLocaleString();
+        }
+
+        function formatDuration(ms) {
+            const seconds = Math.floor(ms / 1000);
+            if (seconds < 60) return `${seconds}s`;
+            const minutes = Math.floor(seconds / 60);
+            const secs = seconds % 60;
+            return `${minutes}m ${secs}s`;
+        }
+
+        function showError(message) {
+            alert(message);
+        }
+
+        // Load data on page load
+        window.addEventListener('DOMContentLoaded', () => {
+            loadData();
+            // Auto-refresh every 30 seconds
+            setInterval(loadData, 30000);
+        });
+    </script>
+</body>
+</html>

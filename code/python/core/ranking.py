@@ -18,6 +18,9 @@ from core.prompts import find_prompt, fill_prompt
 from misc.logger.logging_config_helper import get_configured_logger
 from core.schemas import create_assistant_result, create_status_message, Message, SenderType, MessageType
 
+# Analytics logging
+from core.query_logger import get_query_logger
+
 logger = get_configured_logger("ranking_engine")
 
 
@@ -202,11 +205,29 @@ The user's question is: {request.query}. The item's description is {item.descrip
                     logger.warning(f"Client disconnected while sending early answer for {name}")
                     self.handler.connection_alive_event.clear()
                     return
-            
+
 #            async with self._results_lock:  # Use lock when modifying shared state
             self.rankedAnswers.append(ansr)
             logger.debug(f"Item {name} added to ranked answers")
-        
+
+            # Analytics: Log ranking score
+            if hasattr(self.handler, 'query_id'):
+                query_logger = get_query_logger()
+                try:
+                    # Get current position (will be updated after final sorting)
+                    current_position = len(self.rankedAnswers) - 1
+
+                    query_logger.log_ranking_score(
+                        query_id=self.handler.query_id,
+                        doc_url=url,
+                        ranking_position=current_position,  # Temporary position, will update after final sort
+                        llm_final_score=float(ranking.get("score", 0)),
+                        llm_snippet=ranking.get("description", ""),
+                        ranking_method='llm_fast_track' if self.ranking_type == Ranking.FAST_TRACK else 'llm_regular'
+                    )
+                except Exception as log_err:
+                    logger.warning(f"Failed to log ranking score: {log_err}")
+
         except Exception as e:
             logger.error(f"Error in rankItem for {name}: {str(e)}")
             logger.debug(f"Full error trace: ", exc_info=True)
