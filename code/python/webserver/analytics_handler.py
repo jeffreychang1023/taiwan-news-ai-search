@@ -258,7 +258,7 @@ class AnalyticsHandler:
                 LEFT JOIN retrieved_documents rd ON ui.doc_url = rd.doc_url
                 WHERE ui.clicked = 1
                   AND ui.interaction_timestamp > {ph}
-                GROUP BY ui.doc_url
+                GROUP BY ui.doc_url, rd.doc_title
                 ORDER BY click_count DESC
                 LIMIT {ph}
             """, (cutoff_timestamp, limit))
@@ -267,7 +267,16 @@ class AnalyticsHandler:
             clicks = []
 
             for row in rows:
-                doc_url, doc_title, click_count, avg_position, avg_dwell_time = row
+                # Handle both dict (PostgreSQL) and tuple (SQLite) row formats
+                if isinstance(row, dict):
+                    doc_url = row['doc_url']
+                    doc_title = row['doc_title']
+                    click_count = row['click_count']
+                    avg_position = row['avg_position']
+                    avg_dwell_time = row['avg_dwell_time']
+                else:
+                    doc_url, doc_title, click_count, avg_position, avg_dwell_time = row
+
                 clicks.append({
                     "doc_url": doc_url,
                     "doc_title": doc_title,
