@@ -322,7 +322,13 @@ class AnalyticsHandler:
                 cursor.execute("SELECT tablename FROM pg_tables WHERE schemaname = 'public'")
             else:
                 cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
-            tables = [row[0] for row in cursor.fetchall()]
+
+            # Handle both dict and tuple results
+            table_rows = cursor.fetchall()
+            if table_rows and isinstance(table_rows[0], dict):
+                tables = [list(row.values())[0] for row in table_rows]
+            else:
+                tables = [row[0] for row in table_rows]
             logger.info(f"Export: Available tables: {tables}")
 
             # Export raw logs for ML training
@@ -370,7 +376,11 @@ class AnalyticsHandler:
 
             # Write data rows
             for row in rows:
-                writer.writerow(row)
+                # Handle both dict (PostgreSQL) and tuple (SQLite)
+                if isinstance(row, dict):
+                    writer.writerow([row.get(header) for header in headers])
+                else:
+                    writer.writerow(row)
 
             # Return CSV file with UTF-8 BOM for proper Chinese character display in Excel
             csv_data = '\ufeff' + output.getvalue()  # Add UTF-8 BOM
