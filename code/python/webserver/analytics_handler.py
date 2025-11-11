@@ -63,11 +63,19 @@ class AnalyticsHandler:
             cursor = conn.cursor()
             ph = self._get_placeholder()  # SQL placeholder (? or %s)
 
+            # Helper to extract value from fetchone() result (handles both dict and tuple)
+            def get_val(result):
+                if result is None:
+                    return 0
+                if isinstance(result, dict):
+                    return list(result.values())[0] or 0
+                return result[0] or 0
+
             # Total queries
             cursor.execute(f"""
                 SELECT COUNT(*) FROM queries WHERE timestamp > {ph}
             """, (cutoff_timestamp,))
-            total_queries = cursor.fetchone()[0]
+            total_queries = get_val(cursor.fetchone())
 
             # Queries per day
             queries_per_day = total_queries / days if days > 0 else 0
@@ -77,14 +85,14 @@ class AnalyticsHandler:
                 SELECT AVG(latency_total_ms) FROM queries
                 WHERE timestamp > {ph} AND latency_total_ms IS NOT NULL
             """, (cutoff_timestamp,))
-            avg_latency = cursor.fetchone()[0] or 0
+            avg_latency = get_val(cursor.fetchone())
 
             # Total cost
             cursor.execute(f"""
                 SELECT SUM(cost_usd) FROM queries
                 WHERE timestamp > {ph} AND cost_usd IS NOT NULL
             """, (cutoff_timestamp,))
-            total_cost = cursor.fetchone()[0] or 0
+            total_cost = get_val(cursor.fetchone())
 
             # Cost per query
             cost_per_query = total_cost / total_queries if total_queries > 0 else 0
@@ -94,7 +102,7 @@ class AnalyticsHandler:
                 SELECT COUNT(*) FROM queries
                 WHERE timestamp > {ph} AND error_occurred = 1
             """, (cutoff_timestamp,))
-            error_count = cursor.fetchone()[0]
+            error_count = get_val(cursor.fetchone())
             error_rate = error_count / total_queries if total_queries > 0 else 0
 
             # Click-through rate
@@ -102,7 +110,7 @@ class AnalyticsHandler:
                 SELECT COUNT(DISTINCT query_id) FROM user_interactions
                 WHERE interaction_timestamp > {ph} AND clicked = 1
             """, (cutoff_timestamp,))
-            queries_with_clicks = cursor.fetchone()[0]
+            queries_with_clicks = get_val(cursor.fetchone())
             ctr = queries_with_clicks / total_queries if total_queries > 0 else 0
 
             # Training samples (query-document pairs from raw logs)
@@ -113,7 +121,7 @@ class AnalyticsHandler:
                     SELECT query_id FROM queries WHERE timestamp > {ph}
                 )
             """, (cutoff_timestamp,))
-            training_samples = cursor.fetchone()[0]
+            training_samples = get_val(cursor.fetchone())
 
             conn.close()
 
