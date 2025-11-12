@@ -104,7 +104,7 @@ class QueryLogger:
             return self._get_sqlite_schema()
 
     def _get_sqlite_schema(self) -> Dict[str, str]:
-        """Get SQLite schema."""
+        """Get SQLite schema - Schema v2 (ML-ready)."""
         return {
             'queries': """
                 CREATE TABLE IF NOT EXISTS queries (
@@ -127,7 +127,12 @@ class QueryLogger:
                     num_results_returned INTEGER,
                     cost_usd REAL,
                     error_occurred INTEGER DEFAULT 0,
-                    error_message TEXT
+                    error_message TEXT,
+                    query_length_words INTEGER,
+                    query_length_chars INTEGER,
+                    has_temporal_indicator INTEGER DEFAULT 0,
+                    embedding_model TEXT,
+                    schema_version INTEGER DEFAULT 2
                 )
             """,
             'retrieved_documents': """
@@ -147,6 +152,15 @@ class QueryLogger:
                     temporal_boost REAL,
                     domain_match INTEGER,
                     final_retrieval_score REAL,
+                    query_term_count INTEGER,
+                    doc_length INTEGER,
+                    title_exact_match INTEGER DEFAULT 0,
+                    desc_exact_match INTEGER DEFAULT 0,
+                    keyword_overlap_ratio REAL,
+                    recency_days INTEGER,
+                    has_author INTEGER DEFAULT 0,
+                    retrieval_algorithm TEXT,
+                    schema_version INTEGER DEFAULT 2,
                     FOREIGN KEY (query_id) REFERENCES queries(query_id)
                 )
             """,
@@ -168,6 +182,9 @@ class QueryLogger:
                     mmr_diversity_score REAL,
                     final_ranking_score REAL,
                     ranking_method TEXT,
+                    relative_score REAL,
+                    score_percentile REAL,
+                    schema_version INTEGER DEFAULT 2,
                     FOREIGN KEY (query_id) REFERENCES queries(query_id)
                 )
             """,
@@ -184,13 +201,55 @@ class QueryLogger:
                     clicked INTEGER DEFAULT 0,
                     client_user_agent TEXT,
                     client_ip_hash TEXT,
+                    schema_version INTEGER DEFAULT 2,
+                    FOREIGN KEY (query_id) REFERENCES queries(query_id)
+                )
+            """,
+            'feature_vectors': """
+                CREATE TABLE IF NOT EXISTS feature_vectors (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    query_id TEXT NOT NULL,
+                    doc_url TEXT NOT NULL,
+                    query_length_words INTEGER,
+                    query_length_chars INTEGER,
+                    query_type TEXT,
+                    has_temporal_indicator INTEGER,
+                    has_brand_mention INTEGER,
+                    doc_length_words INTEGER,
+                    doc_length_chars INTEGER,
+                    title_length INTEGER,
+                    has_publication_date INTEGER,
+                    recency_days INTEGER,
+                    has_author INTEGER,
+                    schema_completeness REAL,
+                    domain_authority REAL,
+                    vector_similarity REAL,
+                    bm25_score REAL,
+                    title_exact_match INTEGER,
+                    desc_exact_match INTEGER,
+                    keyword_overlap_ratio REAL,
+                    query_term_coverage REAL,
+                    temporal_relevance REAL,
+                    domain_match INTEGER,
+                    entity_match_count INTEGER,
+                    partial_match_count INTEGER,
+                    retrieval_position INTEGER,
+                    ranking_position INTEGER,
+                    llm_score REAL,
+                    relative_score_to_top REAL,
+                    score_percentile REAL,
+                    clicked INTEGER DEFAULT 0,
+                    dwell_time_ms REAL,
+                    relevance_grade INTEGER,
+                    schema_version INTEGER DEFAULT 2,
+                    created_at REAL NOT NULL,
                     FOREIGN KEY (query_id) REFERENCES queries(query_id)
                 )
             """
         }
 
     def _get_postgres_schema(self) -> Dict[str, str]:
-        """Get PostgreSQL schema."""
+        """Get PostgreSQL schema - Schema v2 (ML-ready)."""
         return {
             'queries': """
                 CREATE TABLE IF NOT EXISTS queries (
@@ -213,7 +272,14 @@ class QueryLogger:
                     num_results_returned INTEGER,
                     cost_usd DOUBLE PRECISION,
                     error_occurred INTEGER DEFAULT 0,
-                    error_message TEXT
+                    error_message TEXT,
+
+                    -- NEW v2 fields for ML
+                    query_length_words INTEGER,
+                    query_length_chars INTEGER,
+                    has_temporal_indicator INTEGER DEFAULT 0,
+                    embedding_model VARCHAR(100),
+                    schema_version INTEGER DEFAULT 2
                 )
             """,
             'retrieved_documents': """
@@ -233,6 +299,17 @@ class QueryLogger:
                     temporal_boost DOUBLE PRECISION,
                     domain_match INTEGER,
                     final_retrieval_score DOUBLE PRECISION,
+
+                    -- NEW v2 fields for ML
+                    query_term_count INTEGER,
+                    doc_length INTEGER,
+                    title_exact_match INTEGER DEFAULT 0,
+                    desc_exact_match INTEGER DEFAULT 0,
+                    keyword_overlap_ratio DOUBLE PRECISION,
+                    recency_days INTEGER,
+                    has_author INTEGER DEFAULT 0,
+                    retrieval_algorithm VARCHAR(50),
+                    schema_version INTEGER DEFAULT 2,
                     FOREIGN KEY (query_id) REFERENCES queries(query_id)
                 )
             """,
@@ -254,6 +331,11 @@ class QueryLogger:
                     mmr_diversity_score DOUBLE PRECISION,
                     final_ranking_score DOUBLE PRECISION,
                     ranking_method VARCHAR(50),
+
+                    -- NEW v2 fields for ML
+                    relative_score DOUBLE PRECISION,
+                    score_percentile DOUBLE PRECISION,
+                    schema_version INTEGER DEFAULT 2,
                     FOREIGN KEY (query_id) REFERENCES queries(query_id)
                 )
             """,
@@ -270,20 +352,79 @@ class QueryLogger:
                     clicked INTEGER DEFAULT 0,
                     client_user_agent TEXT,
                     client_ip_hash VARCHAR(255),
+
+                    -- NEW v2 field
+                    schema_version INTEGER DEFAULT 2,
+                    FOREIGN KEY (query_id) REFERENCES queries(query_id)
+                )
+            """,
+            'feature_vectors': """
+                CREATE TABLE IF NOT EXISTS feature_vectors (
+                    id SERIAL PRIMARY KEY,
+                    query_id VARCHAR(255) NOT NULL,
+                    doc_url TEXT NOT NULL,
+
+                    -- Query features (5)
+                    query_length_words INTEGER,
+                    query_length_chars INTEGER,
+                    query_type VARCHAR(50),
+                    has_temporal_indicator INTEGER,
+                    has_brand_mention INTEGER,
+
+                    -- Document features (8)
+                    doc_length_words INTEGER,
+                    doc_length_chars INTEGER,
+                    title_length INTEGER,
+                    has_publication_date INTEGER,
+                    recency_days INTEGER,
+                    has_author INTEGER,
+                    schema_completeness DOUBLE PRECISION,
+                    domain_authority DOUBLE PRECISION,
+
+                    -- Query-document features (10)
+                    vector_similarity DOUBLE PRECISION,
+                    bm25_score DOUBLE PRECISION,
+                    title_exact_match INTEGER,
+                    desc_exact_match INTEGER,
+                    keyword_overlap_ratio DOUBLE PRECISION,
+                    query_term_coverage DOUBLE PRECISION,
+                    temporal_relevance DOUBLE PRECISION,
+                    domain_match INTEGER,
+                    entity_match_count INTEGER,
+                    partial_match_count INTEGER,
+
+                    -- Ranking features (5)
+                    retrieval_position INTEGER,
+                    ranking_position INTEGER,
+                    llm_score DOUBLE PRECISION,
+                    relative_score_to_top DOUBLE PRECISION,
+                    score_percentile DOUBLE PRECISION,
+
+                    -- Labels (3)
+                    clicked INTEGER DEFAULT 0,
+                    dwell_time_ms DOUBLE PRECISION,
+                    relevance_grade INTEGER,
+
+                    -- Metadata
+                    schema_version INTEGER DEFAULT 2,
+                    created_at DOUBLE PRECISION NOT NULL,
                     FOREIGN KEY (query_id) REFERENCES queries(query_id)
                 )
             """
         }
 
     def _get_database_indexes(self) -> List[str]:
-        """Get database index SQL."""
+        """Get database index SQL - Schema v2."""
         return [
             "CREATE INDEX IF NOT EXISTS idx_queries_timestamp ON queries(timestamp)",
             "CREATE INDEX IF NOT EXISTS idx_queries_user_id ON queries(user_id)",
             "CREATE INDEX IF NOT EXISTS idx_retrieved_docs_query ON retrieved_documents(query_id)",
             "CREATE INDEX IF NOT EXISTS idx_ranking_scores_query ON ranking_scores(query_id)",
             "CREATE INDEX IF NOT EXISTS idx_interactions_query ON user_interactions(query_id)",
-            "CREATE INDEX IF NOT EXISTS idx_interactions_url ON user_interactions(doc_url)"
+            "CREATE INDEX IF NOT EXISTS idx_interactions_url ON user_interactions(doc_url)",
+            "CREATE INDEX IF NOT EXISTS idx_feature_vectors_query ON feature_vectors(query_id)",
+            "CREATE INDEX IF NOT EXISTS idx_feature_vectors_doc ON feature_vectors(doc_url)",
+            "CREATE INDEX IF NOT EXISTS idx_feature_vectors_clicked ON feature_vectors(clicked)"
         ]
 
     def _start_worker(self):

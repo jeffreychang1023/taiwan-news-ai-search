@@ -332,23 +332,38 @@ class AnalyticsHandler:
             logger.info(f"Export: Available tables: {tables}")
 
             # Export raw logs for ML training
-            logger.info(f"Exporting raw logs from last {days} days")
+            logger.info(f"Exporting raw logs from last {days} days (Schema v2)")
             cursor.execute(f"""
                 SELECT
                     q.query_id,
                     q.query_text,
+                    q.query_length_words,
+                    q.query_length_chars,
+                    q.has_temporal_indicator,
                     rd.doc_url,
                     rd.doc_title,
+                    rd.doc_length,
+                    rd.title_exact_match,
+                    rd.desc_exact_match,
+                    rd.keyword_overlap_ratio,
+                    rd.recency_days,
+                    rd.has_author,
                     rd.vector_similarity_score,
                     rd.keyword_boost_score,
+                    rd.bm25_score,
                     rd.final_retrieval_score,
                     rd.retrieval_position,
+                    rd.retrieval_algorithm,
                     rs.llm_final_score,
+                    rs.relative_score,
+                    rs.score_percentile,
                     rs.ranking_position,
+                    rs.ranking_method,
                     CASE WHEN ui.clicked = 1 THEN 1 ELSE 0 END as clicked,
                     COALESCE(ui.dwell_time_ms, 0) as dwell_time_ms,
                     q.mode,
-                    q.latency_total_ms
+                    q.latency_total_ms,
+                    q.schema_version
                 FROM queries q
                 LEFT JOIN retrieved_documents rd ON q.query_id = rd.query_id
                 LEFT JOIN ranking_scores rs ON q.query_id = rs.query_id AND rd.doc_url = rs.doc_url
@@ -359,10 +374,13 @@ class AnalyticsHandler:
 
             rows = cursor.fetchall()
             headers = [
-                'query_id', 'query_text', 'doc_url', 'doc_title',
-                'vector_similarity_score', 'keyword_boost_score', 'final_retrieval_score',
-                'retrieval_position', 'llm_final_score', 'ranking_position',
-                'clicked', 'dwell_time_ms', 'mode', 'query_latency_ms'
+                'query_id', 'query_text', 'query_length_words', 'query_length_chars', 'has_temporal_indicator',
+                'doc_url', 'doc_title', 'doc_length', 'title_exact_match', 'desc_exact_match',
+                'keyword_overlap_ratio', 'recency_days', 'has_author',
+                'vector_similarity_score', 'keyword_boost_score', 'bm25_score', 'final_retrieval_score',
+                'retrieval_position', 'retrieval_algorithm',
+                'llm_final_score', 'relative_score', 'score_percentile', 'ranking_position', 'ranking_method',
+                'clicked', 'dwell_time_ms', 'mode', 'query_latency_ms', 'schema_version'
             ]
 
             conn.close()
