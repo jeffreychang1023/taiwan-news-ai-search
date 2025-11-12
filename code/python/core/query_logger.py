@@ -78,10 +78,17 @@ class QueryLogger:
         cursor = conn.cursor()
 
         try:
+            # Check if tables exist and need migration
+            needs_migration = self._check_schema_migration_needed(cursor)
+
+            if needs_migration:
+                logger.info("Detected Schema v1 - migrating to Schema v2...")
+                self._migrate_schema_v2(cursor)
+
             # Get schema SQL based on database type (SQLite or PostgreSQL)
             schema_dict = self._get_database_schema()
 
-            # Create tables
+            # Create tables (IF NOT EXISTS - safe for both new and existing DBs)
             for table_name, create_sql in schema_dict.items():
                 cursor.execute(create_sql)
 
@@ -95,6 +102,120 @@ class QueryLogger:
 
         finally:
             conn.close()
+
+    def _check_schema_migration_needed(self, cursor) -> bool:
+        """Check if database needs migration from v1 to v2."""
+        try:
+            # Check if queries table exists
+            if self.db.db_type == 'postgres':
+                cursor.execute("""
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_name='queries'
+                """)
+                columns = [row['column_name'] if isinstance(row, dict) else row[0] for row in cursor.fetchall()]
+            else:
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='queries'")
+                if not cursor.fetchone():
+                    # No queries table = fresh database, no migration needed
+                    return False
+                cursor.execute("PRAGMA table_info(queries)")
+                columns = [row[1] for row in cursor.fetchall()]
+
+            # If schema_version column doesn't exist, we need migration
+            return 'schema_version' not in columns
+
+        except Exception as e:
+            logger.warning(f"Error checking schema version: {e}")
+            return False
+
+    def _migrate_schema_v2(self, cursor):
+        """Migrate existing database from v1 to v2 by adding new columns."""
+        logger.info("Starting Schema v1 → v2 migration...")
+
+        try:
+            if self.db.db_type == 'postgres':
+                # PostgreSQL: Use ADD COLUMN IF NOT EXISTS
+                logger.info("Adding v2 columns to queries table...")
+                cursor.execute("""
+                    ALTER TABLE queries
+                    ADD COLUMN IF NOT EXISTS query_length_words INTEGER,
+                    ADD COLUMN IF NOT EXISTS query_length_chars INTEGER,
+                    ADD COLUMN IF NOT EXISTS has_temporal_indicator INTEGER DEFAULT 0,
+                    ADD COLUMN IF NOT EXISTS embedding_model VARCHAR(100),
+                    ADD COLUMN IF NOT EXISTS schema_version INTEGER DEFAULT 2
+                """)
+
+                logger.info("Adding v2 columns to retrieved_documents table...")
+                cursor.execute("""
+                    ALTER TABLE retrieved_documents
+                    ADD COLUMN IF NOT EXISTS query_term_count INTEGER,
+                    ADD COLUMN IF NOT EXISTS doc_length INTEGER,
+                    ADD COLUMN IF NOT EXISTS title_exact_match INTEGER DEFAULT 0,
+                    ADD COLUMN IF NOT EXISTS desc_exact_match INTEGER DEFAULT 0,
+                    ADD COLUMN IF NOT EXISTS keyword_overlap_ratio DOUBLE PRECISION,
+                    ADD COLUMN IF NOT EXISTS recency_days INTEGER,
+                    ADD COLUMN IF NOT EXISTS has_author INTEGER DEFAULT 0,
+                    ADD COLUMN IF NOT EXISTS retrieval_algorithm VARCHAR(50),
+                    ADD COLUMN IF NOT EXISTS schema_version INTEGER DEFAULT 2
+                """)
+
+                logger.info("Adding v2 columns to ranking_scores table...")
+                cursor.execute("""
+                    ALTER TABLE ranking_scores
+                    ADD COLUMN IF NOT EXISTS relative_score DOUBLE PRECISION,
+                    ADD COLUMN IF NOT EXISTS score_percentile DOUBLE PRECISION,
+                    ADD COLUMN IF NOT EXISTS schema_version INTEGER DEFAULT 2
+                """)
+
+                logger.info("Adding v2 column to user_interactions table...")
+                cursor.execute("""
+                    ALTER TABLE user_interactions
+                    ADD COLUMN IF NOT EXISTS schema_version INTEGER DEFAULT 2
+                """)
+
+            else:
+                # SQLite: Must execute one ALTER TABLE per column
+                alter_statements = [
+                    # queries table
+                    ("queries", "query_length_words", "INTEGER"),
+                    ("queries", "query_length_chars", "INTEGER"),
+                    ("queries", "has_temporal_indicator", "INTEGER DEFAULT 0"),
+                    ("queries", "embedding_model", "TEXT"),
+                    ("queries", "schema_version", "INTEGER DEFAULT 2"),
+                    # retrieved_documents table
+                    ("retrieved_documents", "query_term_count", "INTEGER"),
+                    ("retrieved_documents", "doc_length", "INTEGER"),
+                    ("retrieved_documents", "title_exact_match", "INTEGER DEFAULT 0"),
+                    ("retrieved_documents", "desc_exact_match", "INTEGER DEFAULT 0"),
+                    ("retrieved_documents", "keyword_overlap_ratio", "REAL"),
+                    ("retrieved_documents", "recency_days", "INTEGER"),
+                    ("retrieved_documents", "has_author", "INTEGER DEFAULT 0"),
+                    ("retrieved_documents", "retrieval_algorithm", "TEXT"),
+                    ("retrieved_documents", "schema_version", "INTEGER DEFAULT 2"),
+                    # ranking_scores table
+                    ("ranking_scores", "relative_score", "REAL"),
+                    ("ranking_scores", "score_percentile", "REAL"),
+                    ("ranking_scores", "schema_version", "INTEGER DEFAULT 2"),
+                    # user_interactions table
+                    ("user_interactions", "schema_version", "INTEGER DEFAULT 2"),
+                ]
+
+                for table, column, column_type in alter_statements:
+                    try:
+                        sql = f"ALTER TABLE {table} ADD COLUMN {column} {column_type}"
+                        cursor.execute(sql)
+                        logger.debug(f"Added column {table}.{column}")
+                    except Exception as e:
+                        # Ignore "duplicate column" errors
+                        if "duplicate column name" not in str(e).lower() and "already exists" not in str(e).lower():
+                            raise
+
+            logger.info("✅ Schema v2 migration completed successfully!")
+
+        except Exception as e:
+            logger.error(f"❌ Schema migration failed: {e}")
+            raise
 
     def _get_database_schema(self) -> Dict[str, str]:
         """Get database schema SQL for current database type."""
