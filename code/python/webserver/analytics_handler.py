@@ -280,9 +280,9 @@ class AnalyticsHandler:
                 clicks.append({
                     "doc_url": doc_url,
                     "doc_title": doc_title,
-                    "click_count": click_count,
-                    "avg_position": avg_position,
-                    "avg_dwell_time": avg_dwell_time
+                    "click_count": int(click_count) if click_count else 0,
+                    "avg_position": float(avg_position) if avg_position else None,
+                    "avg_dwell_time": float(avg_dwell_time) if avg_dwell_time else None
                 })
 
             conn.close()
