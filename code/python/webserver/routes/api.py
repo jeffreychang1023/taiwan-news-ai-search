@@ -43,10 +43,13 @@ async def ask_handler(request: web.Request) -> web.Response:
             logger.warning(f"Failed to parse POST body: {e}")
     
     # Check if SSE streaming is requested
-    is_sse = request.get('is_sse', False)
+    # EventSource sends Accept: text/event-stream header
+    accept_header = request.headers.get('Accept', '')
+    is_sse = 'text/event-stream' in accept_header
+
     streaming = get_param(query_params, "streaming", str, "True")
     streaming = streaming not in ["False", "false", "0"]
-    
+
     if is_sse or streaming:
         return await handle_streaming_ask(request, query_params)
     else:
