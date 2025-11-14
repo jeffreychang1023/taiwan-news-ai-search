@@ -596,17 +596,22 @@ class QueryLogger:
                 cursor.execute(query, list(data.values()))
                 conn.commit()
                 conn.close()
+                print(f"[DEBUG QUERY_LOGGER] Successfully wrote to {table_name}: query_id={data.get('query_id', 'N/A')}")
                 return  # Success, exit retry loop
 
             except Exception as e:
                 error_msg = str(e)
+                print(f"[ERROR QUERY_LOGGER] Exception writing to {table_name}: {e}")
+                print(f"[ERROR QUERY_LOGGER] Data: {data}")
                 # Check if it's a foreign key error
                 if "foreign key constraint" in error_msg.lower() and attempt < max_retries - 1:
                     # Wait and retry (parent record might not be inserted yet)
                     time.sleep(retry_delay)
+                    print(f"[ERROR QUERY_LOGGER] Foreign key constraint, retrying {attempt + 1}/{max_retries}...")
                     logger.warning(f"Foreign key constraint error on {table_name}, retrying ({attempt + 1}/{max_retries})...")
                 else:
                     # Log error but don't crash
+                    print(f"[ERROR QUERY_LOGGER] Failed to write to {table_name} after retries")
                     logger.error(f"Error writing to database table {table_name}: {e}")
                     return
 
