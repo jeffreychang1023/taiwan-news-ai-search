@@ -440,4 +440,8 @@ function attachClickTrackingSSE(element, url, position, tracker) {
 // Or make available globally
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = { AnalyticsTrackerSSE, attachClickTrackingSSE };
+} else {
+  // Make available globally for browser <script> tags
+  window.AnalyticsTrackerSSE = AnalyticsTrackerSSE;
+  window.attachClickTrackingSSE = attachClickTrackingSSE;
 }
