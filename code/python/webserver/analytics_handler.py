@@ -456,15 +456,20 @@ class AnalyticsHandler:
 
             elif event_type == 'result_clicked':
                 # Log user click
+                query_id = data.get('query_id')
+                doc_url = data.get('doc_url')
+                print(f"[DEBUG ANALYTICS] Click event: query_id={query_id}, doc_url={doc_url}")
+
                 query_logger.log_user_interaction(
-                    query_id=data.get('query_id'),
-                    doc_url=data.get('doc_url'),
+                    query_id=query_id,
+                    doc_url=doc_url,
                     interaction_type='click',
                     result_position=data.get('result_position', 0),
                     clicked=True,
                     client_user_agent=data.get('client_user_agent', ''),
                     client_ip_hash=self._hash_ip(request)
                 )
+                print(f"[DEBUG ANALYTICS] Click logged to queue")
 
             elif event_type == 'dwell_time':
                 # Log dwell time
