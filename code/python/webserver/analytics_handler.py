@@ -163,7 +163,7 @@ class AnalyticsHandler:
             cursor = conn.cursor()
             ph = self._get_placeholder()
 
-            # Get queries with CTR
+            # Get queries with CTR (only parent queries, exclude generate mode children)
             cursor.execute(f"""
                 SELECT
                     q.query_id,
@@ -177,7 +177,7 @@ class AnalyticsHandler:
                     (SELECT COUNT(*) FROM user_interactions
                      WHERE query_id = q.query_id AND clicked = 1) as clicks
                 FROM queries q
-                WHERE q.timestamp > {ph}
+                WHERE q.timestamp > {ph} AND q.parent_query_id IS NULL
                 ORDER BY q.timestamp DESC
                 LIMIT {ph}
             """, (cutoff_timestamp, limit))

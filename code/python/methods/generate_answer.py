@@ -67,7 +67,8 @@ class GenerateAnswer(NLWebHandler):
                     mode=self.generate_mode or "generate",
                     decontextualized_query=self.decontextualized_query,
                     conversation_id=self.conversation_id,
-                    model=self.model
+                    model=self.model,
+                    parent_query_id=self.parent_query_id
                 )
                 print(f"[DEBUG GenerateAnswer] Successfully logged query start")
             except Exception as e:

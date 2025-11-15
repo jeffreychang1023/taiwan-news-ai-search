@@ -96,6 +96,9 @@ class NLWebHandler:
         # Thread ID for conversation grouping
         self.thread_id = get_param(query_params, "thread_id", str, "")
 
+        # Parent query ID (for generate requests that follow summarize)
+        self.parent_query_id = get_param(query_params, "parent_query_id", str, None)
+
         streaming = get_param(query_params, "streaming", str, "True")
         self.streaming = streaming not in ["False", "false", "0"]
         
@@ -278,7 +281,8 @@ class NLWebHandler:
                 mode=self.generate_mode or "list",
                 decontextualized_query=self.decontextualized_query,
                 conversation_id=self.conversation_id,
-                model=self.model
+                model=self.model,
+                parent_query_id=self.parent_query_id
             )
             print(f"[DEBUG] Successfully called log_query_start")
         except Exception as e:
@@ -315,6 +319,7 @@ class NLWebHandler:
             await post_ranking.PostRanking(self).do()
 
             self.return_value["conversation_id"] = self.conversation_id
+            self.return_value["query_id"] = self.query_id
 
             # Send end-nlweb-response message at the end
             await self.message_sender.send_end_response()

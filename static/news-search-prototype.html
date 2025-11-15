@@ -1762,6 +1762,9 @@
                     summarizeData = summarizeData[0];
                 }
 
+                // Extract parent_query_id from summarize response for analytics linking
+                const parentQueryId = summarizeData.query_id || summarizeData.conversation_id;
+
                 // Call 2: Get AI-generated summary using 'generate' mode with STREAMING
                 // This allows us to receive memory messages in real-time
                 const generateUrl = new URL('/ask', base);
@@ -1769,6 +1772,9 @@
                 generateUrl.searchParams.append('site', 'all');
                 generateUrl.searchParams.append('generate_mode', 'generate');
                 generateUrl.searchParams.append('streaming', 'true'); // Enable streaming for memory messages
+                if (parentQueryId) {
+                    generateUrl.searchParams.append('parent_query_id', parentQueryId);
+                }
                 // Send conversation history for context
                 if (prevQueriesForThisTurn.length > 0) {
                     generateUrl.searchParams.append('prev', JSON.stringify(prevQueriesForThisTurn));

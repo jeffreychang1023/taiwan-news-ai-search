@@ -250,7 +250,6 @@
                             <th>Mode</th>
                             <th>Results</th>
                             <th>Latency</th>
-                            <th>Cost</th>
                             <th>CTR</th>
                             <th>Timestamp</th>
                         </tr>
@@ -365,7 +364,7 @@
             if (!queries || queries.length === 0) {
                 table.innerHTML = `
                     <tr>
-                        <td colspan="8" style="text-align: center; padding: 40px; color: #999;">
+                        <td colspan="7" style="text-align: center; padding: 40px; color: #999;">
                             No queries found. Start using NLWeb to collect data!
                         </td>
                     </tr>
@@ -380,7 +379,6 @@
                     <td>${q.mode || 'list'}</td>
                     <td>${q.num_results_returned || 0}</td>
                     <td>${(q.latency_total_ms / 1000).toFixed(2)}s</td>
-                    <td>$${q.cost_usd?.toFixed(3) || 0}</td>
                     <td>${q.ctr ? (q.ctr * 100).toFixed(1) + '%' : 'N/A'}</td>
                     <td>${formatTimestamp(q.timestamp)}</td>
                 </tr>

@@ -239,6 +239,7 @@ class QueryLogger:
                     site TEXT NOT NULL,
                     mode TEXT NOT NULL,
                     model TEXT,
+                    parent_query_id TEXT,
                     latency_total_ms REAL,
                     latency_retrieval_ms REAL,
                     latency_ranking_ms REAL,
@@ -384,6 +385,7 @@ class QueryLogger:
                     site VARCHAR(100) NOT NULL,
                     mode VARCHAR(50) NOT NULL,
                     model VARCHAR(100),
+                    parent_query_id VARCHAR(255),
                     latency_total_ms DOUBLE PRECISION,
                     latency_retrieval_ms DOUBLE PRECISION,
                     latency_ranking_ms DOUBLE PRECISION,
@@ -625,7 +627,8 @@ class QueryLogger:
         decontextualized_query: str = "",
         session_id: str = "",
         conversation_id: str = "",
-        model: str = ""
+        model: str = "",
+        parent_query_id: str = None
     ) -> None:
         """
         Log the start of a query.
@@ -640,6 +643,7 @@ class QueryLogger:
             session_id: Session identifier
             conversation_id: Conversation identifier
             model: LLM model being used
+            parent_query_id: Parent query ID (for generate requests that follow summarize)
         """
         data = {
             "query_id": query_id,
@@ -652,6 +656,7 @@ class QueryLogger:
             "site": site,
             "mode": mode,
             "model": model,
+            "parent_query_id": parent_query_id,
         }
 
         self.log_queue.put({"table": "queries", "data": data})
