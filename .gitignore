@@ -470,3 +470,12 @@ analyze_*.py
 retry_*.py
 upload_*.py
 truncate_*.py
+
+# Temporary test files moved to tests/ directory
+tests/test_export.csv
+tests/analyze_agent_sessions.py
+tests/cleanup_agent_sessions.py
+tests/cleanup_sessions.py
+tests/debug_qdrant.py
+tests/Untitled.ipynb
+tests/Untitled1.ipynb

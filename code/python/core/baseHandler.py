@@ -37,7 +37,6 @@ from core.utils.message_senders import MessageSender
 from misc.logger.logger import get_logger, LogLevel
 from misc.logger.logging_config_helper import get_configured_logger
 from core.config import CONFIG
-import time
 logger = get_configured_logger("nlweb_handler")
 
 # Analytics logging
