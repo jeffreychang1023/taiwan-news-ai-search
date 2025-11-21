@@ -346,7 +346,12 @@ The user's question is: {request.query}. The item's description is {item.descrip
     async def sendMessageOnSitesBeingAsked(self, top_embeddings):
         if (self.handler.site == "all" or self.handler.site == "nlws"):
             sites_in_embeddings = {}
-            for url, json_str, name, site in top_embeddings:
+            for item in top_embeddings:
+                # Handle both 4-tuple and 5-tuple (with vector) formats
+                if len(item) == 5:
+                    url, json_str, name, site, vector = item
+                else:
+                    url, json_str, name, site = item
                 sites_in_embeddings[site] = sites_in_embeddings.get(site, 0) + 1
             
             top_sites = sorted(sites_in_embeddings.items(), key=lambda x: x[1], reverse=True)[:3]
@@ -369,18 +374,46 @@ The user's question is: {request.query}. The item's description is {item.descrip
     
     async def do(self):
         logger.info(f"Starting ranking process with {len(self.items)} items")
+
+        # Create a mapping from URL to vector (if vectors are included)
+        self.url_to_vector = {}
+        print(f"[Ranking] Checking items for vectors: total items = {len(self.items)}")
+        for item in self.items:
+            if len(item) == 5:  # [url, json_str, name, site, vector]
+                url, _, _, _, vector = item
+                self.url_to_vector[url] = vector
+            else:
+                print(f"[Ranking] Item has {len(item)} elements (expected 5 for vectors)")
+
+        print(f"[Ranking] url_to_vector mapping created: {len(self.url_to_vector)} vectors")
+        if self.url_to_vector:
+            logger.info(f"Vectors available for {len(self.url_to_vector)} items (MMR-ready)")
+            # Store vectors on handler for PostRanking to use
+            self.handler.url_to_vector = self.url_to_vector
+        else:
+            print(f"[Ranking] WARNING: No vectors extracted from items")
+
+        print(f"[Ranking] Starting to create ranking tasks for {len(self.items)} items")
         tasks = []
-        for url, json_str, name, site in self.items:
+        for item in self.items:
+            # Handle both 4-tuple (without vector) and 5-tuple (with vector) formats
+            if len(item) == 5:
+                url, json_str, name, site, vector = item
+            else:
+                url, json_str, name, site = item
+
             if self.handler.connection_alive_event.is_set():  # Only add new tasks if connection is still alive
                 tasks.append(asyncio.create_task(self.rankItem(url, json_str, name, site)))
             else:
                 logger.warning("Connection lost, not creating new ranking tasks")
-       
+
         await self.sendMessageOnSitesBeingAsked(self.items)
 
+        print(f"[Ranking] Created {len(tasks)} ranking tasks, starting execution")
         try:
             logger.debug(f"Running {len(tasks)} ranking tasks concurrently")
             await asyncio.gather(*tasks, return_exceptions=True)
+            print(f"[Ranking] All ranking tasks completed")
         except Exception as e:
             logger.error(f"Error during ranking tasks: {str(e)}")
             log(f"Error during ranking tasks: {str(e)}")
@@ -445,13 +478,67 @@ The user's question is: {request.query}. The item's description is {item.descrip
                     logger.debug(f"Could not apply recency boost: {e}")
                     pass
 
-    
+
         filtered = [r for r in self.rankedAnswers if r['ranking']['score'] > 51]
         ranked = sorted(filtered, key=lambda x: x['ranking']["score"], reverse=True)
-        self.handler.final_ranked_answers = ranked[:self.NUM_RESULTS_TO_SEND]
-        
+
+        # Apply MMR diversity re-ranking if enabled and vectors available
+        from core.config import CONFIG
+        mmr_enabled = CONFIG.mmr_params.get('enabled', True)
+        mmr_threshold = CONFIG.mmr_params.get('threshold', 3)
+
+        print(f"[MMR CHECK] mmr_enabled={mmr_enabled}, ranked={len(ranked)}, threshold={mmr_threshold}, vectors={len(self.url_to_vector)}")
+        if mmr_enabled and len(ranked) > mmr_threshold and self.url_to_vector:
+            logger.info(f"[MMR] Applying diversity re-ranking to {len(ranked)} results")
+
+            # Attach vectors to ranked results
+            for result in ranked:
+                url = result.get('url', '')
+                if url in self.url_to_vector:
+                    result['vector'] = self.url_to_vector[url]
+
+            # Apply MMR
+            from core.mmr import MMRReranker
+            mmr_lambda = CONFIG.mmr_params.get('lambda', 0.7)
+            mmr_reranker = MMRReranker(lambda_param=mmr_lambda, query=self.handler.query)
+            reranked_results, mmr_scores = mmr_reranker.rerank(
+                ranked_results=ranked,
+                top_k=self.NUM_RESULTS_TO_SEND
+            )
+
+            # Log MMR scores to analytics
+            from core.query_logger import get_query_logger
+            query_logger = get_query_logger()
+            if hasattr(self.handler, 'query_id'):
+                for idx, (result, mmr_score) in enumerate(zip(reranked_results, mmr_scores)):
+                    url = result.get('url', '')
+                    query_logger.log_mmr_score(
+                        query_id=self.handler.query_id,
+                        doc_url=url,
+                        mmr_score=mmr_score,
+                        ranking_position=idx
+                    )
+
+            self.handler.final_ranked_answers = reranked_results
+            logger.info(f"[MMR] Re-ranking complete: {len(reranked_results)} diverse results")
+
+            # Clean up: Remove vectors from results before passing to LLM prompts
+            # Vectors are 1536 floats and will pollute the console output
+            for result in self.handler.final_ranked_answers:
+                result.pop('vector', None)
+        else:
+            # No MMR: use original ranking
+            self.handler.final_ranked_answers = ranked[:self.NUM_RESULTS_TO_SEND]
+            if not mmr_enabled:
+                logger.info("MMR disabled in config, using standard ranking")
+            elif len(ranked) <= mmr_threshold:
+                logger.info(f"MMR skipped: only {len(ranked)} results (threshold: {mmr_threshold})")
+            elif not self.url_to_vector:
+                print(f"[MMR] SKIPPED: no vectors available")
+                logger.info("MMR skipped: no vectors available")
+
         logger.info(f"Filtered to {len(filtered)} results with score > 51")
-        logger.debug(f"Top 3 results: {[(r['name'], r['ranking']['score']) for r in ranked[:3]]}")
+        logger.debug(f"Top 3 results: {[(r['name'], r['ranking']['score']) for r in self.handler.final_ranked_answers[:3]]}")
 
         results = [r for r in self.rankedAnswers if r['sent'] == False]
         if (self.num_results_sent > self.NUM_RESULTS_TO_SEND):

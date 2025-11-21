@@ -471,6 +471,9 @@ retry_*.py
 upload_*.py
 truncate_*.py
 
+# Algorithm metrics logs
+algo/*.log
+
 # Temporary test files moved to tests/ directory
 tests/test_export.csv
 tests/analyze_agent_sessions.py
