@@ -1134,7 +1134,14 @@ async def search(query: str,
     # Pass handler through kwargs if provided
     if handler:
         kwargs['handler'] = handler
-    print("QDRANT DIR:", dir(client))
+    import qdrant_client
+    from qdrant_client import AsyncQdrantClient
+    print("\n===== QDRANT DEBUG =====")
+    print("VERSION:", getattr(qdrant_client, "__version__", "UNKNOWN"))
+    print("HAS search:", "search" in dir(AsyncQdrantClient))
+    print("SEARCH METHODS:", [m for m in dir(AsyncQdrantClient) if "search" in m])
+    print("=========================\n")
+
     results = await client.search(query, site, num_results, **kwargs)
     
     # Send retrieval count message if handler is provided and in debug mode
