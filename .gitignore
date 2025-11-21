@@ -474,6 +474,10 @@ truncate_*.py
 # Algorithm metrics logs
 algo/*.log
 
+# Local development documentation (for Claude and developers only)
+.claude/CONTEXT.md
+code/python/testing/scratchpad.md
+
 # Temporary test files moved to tests/ directory
 tests/test_export.csv
 tests/analyze_agent_sessions.py

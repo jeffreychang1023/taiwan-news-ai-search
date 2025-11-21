@@ -181,3 +181,53 @@ algo/
 - Frontend and backend are designed to be independently deployable
 - Configuration changes require server restart
 - **Algorithm changes require documentation in `algo/` directory** (see Algorithm Documentation Practice above)
+
+## Docker Deployment Best Practices
+
+### Python Version Compatibility
+
+**Critical Lesson from Production (2025-01-20)**: Dockerfile used Python 3.13, causing production failure.
+
+**Issue**: Python 3.13 is too new for many ML/data libraries:
+- `qdrant-client` installs but `AsyncQdrantClient` is **missing methods** (e.g., `search()`)
+- Other async libraries may have similar incomplete implementations
+- Local development may use different Python version → issue only appears in production
+
+**Solution**:
+1. **Use Python 3.11 for production** - mature, stable, broad library support
+   ```dockerfile
+   FROM python:3.11-slim AS builder
+   FROM python:3.11-slim
+   COPY --from=builder /usr/local/lib/python3.11/site-packages ...
+   ```
+
+2. **Pin critical dependencies** - avoid surprises from bleeding-edge versions
+   ```
+   qdrant-client==1.11.3  # Specific version known to work
+   ```
+
+3. **Add runtime diagnostics** - verify environment at startup
+   ```python
+   # At module load time:
+   logger.critical(f"🐍 PYTHON VERSION: {sys.version}")
+   logger.critical(f"🔍 MODULE HAS method: {'method' in dir(Module)}")
+   ```
+
+4. **Clear Docker build cache** when changing base images
+   - Render: "Manual Deploy" → "Clear build cache & deploy"
+   - Otherwise old cached layers persist
+
+### Debugging Docker Deployment Failures
+
+When production fails but local works:
+1. **Check Python version first** - most common cause of "missing method" errors
+2. **Check Docker build logs** - verify correct base image used
+3. **Add diagnostic logging** - log versions and available methods at startup
+4. **Clear build cache** - force complete rebuild
+5. **Check for multiple processes** - old processes may still be running
+
+**Red Flags**:
+- Error: `'ClassName' object has no attribute 'method_name'`
+- Library imports but class is incomplete
+- Works locally but fails in Docker
+- → Likely Python version incompatibility

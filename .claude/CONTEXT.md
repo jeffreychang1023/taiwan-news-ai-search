@@ -221,6 +221,70 @@ Moving to Track B (BM25) and Track C (MMR) implementation.
 
 ---
 
+## Critical Production Issue - RESOLVED ✅
+
+### Render Deployment Failure: Python 3.13 Incompatibility (2025-01-20)
+
+**Problem**:
+After deploying BM25 + MMR to Render, production failed with:
+```
+Error in Qdrant search: 'AsyncQdrantClient' object has no attribute 'search'
+```
+
+**Root Cause**:
+- **Dockerfile was using Python 3.13** (lines 2, 20, 44)
+- Python 3.13 is too new → qdrant-client installs a broken/incomplete version
+- The `AsyncQdrantClient` class existed but was **missing the `search()` method**
+- Render logs confirmed: `HAS search: False`, `MODULE FILE: /usr/local/lib/python3.13/site-packages/`
+- Local development worked because it was using Python 3.11
+
+**Diagnosis Process**:
+1. Initial suspicion: qdrant-client version issue
+2. Updated requirements: `>=1.14.0` → `>=1.15.0` (did not fix)
+3. Added version logging to verify installed version
+4. Discovered Python 3.13 in logs → identified real culprit
+5. ChatGPT consultation confirmed Python version incompatibility
+
+**Solution Applied** (commits `88adaf6`, `fa2793d`):
+
+1. **Downgrade Dockerfile to Python 3.11**:
+   ```dockerfile
+   FROM python:3.11-slim AS builder       # Line 2 (was 3.13)
+   FROM python:3.11-slim                  # Line 20 (was 3.13)
+   COPY --from=builder /usr/local/lib/python3.11/site-packages ...  # Line 44
+   ```
+
+2. **Pin qdrant-client to stable version**:
+   ```
+   qdrant-client==1.11.3  # Last known stable with Python 3.11
+   ```
+
+3. **Add runtime diagnostics** (`retrieval_providers/qdrant.py:32-40`):
+   - Logs Python version at module load
+   - Checks `AsyncQdrantClient.search()` availability
+   - Critical severity logging for visibility
+
+4. **Force Render cache clear**:
+   - Manual deploy with "Clear build cache & deploy"
+   - Essential to purge old Python 3.13 Docker layers
+
+**Validation**:
+- ✅ Render deployment successful with Python 3.11
+- ✅ `AsyncQdrantClient.search()` available
+- ✅ Production queries working correctly
+- ✅ BM25 and MMR functioning as expected
+
+**Key Lessons**:
+1. **Check Python version first** when Docker deployments fail mysteriously
+2. **Always clear build cache** when changing base images
+3. **Pin dependency versions** to avoid compatibility surprises
+4. **Add diagnostic logging at module load** to verify runtime environment
+5. **Test with bleeding-edge Python cautiously** - libraries may not be ready
+
+**Status**: ✅ **RESOLVED** - Week 1-2 now fully complete and deployed to production
+
+---
+
 ## Next Immediate Steps
 
 ### Week 3: Integration & LLM Optimization
