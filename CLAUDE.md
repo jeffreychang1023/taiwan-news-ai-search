@@ -48,7 +48,7 @@ python -m testing.run_tests --single --type end_to_end --query "test query"
 
 ### Backend Architecture (code/python/)
 
-**Core Flow**: Query → Pre-retrieval Analysis → Tool Selection → Retrieval → Ranking → Response Generation
+**Core Flow**: Query → Pre-retrieval Analysis → Tool Selection → Retrieval (with BM25) → Ranking → Response Generation
 
 1. **Entry Point**: `webserver/aiohttp_server.py` - Async HTTP server handling REST API and WebSocket connections
 
@@ -57,6 +57,7 @@ python -m testing.run_tests --single --type end_to_end --query "test query"
    - `pre_retrieval/` - Query analysis, decontextualization, relevance detection
    - `methods/` - Tool implementations (search, item details, ensemble queries)
    - `retrieval/` - Vector database clients (Qdrant, Azure AI Search, Milvus, Snowflake, Elasticsearch)
+     - **BM25 Integration**: `core/bm25.py` - Keyword relevance scoring with intent detection
    - `core/ranking.py` - Result scoring and ranking
    - `llm/` - LLM provider integrations (OpenAI, Anthropic, Gemini, Azure, etc.)
 
@@ -78,6 +79,7 @@ python -m testing.run_tests --single --type end_to_end --query "test query"
 - `fp-chat-interface.js` - Primary chat interface
 - `conversation-manager.js` - Conversation state management
 - `chat-ui-common.js` - Shared UI components
+- `news-search-prototype.html` - The actual frontend
 - ES6 modules with clear separation of concerns
 
 ### Key Design Patterns
@@ -94,7 +96,11 @@ python -m testing.run_tests --single --type end_to_end --query "test query"
 1. User query arrives via WebSocket/HTTP
 2. Parallel pre-retrieval analysis (relevance, decontextualization, memory)
 3. Tool selection based on tools.xml manifest
-4. Vector database retrieval with embedding search
+4. Vector database retrieval with hybrid search:
+   - Intent detection (EXACT_MATCH, SEMANTIC, or BALANCED)
+   - Vector similarity (embedding search)
+   - BM25 keyword scoring
+   - Combined score: α * vector_score + β * bm25_score (α/β adjusted by intent)
 5. LLM-based ranking and snippet generation
 6. Optional post-processing (summarization, generation)
 7. Streaming response back to client
@@ -149,11 +155,12 @@ The codebase is on the `conversation-api-implementation` branch, focusing on:
    - After A/B testing results (update with findings)
 
 3. **Examples of Algorithms to Document**:
-   - BM25 (keyword relevance)
-   - MMR (diversity re-ranking)
-   - XGBoost (machine learning ranking)
+   - BM25 (keyword relevance) ✅ IMPLEMENTED
+   - MMR (diversity re-ranking) - In Progress
+   - XGBoost (machine learning ranking) - Week 4+
    - Temporal boosting (recency scoring)
    - Vector similarity (embedding-based)
+   - Intent detection (query classification for α/β adjustment) ✅ IMPLEMENTED
 
 ### File Naming Convention
 

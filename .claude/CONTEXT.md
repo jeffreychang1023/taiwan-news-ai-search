@@ -3,7 +3,8 @@
 ## Project Status: Week 1-2 (ML Search Enhancement)
 
 ### Current Focus
-Implementing ML-powered search ranking system to replace LLM-emulated features with algorithms (BM25, MMR) and machine learning (XGBoost).
+**Track A (Analytics) COMPLETED** ✅
+Moving to Track B (BM25) and Track C (MMR) implementation.
 
 ---
 
@@ -11,34 +12,56 @@ Implementing ML-powered search ranking system to replace LLM-emulated features w
 
 ### ✅ Track A: Analytics Logging Infrastructure (Week 1-2)
 
-**Achievement**: Full analytics system deployed to production with PostgreSQL backend.
+**Achievement**: Full analytics system deployed to production with PostgreSQL backend, Schema v2, parent query ID linking, and all foreign key issues resolved.
 
 **Components Implemented**:
 
-1. **Database Schema** (`code/python/core/analytics_db.py`)
+1. **Database Schema v2** (`code/python/core/analytics_db.py`, `code/python/core/query_logger.py`)
    - 4 core tables: queries, retrieved_documents, ranking_scores, user_interactions
+   - 1 ML table: feature_vectors (35 columns for XGBoost training)
    - Dual database support: SQLite (local) + PostgreSQL (production via Neon.tech)
    - Auto-detection via `ANALYTICS_DATABASE_URL` environment variable
-   - Schema versioning ready for ML features
+   - **Schema v2 changes**:
+     - queries: +5 ML fields + parent_query_id
+     - retrieved_documents: +9 ML fields (including bm25_score, keyword_overlap_ratio, doc_length)
+     - ranking_scores: +3 ML fields (relative_score, score_percentile, schema_version)
+     - user_interactions: +1 field (schema_version)
 
 2. **Query Logger** (`code/python/core/query_logger.py`)
-   - Async logging queue (non-blocking)
+   - **Synchronous parent table writes**: `log_query_start()` writes directly to prevent race conditions
+   - Async queue for child tables (retrieved_documents, ranking_scores, user_interactions)
    - Tracks full query lifecycle: start → retrieval → ranking → completion
-   - User interaction tracking: clicks, dwell time, scroll depth
+   - User interaction tracking: clicks (left/middle/right), dwell time, scroll depth
    - Foreign key retry logic for PostgreSQL race conditions
+   - **Query ID generation**: Backend-authoritative (format: `query_{timestamp}` - UUID suffix removed)
+   - **Parent Query ID**: Links generate requests to their parent summarize requests
 
 3. **Analytics API** (`code/python/webserver/analytics_handler.py`)
    - Dashboard endpoints: `/api/analytics/stats`, `/api/analytics/queries`, `/api/analytics/top-clicks`
    - CSV export: `/api/analytics/export` with UTF-8 BOM for Chinese characters
+   - **Schema v2 export**: Now exports 29 columns (was 14) with all ML features
    - PostgreSQL dict_row compatibility (handles both dict and tuple formats)
+   - **Parent query filtering**: Dashboard only shows parent queries (WHERE parent_query_id IS NULL)
 
 4. **Dashboard** (`static/analytics-dashboard.html`)
-   - Real-time metrics: total queries, avg latency, cost, CTR, error rate
-   - Recent queries table with click-through data
+   - Real-time metrics: total queries, avg latency, CTR, error rate
+   - Recent queries table with click-through data (parent queries only)
    - Top clicked results tracking
    - Training data export functionality
+   - **Parent Query Filter**: Only displays summarize requests, hides generate duplicates
+   - **Cost column removed**: FinOps separate from ML ranking analytics
 
-5. **Deployment**
+5. **Frontend Analytics Tracker** (`static/analytics-tracker-sse.js`, `static/news-search-prototype.html`)
+   - **Uses SSE (Server-Sent Events), NOT WebSocket**
+   - **Multi-click tracking** (commit 122c697):
+     - Left click: `click` event listener
+     - Middle click: `auxclick` event listener
+     - Right click: `contextmenu` event listener
+   - Batch event sending to `/api/analytics/event/batch`
+   - **Query ID sync**: Frontend receives query_id from backend via "begin-nlweb-response" SSE message
+   - **Parent Query ID**: Extracts query_id from summarize response and sends as parent_query_id to generate request
+
+6. **Deployment**
    - Production database: Neon.tech PostgreSQL (free tier, 512MB)
    - Render deployment with health check at `/health`
    - $0/month cost (Render Free + Neon Free)
@@ -47,30 +70,110 @@ Implementing ML-powered search ranking system to replace LLM-emulated features w
 - ✅ Incremental deployment: Fix one method at a time to avoid service disruption
 - ✅ PostgreSQL strictness: GROUP BY requirements, NULL handling, type safety
 - ✅ Row format compatibility: Handle both dict (PostgreSQL) and tuple (SQLite)
-- ✅ Health check path: `/health` not `/api/health` (critical for Render deployment)
+- ✅ **Synchronous writes for parent tables**: Prevents foreign key race conditions
+- ✅ **Analytics before cache checks**: Ensure logging even when using cached results
+- ✅ **Multi-click tracking**: Support all click types for comprehensive analytics
+- ✅ **Debug logging cleanup**: Remove console prints, use logger for production debugging
+
+---
+
+## Recently Completed
+
+### ✅ Track B: BM25 Implementation (Week 1-2) - COMPLETED
+
+**Goal**: Replace LLM keyword scoring with BM25 algorithm for consistent, fast keyword relevance.
+
+**Status**: ✅ Implementation complete, ready for A/B testing
+
+**What Was Built**:
+
+1. **BM25 Scorer** (`code/python/core/bm25.py` - 733 lines)
+   - Custom BM25 implementation (no external libraries)
+   - Tokenization: Chinese 2-4 character sequences, English 2+ character words
+   - Parameters: k1=1.5 (term saturation), b=0.75 (length normalization)
+   - Corpus statistics: avg_doc_length, term_doc_counts calculated per query
+   - IDF calculation with proper handling of rare/common terms
+   - **Tested**: 19 unit tests, all passing ✅
+
+2. **Intent Detection** (`code/python/retrieval_providers/qdrant.py:555-619`)
+   - **Purpose**: Dynamically adjust α/β based on query intent
+   - **EXACT_MATCH intent** (α=0.4, β=0.6): Prioritize BM25 for keyword matching
+     - Indicators: quotes, numbers, hashtags, proper nouns, long queries (10+ chars)
+   - **SEMANTIC intent** (α=0.7, β=0.3): Prioritize vector for conceptual search
+     - Indicators: question words (什麼, how, why), concept words (趨勢, impact), short queries
+   - **BALANCED intent** (default α/β): Mixed or unclear intent
+   - **Scoring algorithm**: Feature-based with 2-point threshold for classification
+
+3. **Qdrant Integration** (`code/python/retrieval_providers/qdrant.py`)
+   - Hybrid scoring: `final_score = α * vector_score + β * bm25_score`
+   - Intent-based α/β adjustment (replaces fixed weights)
+   - Title weighting: 3x repetition in document text
+   - Score storage: `point_scores = {}` dictionary (avoids modifying immutable ScoredPoint)
+   - Terminal output: BM25 breakdown for top 5 results with score formula
+   - Analytics logging: bm25_score, vector_score, keyword_boost, final_score
+
+4. **Configuration** (`config/config_retrieval.yaml`, `code/python/core/config.py`)
+   ```yaml
+   bm25_params:
+     enabled: true
+     k1: 1.5
+     b: 0.75
+     alpha: 0.6    # Default vector weight
+     beta: 0.4     # Default BM25 weight
+   ```
+   - Feature flag to enable/disable BM25
+   - Fallback to old keyword boosting if disabled
+   - Added `self.bm25_params` to CONFIG object
+
+5. **Documentation** (`algo/BM25_implementation.md`)
+   - Complete algorithm documentation with formulas, examples, code structure
+   - Intent detection strategy with 3 query examples
+   - Testing strategy, performance metrics, rollback plan
+   - Changelog tracking implementation progress
+
+**Key Implementation Decisions**:
+- ✅ Custom BM25 implementation (not `rank-bm25` library) for full control
+- ✅ Per-query corpus statistics (not global) to match retrieval context
+- ✅ Intent detection via rule-based scoring (ML-based planned for Week 4+)
+- ✅ Dictionary score storage to avoid modifying immutable Qdrant objects
+- ✅ Terminal `print()` statements for debugging (logger.info only writes to files)
+
+**Testing Results**:
+- ✅ Query "Martech雙周報第77期" → BM25: 219.3, Vector: 0.52, Final: 220.1 (exact match ranked top)
+- ✅ Intent detection working: Detected EXACT_MATCH intent (quotes + numbers)
+- ✅ Analytics logging verified: bm25_score populated in database
+
+**Next Steps**:
+- ⏳ A/B testing (Week 3): Compare BM25 vs old keyword boosting
+- ⏳ Parameter tuning: Adjust k1, b, α, β based on user feedback
+- ⏳ Intent detection validation: Test with 50 diverse queries
+
+**Future ML Enhancement (Week 4+)**:
+- **ML-based intent detection**: Replace rule-based scoring with XGBoost classifier
+  - Features: query length, has_quotes, has_numbers, has_question_words, etc.
+  - Labels: User engagement metrics (CTR, dwell time) by detected intent type
+  - Output: Continuous α/β values instead of categorical (0.4/0.6, 0.7/0.3, default)
+- **XGBoost for α/β optimization**: Learn optimal vector/BM25 balance from user behavior
+  - Current: Fixed α/β per intent type (EXACT_MATCH, SEMANTIC, BALANCED)
+  - Future: Predict optimal α/β for each query based on features
+  - Example features: query length, term diversity, embedding entropy, user history
+  - Training data: Logged in analytics database
+
+**Future Schema Considerations (NOT implementing now, just documenting for Week 4+)**:
+- When implementing XGBoost intent classifier, may need to add to `queries` table:
+  - `detected_intent VARCHAR(20)` - Intent type (EXACT_MATCH, SEMANTIC, BALANCED)
+  - `alpha_used FLOAT` - Vector score weight used for this query
+  - `beta_used FLOAT` - BM25 score weight used for this query
+  - `intent_exact_score INT` - Rule-based exact match score
+  - `intent_semantic_score INT` - Rule-based semantic score
+- Purpose: Enable A/B testing, training data collection, correlation analysis
+- Decision will be made in Week 4 based on actual needs
 
 ---
 
 ## In Progress
 
-### 🔄 Track B: BM25 Implementation (Week 1-2)
 
-**Goal**: Replace LLM keyword scoring with BM25 algorithm for consistent, fast keyword relevance.
-
-**Status**: Planning phase
-
-**Implementation Plan**:
-1. Create `code/python/core/bm25.py` - BM25 scoring implementation
-2. Modify `code/python/retrieval_providers/qdrant.py` - integrate BM25 into hybrid search
-3. Update analytics logging to record `bm25_score` in `retrieved_documents` table
-4. Configure score fusion: `final_score = α * vector_score + β * bm25_score`
-5. Make α, β configurable per site in `config/config_retrieval.yaml`
-
-**Database Ready**:
-- ✅ `retrieved_documents.bm25_score` column already exists (currently NULL)
-- ✅ Schema supports BM25 metadata tracking
-
----
 
 ### 🔄 Track C: MMR Implementation (Week 1-2)
 
@@ -91,233 +194,68 @@ Implementing ML-powered search ranking system to replace LLM-emulated features w
 
 ---
 
-## Upcoming Work
+## Next Immediate Steps
 
-### 📅 Week 3: Integration & LLM Optimization
+1. ✅ **COMPLETED: Implement BM25** (`code/python/core/bm25.py`)
+   - ✅ Custom implementation with full control
+   - ✅ Integrated into `qdrant.py` retrieval flow with intent detection
+   - ✅ Logging `bm25_score` to database
 
-**Goals**:
-- Integrate BM25 and MMR into production
-- Slim down LLM prompts (remove keyword/freshness scoring)
-- Deploy with A/B testing
-- Target: 40% cost reduction, 40% latency reduction
+2. **Implement MMR** (`code/python/core/mmr.py`)
+   - Classic MMR formula implementation
+   - Integrate into `post_ranking.py`
+   - Log `mmr_diversity_score` to database
 
-**Tasks**:
-1. Update `config/prompts.xml` - remove keyword/freshness dimensions
-2. Modify score combination in `code/python/core/ranking.py`
-3. Configure per-site scoring weights
-4. Deploy to production with gradual rollout
+3. **Test BM25 with Diverse Queries**
+   - Collect 50 diverse query types
+   - Verify intent detection accuracy (EXACT_MATCH, SEMANTIC, BALANCED)
+   - Validate BM25 scores improve keyword matching
+   - Check analytics logging captures new scores
 
----
-
-### 📅 Week 4-6: XGBoost Training Pipeline
-
-**Goals**:
-- Collect 10,000+ queries with user interactions
-- Feature engineering for ML ranking
-- Train initial XGBoost model
-
-**Database Preparation Needed**:
-1. **Add ML feature columns** to existing tables:
-   - `retrieved_documents`: query_term_count, doc_length, title_exact_match, desc_exact_match, keyword_overlap_ratio, recency_days, has_author, retrieval_algorithm
-   - `queries`: query_length_words, query_length_chars, has_temporal_indicator, embedding_model
-   - `ranking_scores`: relative_score, score_percentile
-   - All tables: `schema_version` column (set to 2)
-
-2. **Create `feature_vectors` table** (comprehensive ML features):
-   - Query features: length, type, temporal indicators
-   - Document features: length, quality, recency
-   - Query-document features: BM25, overlap ratios, matches
-   - Ranking features: positions, relative scores
-   - Labels: clicked, dwell_time, relevance_grade (0-4)
-
-**ML Pipeline Components**:
-1. `code/python/ml/feature_engineering.py` - Extract features from raw logs
-2. `code/python/ml/prepare_training_data.py` - Create train/val/test splits
-3. `code/python/ml/train_ranker.py` - XGBoost training with hyperparameter tuning
-4. `code/python/ml/model_registry.py` - Model versioning and tracking
-
----
-
-### 📅 Week 7-8: XGBoost Deployment
-
-**Goals**:
-- Shadow mode validation
-- Gradual traffic migration
-- Cascading architecture implementation
-- Target: 88% total cost reduction, 75% latency reduction
-
-**Components**:
-1. `code/python/core/xgboost_ranker.py` - Model inference
-2. Cascading logic: XGBoost → LLM (top-10 only)
-3. Confidence-based routing
-4. Rollback procedures
-
----
-
-## Technical Architecture
-
-### Current Search Pipeline
-
-```
-User Query
-    ↓
-[Retrieval] Qdrant Hybrid Search
-    - Vector similarity (embeddings)
-    - Keyword boosting (existing)
-    - Temporal boosting (recency)
-    ↓
-[Ranking] LLM Ranking (Current)
-    - Keyword scoring (to be replaced by BM25)
-    - Semantic relevance
-    - Freshness scoring (to be algorithmic)
-    - Diversity re-ranking (to be replaced by MMR)
-    ↓
-Final Results
-```
-
-### Target Pipeline (Week 8)
-
-```
-User Query
-    ↓
-[1] Retrieval - Qdrant + BM25
-    - Vector similarity
-    - BM25 keyword matching
-    - Score fusion (α * vector + β * BM25)
-    ↓
-[2] Diversity - MMR Algorithm
-    - Balance relevance vs diversity
-    - Intent-based tuning
-    ↓
-[3] ML Ranking - XGBoost
-    - 12-15 features per query-doc pair
-    - Confidence scores
-    ↓
-[4] LLM Refinement (Cascading)
-    - High confidence (>0.85): Skip LLM
-    - Medium (0.7-0.85): LLM top-10 only
-    - Low (<0.7): LLM all results
-    ↓
-Final Ranked Results
-```
-
----
-
-## Performance Metrics
-
-### Current Baseline
-- **Cost**: $1.20 per query
-- **Latency**: 15-25 seconds
-- **Accuracy**: LLM-based (inconsistent)
-
-### Target Metrics (Week 8)
-- **Cost**: $0.15 per query (88% reduction)
-- **Latency**: 3-5 seconds (75% reduction)
-- **Accuracy**: +15-25% improvement (learned from user behavior)
-
-### Milestone Targets
-
-**Week 3 (BM25 + MMR)**:
-- Cost: $0.70 per query (40% reduction)
-- Latency: 8-12 seconds (40% reduction)
-
-**Week 8 (+ XGBoost)**:
-- Cost: $0.15 per query (additional 80% reduction)
-- Latency: 3-5 seconds (additional 60% reduction)
-
----
-
-## Database Status
-
-### Production Database: Neon.tech PostgreSQL
-- **Status**: ✅ Deployed and operational
-- **URL**: Configured via `ANALYTICS_DATABASE_URL` environment variable
-- **Plan**: Free tier (512MB storage, serverless auto-pause)
-- **Schema Version**: 1 (ready for v2 upgrade)
-
-### Schema Upgrade Needed (Week 4)
-- **Action**: Add ML feature columns to existing tables
-- **Method**: `ALTER TABLE ADD COLUMN` (preserve existing data)
-- **New Table**: Create `feature_vectors` for comprehensive ML features
-- **Version**: Bump `schema_version` to 2
-
-### Migration Strategy
-1. Test locally with SQLite first
-2. Write migration script compatible with both SQLite and PostgreSQL
-3. Apply to Neon production database
-4. Verify with analytics dashboard
-5. Backfill historical data if needed
-
----
-
-## File Locations
-
-### Analytics System
-- `code/python/core/analytics_db.py` - Database abstraction layer
-- `code/python/core/query_logger.py` - Async logging engine
-- `code/python/webserver/analytics_handler.py` - API endpoints
-- `static/analytics-dashboard.html` - Dashboard UI
-- `static/analytics-tracker-sse.js` - Frontend event tracking
-
-### Retrieval & Ranking (To be modified)
-- `code/python/retrieval_providers/qdrant.py` - Hybrid search (BM25 integration point)
-- `code/python/core/ranking.py` - LLM ranking (score combination)
-- `code/python/core/post_ranking.py` - Post-processing (MMR integration point)
-
-### Configuration
-- `config/config_retrieval.yaml` - Retrieval parameters
-- `config/prompts.xml` - LLM prompts (to be slimmed down)
-- `render.yaml` - Deployment configuration
-
-### Future ML Components (To be created)
-- `code/python/core/bm25.py` - BM25 implementation
-- `code/python/core/mmr.py` - MMR algorithm
-- `code/python/core/xgboost_ranker.py` - XGBoost inference
-- `code/python/ml/feature_engineering.py` - Feature extraction
-- `code/python/ml/train_ranker.py` - Model training
-- `code/python/ml/model_registry.py` - Model versioning
+4. **Deploy BM25 + MMR to Production**
+   - Week 3: Full BM25 + MMR integration
+   - Slim down LLM prompts (remove keyword/freshness scoring)
+   - A/B testing and validation
+   - Expected: 40% cost reduction, 40% latency reduction
 
 ---
 
 ## Known Issues & Workarounds
 
-### Issue: Query ID Format Errors
-**Symptom**: Foreign key constraint errors with malformed query_ids (e.g., `query_1762871587019_avttxv3ul` - 9 chars instead of 8)
-**Status**: Under investigation
-**Workaround**: Retry logic handles most cases (3 retries, 0.5s delay)
-**Monitoring**: Enhanced logging in `baseHandler.py` and `query_logger.py`
+### ✅ RESOLVED: Foreign Key Constraint Violations
+
+**Root Causes & Fixes**:
+
+1. **Async Queue Race Condition** (commit 743871e):
+   - Problem: `log_query_start()` used async queue, child tables wrote before parent
+   - Fix: Made `log_query_start()` synchronous - calls `_write_to_db()` directly
+
+2. **Cache Early Return** (commit fc44ded):
+   - Problem: GenerateAnswer using cached results returned before analytics logging
+   - Fix: Moved analytics logging to START of `get_ranked_answers()`, before cache check
+
+3. **Missing parent_query_id Column**:
+   - Problem: Neon PostgreSQL missing `parent_query_id` column after schema migration
+   - Fix: Manual `ALTER TABLE queries ADD COLUMN parent_query_id VARCHAR(255);`
+
+4. **Query ID Format Inconsistency**:
+   - Problem: UUID suffix caused tracking issues
+   - Fix: Changed from `query_{timestamp}_{uuid}` to `query_{timestamp}`
+
+5. **Multi-Click Tracking Missing** (commit 122c697):
+   - Problem: Only left-click tracked, user interactions incomplete
+   - Fix: Added `auxclick` and `contextmenu` event listeners
+
+6. **Batch Handler Missing Click Events** (commit 0e913c9):
+   - Problem: Backend ignored `result_clicked` events in batch processing
+   - Fix: Added `result_clicked` case to `handle_analytics_batch()`
+
+**Status**: ✅ All issues resolved, deployed to production
 
 ### Issue: Render Free Plan Auto-Sleep
 **Symptom**: First request after 15 minutes returns 503, takes 30-60s to wake up
 **Status**: Expected behavior (Render Free plan)
 **Workaround**: Users must wait for service to wake up
-**Mitigation**: Health check at `/health` helps keep service warm
-
----
-
-## Next Immediate Steps
-
-1. **Schema Upgrade for ML Features**
-   - Rebuild Neon database with enhanced schema
-   - Add ML feature columns to existing tables
-   - Create `feature_vectors` table
-   - Bump schema_version to 2
-
-2. **Implement BM25** (`code/python/core/bm25.py`)
-   - Choose library: `rank-bm25` or custom implementation
-   - Integrate into `qdrant.py` retrieval flow
-   - Log `bm25_score` to database
-
-3. **Implement MMR** (`code/python/core/mmr.py`)
-   - Classic MMR formula implementation
-   - Integrate into `post_ranking.py`
-   - Log `mmr_diversity_score` to database
-
-4. **Enhanced Logging**
-   - Calculate and log query/doc lengths
-   - Log exact match features
-   - Track retrieval algorithm details
-   - Record temporal features
 
 ---
 
