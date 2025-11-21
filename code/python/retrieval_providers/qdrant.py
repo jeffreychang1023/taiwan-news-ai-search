@@ -29,6 +29,16 @@ from core.query_logger import get_query_logger
 
 logger = get_configured_logger("qdrant_client")
 
+# CRITICAL DIAGNOSTIC: Log Python version and qdrant-client availability at module load time
+logger.critical(f"🐍 PYTHON VERSION CHECK: {sys.version}")
+logger.critical(f"📦 QDRANT-CLIENT MODULE: {AsyncQdrantClient.__module__}")
+logger.critical(f"🔍 QDRANT-CLIENT HAS search(): {'search' in dir(AsyncQdrantClient)}")
+if 'search' not in dir(AsyncQdrantClient):
+    logger.error(f"❌ MISSING METHODS - Available: {[m for m in dir(AsyncQdrantClient) if not m.startswith('_')]}")
+    logger.error("⚠️  This indicates qdrant-client is broken/incomplete - likely Python version issue!")
+else:
+    logger.critical("✅ AsyncQdrantClient.search() is available")
+
 class QdrantVectorClient(RetrievalClientBase):
     """
     Client for Qdrant vector database operations, providing a unified interface for 

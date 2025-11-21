@@ -59,7 +59,9 @@ PyJWT>=2.8.0
 # numpy
 
 # For Qdrant:
-qdrant-client>=1.15.0
+# Pinned to 1.11.3 - last known stable version with Python 3.11
+# Version 1.15+ has issues with async client on certain Python versions
+qdrant-client==1.11.3
 
 # For OpenSearch or Snowflake (both use httpx):
 # httpx>=0.28.1
