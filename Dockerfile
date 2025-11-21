@@ -1,5 +1,5 @@
 # Stage 1: Build stage
-FROM python:3.13-slim AS builder
+FROM python:3.11-slim AS builder
 
 # Install build dependencies including g++ for chroma-hnswlib
 RUN apt-get update && \
@@ -17,7 +17,7 @@ COPY code/python/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Stage 2: Runtime stage
-FROM python:3.13-slim
+FROM python:3.11-slim
 
 # Apply security updates
 RUN apt-get update && \
@@ -41,7 +41,7 @@ COPY --chown=nlweb:nlweb static/ /app/static/
 COPY --chown=nlweb:nlweb config/ /app/config/
 
 # Copy installed packages from builder stage
-COPY --from=builder /usr/local/lib/python3.13/site-packages /usr/local/lib/python3.13/site-packages
+COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
 
 # Expose the port the app runs on
