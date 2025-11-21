@@ -116,8 +116,13 @@ class QueryLogger:
                 cursor.execute("PRAGMA table_info(queries)")
                 columns = [row[1] for row in cursor.fetchall()]
 
-            # If schema_version column doesn't exist, we need migration
-            return 'schema_version' not in columns
+            # If schema_version OR parent_query_id column doesn't exist, we need migration
+            needs_migration = 'schema_version' not in columns or 'parent_query_id' not in columns
+
+            if needs_migration and 'parent_query_id' not in columns:
+                logger.info("Detected missing parent_query_id column - will add during migration")
+
+            return needs_migration
 
         except Exception as e:
             logger.warning(f"Error checking schema version: {e}")
@@ -137,6 +142,7 @@ class QueryLogger:
                     ADD COLUMN IF NOT EXISTS query_length_chars INTEGER,
                     ADD COLUMN IF NOT EXISTS has_temporal_indicator INTEGER DEFAULT 0,
                     ADD COLUMN IF NOT EXISTS embedding_model VARCHAR(100),
+                    ADD COLUMN IF NOT EXISTS parent_query_id VARCHAR(255),
                     ADD COLUMN IF NOT EXISTS schema_version INTEGER DEFAULT 2
                 """)
 
@@ -176,6 +182,7 @@ class QueryLogger:
                     ("queries", "query_length_chars", "INTEGER"),
                     ("queries", "has_temporal_indicator", "INTEGER DEFAULT 0"),
                     ("queries", "embedding_model", "TEXT"),
+                    ("queries", "parent_query_id", "TEXT"),
                     ("queries", "schema_version", "INTEGER DEFAULT 2"),
                     # retrieved_documents table
                     ("retrieved_documents", "query_term_count", "INTEGER"),
@@ -832,6 +839,38 @@ class QueryLogger:
             "mmr_diversity_score": mmr_diversity_score,
             "final_ranking_score": final_ranking_score,
             "ranking_method": ranking_method,
+        }
+
+        self.log_queue.put({"table": "ranking_scores", "data": data})
+
+    def log_mmr_score(
+        self,
+        query_id: str,
+        doc_url: str,
+        mmr_score: float,
+        ranking_position: int
+    ) -> None:
+        """
+        Update ranking_scores table with MMR diversity score.
+        This is called after MMR re-ranking to add diversity scores.
+
+        Args:
+            query_id: Query identifier
+            doc_url: Document URL
+            mmr_score: MMR diversity score
+            ranking_position: Final position after MMR
+        """
+        # Log as a ranking score update with just MMR info
+        data = {
+            "query_id": query_id,
+            "doc_url": doc_url,
+            "ranking_position": ranking_position,
+            "mmr_diversity_score": mmr_score,
+            "ranking_method": "mmr",
+            # Other scores will be 0/empty for this partial update
+            "llm_relevance_score": 0,
+            "llm_final_score": 0,
+            "final_ranking_score": mmr_score,
         }
 
         self.log_queue.put({"table": "ranking_scores", "data": data})

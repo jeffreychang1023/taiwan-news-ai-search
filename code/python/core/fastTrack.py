@@ -79,12 +79,17 @@ class FastTrack:
                 logger.info(f"[FASTTRACK-TEMPORAL] Non-temporal query - retrieving 50 items")
                 num_to_retrieve = 50
 
+            # Check if MMR is enabled and request vectors if needed
+            from core.config import CONFIG
+            include_vectors = CONFIG.mmr_params.get('enabled', True) and CONFIG.mmr_params.get('include_vectors', True)
+
             items = await search(
                 self.handler.query,
                 self.handler.site,
                 query_params=self.handler.query_params,
                 handler=self.handler,
-                num_results=num_to_retrieve
+                num_results=num_to_retrieve,
+                include_vectors=include_vectors
             )
 
             # Pre-filter by date for temporal queries
@@ -92,7 +97,13 @@ class FastTrack:
                 cutoff_date = datetime.now(timezone.utc) - timedelta(days=365)
                 filtered_items = []
 
-                for url, json_str, name, site in items:
+                for item in items:
+                    # Handle both 4-tuple and 5-tuple (with vector) formats
+                    if len(item) == 5:
+                        url, json_str, name, site, vector = item
+                    else:
+                        url, json_str, name, site = item
+                        vector = None
                     try:
                         schema_obj = json.loads(json_str)
                         date_published = schema_obj.get('datePublished', 'Unknown')
@@ -105,7 +116,10 @@ class FastTrack:
 
                             # Keep only recent articles
                             if pub_date >= cutoff_date:
-                                filtered_items.append([url, json_str, name, site])
+                                if vector is not None:
+                                    filtered_items.append([url, json_str, name, site, vector])
+                                else:
+                                    filtered_items.append([url, json_str, name, site])
                     except Exception as e:
                         # If we can't parse the date, skip this article for temporal queries
                         logger.debug(f"Could not parse date for temporal filtering: {e}")

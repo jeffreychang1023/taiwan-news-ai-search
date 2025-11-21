@@ -791,17 +791,6 @@
             transition: all 0.2s;
         }
 
-        .btn-save {
-            background: white;
-            border: 1px solid #e5e5e5;
-            color: #1a1a1a;
-        }
-
-        .btn-save:hover {
-            border-color: #2563eb;
-            color: #2563eb;
-        }
-
         .btn-share {
             background: #2563eb;
             border: none;
@@ -1097,7 +1086,6 @@
 
                 <!-- Bottom Actions -->
                 <div class="bottom-actions">
-                    <button class="btn-action btn-save">💾 儲存搜尋</button>
                     <button class="btn-action btn-share" id="btnShare">🔗 分享結果</button>
                 </div>
             </div>
@@ -1192,6 +1180,9 @@
         } catch (e) {
             console.error('Failed to load saved sessions from localStorage:', e);
         }
+
+        // Track the current loaded session ID to prevent duplicate saves
+        let currentLoadedSessionId = null;
 
         // Mode tracking: 'search' or 'chat'
         let currentMode = 'search';
@@ -1307,17 +1298,38 @@
         btnNewThread.addEventListener('click', () => {
             // Save current session if there's any data
             if (sessionHistory.length > 0) {
-                const currentSession = {
-                    id: Date.now(),
-                    title: conversationHistory[0] || '未命名搜尋', // Use first query as title
-                    conversationHistory: [...conversationHistory],
-                    sessionHistory: [...sessionHistory],
-                    chatHistory: [...chatHistory], // Save chat messages
-                    accumulatedArticles: [...accumulatedArticles], // Save accumulated articles
-                    createdAt: Date.now()
-                };
-                savedSessions.push(currentSession);
-                console.log('Session saved:', currentSession);
+                // Check if this session is already saved (either loaded or previously saved)
+                const existingSessionIndex = currentLoadedSessionId !== null
+                    ? savedSessions.findIndex(s => s.id === currentLoadedSessionId)
+                    : -1;
+
+                if (existingSessionIndex !== -1) {
+                    // Update existing session instead of creating duplicate
+                    savedSessions[existingSessionIndex] = {
+                        id: currentLoadedSessionId,
+                        title: conversationHistory[0] || '未命名搜尋',
+                        conversationHistory: [...conversationHistory],
+                        sessionHistory: [...sessionHistory],
+                        chatHistory: [...chatHistory],
+                        accumulatedArticles: [...accumulatedArticles],
+                        createdAt: savedSessions[existingSessionIndex].createdAt,
+                        updatedAt: Date.now()
+                    };
+                    console.log('Session updated:', savedSessions[existingSessionIndex]);
+                } else {
+                    // Create new session
+                    const currentSession = {
+                        id: Date.now(),
+                        title: conversationHistory[0] || '未命名搜尋',
+                        conversationHistory: [...conversationHistory],
+                        sessionHistory: [...sessionHistory],
+                        chatHistory: [...chatHistory],
+                        accumulatedArticles: [...accumulatedArticles],
+                        createdAt: Date.now()
+                    };
+                    savedSessions.push(currentSession);
+                    console.log('Session saved:', currentSession);
+                }
 
                 // Persist to localStorage
                 try {
@@ -1333,6 +1345,7 @@
             sessionHistory = [];
             accumulatedArticles = []; // Clear accumulated articles
             chatHistory = []; // Clear chat history
+            currentLoadedSessionId = null; // Reset loaded session ID
 
             // Reset free conversation mode to search mode
             if (currentMode === 'chat') {
@@ -1569,6 +1582,13 @@
 
             // Group articles by date for timeline view
             const articlesByDate = {};
+
+            // Sort articles by score in descending order (highest score first)
+            articles.sort((a, b) => {
+                const scoreA = a.score || a.metadata?.score || 0;
+                const scoreB = b.score || b.metadata?.score || 0;
+                return scoreB - scoreA;
+            });
 
             // Populate news cards
             articles.forEach((article, index) => {
@@ -2089,6 +2109,9 @@
         function loadSavedSession(session) {
             console.log('Loading saved session:', session);
 
+            // Track this session's ID to prevent duplicate saves
+            currentLoadedSessionId = session.id;
+
             // Restore conversation history and session data
             conversationHistory = [...session.conversationHistory];
             sessionHistory = [...session.sessionHistory];
@@ -2467,20 +2490,6 @@
             });
         });
 
-        // Save button
-        const btnSave = document.querySelector('.btn-save');
-        btnSave.addEventListener('click', () => {
-            const originalText = btnSave.textContent;
-            btnSave.textContent = '✓ 已儲存';
-            btnSave.style.borderColor = '#059669';
-            btnSave.style.color = '#059669';
-            
-            setTimeout(() => {
-                btnSave.textContent = originalText;
-                btnSave.style.borderColor = '';
-                btnSave.style.color = '';
-            }, 2000);
-        });
     </script>
 </body>
 </html>

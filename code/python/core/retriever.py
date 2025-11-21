@@ -642,14 +642,15 @@ class VectorDBClient:
         for endpoint_name, results in endpoint_results.items():
             if results:
                 logger.debug(f"Got {len(results)} results from {endpoint_name}")
-                
+
                 for result in results:
-                    if len(result) >= 4:  # Ensure we have [url, json, name, site]
+                    if len(result) >= 4:  # Ensure we have [url, json, name, site] or [url, json, name, site, vector]
                         url = result[0]
                         json_data = result[1]
                         name = result[2]
                         site = result[3]
-                        
+                        vector = result[4] if len(result) == 5 else None  # Preserve vector if present
+
                         if url not in url_to_data:
                             # First occurrence of this URL
                             url_to_data[url] = {
@@ -657,12 +658,14 @@ class VectorDBClient:
                                 "json_list": [json_data] if json_data else [],
                                 "name": name,
                                 "site": site,
+                                "vector": vector,  # Store vector from first occurrence
                                 "first_endpoint": endpoint_name
                             }
                         else:
                             # URL already seen, append JSON data
                             if json_data:
                                 url_to_data[url]["json_list"].append(json_data)
+                            # Keep vector from first occurrence (don't overwrite)
         
         # Second pass: build final results maintaining order from first endpoint
         # We'll interleave to preserve relevance ordering
@@ -707,6 +710,9 @@ class VectorDBClient:
                                     data["name"],
                                     data["site"]
                                 ]
+                                # Preserve vector if present
+                                if data.get("vector") is not None:
+                                    merged_result.append(data["vector"])
                                 final_results.append(merged_result)
                 except StopIteration:
                     endpoints_to_remove.append(endpoint_name)

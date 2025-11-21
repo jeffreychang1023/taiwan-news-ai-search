@@ -541,7 +541,15 @@ class ConversationManager {
 
   // Helper method to add a conversation
   addConversation(conversation) {
-    this.conversations.unshift(conversation);
+    // Check if conversation already exists
+    const existingIndex = this.conversations.findIndex(c => c.id === conversation.id);
+    if (existingIndex !== -1) {
+      // Update existing conversation instead of adding duplicate
+      this.conversations[existingIndex] = conversation;
+    } else {
+      // Add new conversation to the beginning
+      this.conversations.unshift(conversation);
+    }
   }
 
   // Helper method to update a conversation

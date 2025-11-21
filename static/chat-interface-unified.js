@@ -1118,7 +1118,7 @@ export class UnifiedChatInterface {
         site: siteToUse,
         mode: modeToUse
       };
-      this.conversationManager.conversations.push(conversation);
+      this.conversationManager.addConversation(conversation);
     }
     
     // Don't check for duplicates - multiple events can share the same message_id

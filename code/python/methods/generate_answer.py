@@ -325,7 +325,13 @@ class GenerateAnswer(NLWebHandler):
                 cutoff_date = datetime.now(timezone.utc) - timedelta(days=365)  # Only articles from last year
 
                 filtered_embeddings = []
-                for url, json_str, name, site in top_embeddings:
+                for item in top_embeddings:
+                    # Handle both 4-tuple and 5-tuple (with vector) formats
+                    if len(item) == 5:
+                        url, json_str, name, site, vector = item
+                    else:
+                        url, json_str, name, site = item
+                        vector = None
                     try:
                         schema_obj = json.loads(json_str)
                         date_published = schema_obj.get('datePublished', 'Unknown')
@@ -333,7 +339,10 @@ class GenerateAnswer(NLWebHandler):
                         if date_published != 'Unknown':
                             pub_date = datetime.fromisoformat(date_published.replace('Z', '+00:00'))
                             if pub_date >= cutoff_date:
-                                filtered_embeddings.append([url, json_str, name, site])
+                                if vector is not None:
+                                    filtered_embeddings.append([url, json_str, name, site, vector])
+                                else:
+                                    filtered_embeddings.append([url, json_str, name, site])
                         # If no date, skip it for temporal queries
                     except:
                         pass  # Skip articles with bad dates
@@ -352,7 +361,12 @@ class GenerateAnswer(NLWebHandler):
 
             # Rank each item
             tasks = []
-            for url, json_str, name, site in top_embeddings:
+            for item in top_embeddings:
+                # Handle both 4-tuple and 5-tuple (with vector) formats
+                if len(item) == 5:
+                    url, json_str, name, site, vector = item
+                else:
+                    url, json_str, name, site = item
                 tasks.append(asyncio.create_task(self.rankItem(url, json_str, name, site)))
 
 
@@ -373,21 +387,26 @@ class GenerateAnswer(NLWebHandler):
                     print(f"[RANKING] {idx}. [{score}] {item['name'][:60]}")
                     logger.info(f"{idx}. [{score}] {item['name'][:60]}")
 
-            # Apply diversity re-ranking if we have enough results
-            print(f"[DIVERSITY CHECK] Have {len(self.final_ranked_answers)} items, threshold is 3")
-            if len(self.final_ranked_answers) > 3:
-                print(f"[DIVERSITY] Applying diversity re-ranking to {len(self.final_ranked_answers)} items")
-                logger.info(f"Applying diversity re-ranking to {len(self.final_ranked_answers)} items")
-                await self.apply_diversity_reranking()
-                print(f"[DIVERSITY] Diversity re-ranking completed")
-
-                # Log final ranked order after diversity
-                logger.info("=== FINAL RANKING (after diversity) ===")
-                for idx, item in enumerate(self.final_ranked_answers[:10], 1):  # Show top 10
-                    score = item['ranking'].get('score', 0)
-                    logger.info(f"{idx}. [{score}] {item['name'][:60]}")
-            else:
-                logger.info(f"Skipping diversity re-ranking (only {len(self.final_ranked_answers)} items)")
+            # OLD DIVERSITY CODE - COMMENTED OUT FOR A/B TESTING
+            # MMR diversity is now handled in ranking.py during the ranking stage
+            # This ensures both list/summarize AND generate modes get diverse results
+            #
+            # print(f"[DIVERSITY CHECK] Have {len(self.final_ranked_answers)} items, threshold is 3")
+            # if len(self.final_ranked_answers) > 3:
+            #     print(f"[DIVERSITY] Applying diversity re-ranking to {len(self.final_ranked_answers)} items")
+            #     logger.info(f"Applying diversity re-ranking to {len(self.final_ranked_answers)} items")
+            #     await self.apply_diversity_reranking()
+            #     print(f"[DIVERSITY] Diversity re-ranking completed")
+            #
+            #     # Log final ranked order after diversity
+            #     logger.info("=== FINAL RANKING (after diversity) ===")
+            #     for idx, item in enumerate(self.final_ranked_answers[:10], 1):  # Show top 10
+            #         score = item['ranking'].get('score', 0)
+            #         logger.info(f"{idx}. [{score}] {item['name'][:60]}")
+            # else:
+            #     logger.info(f"Skipping diversity re-ranking (only {len(self.final_ranked_answers)} items)")
+            #
+            # To re-enable old LLM-based diversity: uncomment above and disable MMR in config_retrieval.yaml
 
             # CRITICAL: Limit to top 10 items to match list mode behavior
             # This ensures generate mode and list/summary mode reference the same articles

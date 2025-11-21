@@ -366,7 +366,8 @@ class NLWebHandler:
         tasks = []
 
         tasks.append(asyncio.create_task(self.decontextualizeQuery().do()))
-        tasks.append(asyncio.create_task(fastTrack.FastTrack(self).do()))
+        # FastTrack disabled - all searches now use regular path for unified vector/MMR handling
+        # tasks.append(asyncio.create_task(fastTrack.FastTrack(self).do()))
         tasks.append(asyncio.create_task(query_rewrite.QueryRewrite(self).do()))
         
         # Check if a specific tool is requested via the 'tool' parameter
@@ -422,28 +423,43 @@ class NLWebHandler:
                 is_temporal_query = any(keyword in self.query for keyword in temporal_keywords)
 
                 if is_temporal_query:
+                    print(f"[TEMPORAL] Temporal query detected: '{self.query}' - retrieving 150 items for date filtering")
                     logger.info(f"[TEMPORAL] Temporal query detected: '{self.query}' - retrieving 150 items for date filtering")
                     num_to_retrieve = 150
                 else:
+                    print(f"[TEMPORAL] Non-temporal query: '{self.query}' - retrieving 50 items")
                     logger.info(f"[TEMPORAL] Non-temporal query: '{self.query}' - retrieving 50 items")
                     num_to_retrieve = 50
 
-                print(f"[NLWEBHANDLER] About to call search() with num_results={num_to_retrieve}")
+                # Check if MMR is enabled and request vectors if needed
+                include_vectors = CONFIG.mmr_params.get('enabled', True) and CONFIG.mmr_params.get('include_vectors', True)
+
                 items = await search(
                     self.decontextualized_query,
                     self.site,
                     query_params=self.query_params,
                     handler=self,
-                    num_results=num_to_retrieve
+                    num_results=num_to_retrieve,
+                    include_vectors=include_vectors
                 )
-                print(f"[NLWEBHANDLER] search() returned {len(items)} items")
+
+                # DIAGNOSTIC: Check items immediately after search
+                print(f"[Handler POST-SEARCH] Received {len(items)} items from search")
+                if items:
+                    print(f"[Handler POST-SEARCH] First item has {len(items[0])} elements")
 
                 # Pre-filter by date for temporal queries
                 if is_temporal_query and len(items) > 0:
                     cutoff_date = datetime.now(timezone.utc) - timedelta(days=365)
                     filtered_items = []
 
-                    for url, json_str, name, site in items:
+                    for item in items:
+                        # Handle both 4-tuple and 5-tuple (with vector) formats
+                        if len(item) == 5:
+                            url, json_str, name, site, vector = item
+                        else:
+                            url, json_str, name, site = item
+                            vector = None
                         try:
                             schema_obj = json.loads(json_str)
                             date_published = schema_obj.get('datePublished', 'Unknown')
@@ -456,7 +472,10 @@ class NLWebHandler:
 
                                 # Keep only recent articles
                                 if pub_date >= cutoff_date:
-                                    filtered_items.append([url, json_str, name, site])
+                                    if vector is not None:
+                                        filtered_items.append([url, json_str, name, site, vector])
+                                    else:
+                                        filtered_items.append([url, json_str, name, site])
                         except Exception as e:
                             # If we can't parse the date, skip this article for temporal queries
                             logger.debug(f"Could not parse date for temporal filtering: {e}")
@@ -491,6 +510,16 @@ class NLWebHandler:
     
     async def get_ranked_answers(self):
         try:
+            # Debug: check items before passing to ranking
+            print(f"[Handler] Passing {len(self.final_retrieved_items)} items to ranking")
+            if len(self.final_retrieved_items) > 0:
+                first_item_len = len(self.final_retrieved_items[0])
+                print(f"[Handler] First item has {first_item_len} elements")
+                if first_item_len == 5:
+                    print(f"[Handler] ✓ Items include vectors (5-tuple format)")
+                else:
+                    print(f"[Handler] ✗ Items do NOT include vectors (4-tuple format)")
+
             await ranking.Ranking(self, self.final_retrieved_items, ranking.Ranking.REGULAR_TRACK).do()
             return self.return_value
         except Exception as e:
