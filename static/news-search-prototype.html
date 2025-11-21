@@ -845,11 +845,45 @@
             margin-bottom: 12px;
             cursor: pointer;
             transition: all 0.2s;
+            position: relative;
         }
 
         .saved-session-item:hover {
             border-color: #2563eb;
             background: #f9fafb;
+        }
+
+        .delete-btn {
+            position: absolute;
+            top: 12px;
+            right: 12px;
+            background: #f3f4f6;
+            border: 1px solid #e5e5e5;
+            border-radius: 4px;
+            padding: 4px 8px;
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.2s;
+            color: #666;
+            min-width: 24px;
+            text-align: center;
+        }
+
+        .delete-btn:hover {
+            background: #e5e7eb;
+            border-color: #d1d5db;
+        }
+
+        .delete-btn.confirming {
+            background: #ef4444;
+            color: white;
+            border-color: #dc2626;
+            padding: 4px 12px;
+            font-size: 12px;
+        }
+
+        .delete-btn.confirming:hover {
+            background: #dc2626;
         }
 
         .saved-session-title {
@@ -980,7 +1014,7 @@
                 <div style="display: flex; gap: 12px; align-items: center;">
                     <button class="btn-new-thread" id="btnNewThread">
                         <span>🔄</span>
-                        <span>新對話</span>
+                        <span>儲存並開啟新對話</span>
                     </button>
                     <button class="my-searches" id="btnMySearches" style="border: none; background: none;">我的搜尋</button>
                 </div>
@@ -2061,6 +2095,66 @@
             }
         });
 
+        // Track delete confirmation state
+        let deleteConfirmTimeout = null;
+
+        // Function to handle delete session with two-click confirmation
+        function handleDeleteSession(sessionId, deleteBtn) {
+            if (deleteBtn.classList.contains('confirming')) {
+                // Second click - actually delete
+                deleteSavedSession(sessionId);
+            } else {
+                // First click - show confirmation
+                deleteBtn.classList.add('confirming');
+                deleteBtn.textContent = '確定刪除';
+
+                // Clear any existing timeout
+                if (deleteConfirmTimeout) {
+                    clearTimeout(deleteConfirmTimeout);
+                }
+
+                // Reset after 3 seconds if not confirmed
+                deleteConfirmTimeout = setTimeout(() => {
+                    deleteBtn.classList.remove('confirming');
+                    deleteBtn.textContent = '✕';
+                }, 3000);
+            }
+        }
+
+        // Function to delete a saved session
+        function deleteSavedSession(sessionId) {
+            console.log('Deleting session:', sessionId);
+
+            // Remove from savedSessions array
+            savedSessions = savedSessions.filter(s => s.id !== sessionId);
+
+            // Update localStorage
+            localStorage.setItem('taiwanNewsSavedSessions', JSON.stringify(savedSessions));
+
+            // If the deleted session is currently loaded, reset the interface
+            if (currentLoadedSessionId === sessionId) {
+                currentLoadedSessionId = null;
+                conversationHistory = [];
+                sessionHistory = [];
+                chatHistory = [];
+                accumulatedArticles = [];
+
+                // Clear UI
+                resultsSection.style.display = 'none';
+                initialState.style.display = 'flex';
+                searchInput.value = '';
+                renderConversationHistory();
+
+                // Switch back to search mode if in chat mode
+                if (currentMode === 'chat') {
+                    switchMode('search');
+                }
+            }
+
+            // Re-render the sessions list
+            renderSavedSessions();
+        }
+
         // Function to render saved sessions
         function renderSavedSessions() {
             savedSessionsList.innerHTML = '';
@@ -2089,12 +2183,20 @@
                 const chatInfo = chatCount > 0 ? ` • ${chatCount} 則對話` : '';
 
                 sessionItem.innerHTML = `
+                    <button class="delete-btn" data-session-id="${session.id}">✕</button>
                     <div class="saved-session-title">${escapeHTML(session.title)}</div>
                     <div class="saved-session-meta">
                         <span class="saved-session-queries">${session.conversationHistory.length} 個查詢${chatInfo}</span>
                         <span>${dateStr}</span>
                     </div>
                 `;
+
+                // Add delete button handler
+                const deleteBtn = sessionItem.querySelector('.delete-btn');
+                deleteBtn.addEventListener('click', (e) => {
+                    e.stopPropagation(); // Prevent session load
+                    handleDeleteSession(session.id, deleteBtn);
+                });
 
                 sessionItem.addEventListener('click', () => {
                     loadSavedSession(session);
