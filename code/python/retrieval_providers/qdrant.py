@@ -29,15 +29,14 @@ from core.query_logger import get_query_logger
 
 logger = get_configured_logger("qdrant_client")
 
-# CRITICAL DIAGNOSTIC: Log Python version and qdrant-client availability at module load time
-logger.critical(f"🐍 PYTHON VERSION CHECK: {sys.version}")
-logger.critical(f"📦 QDRANT-CLIENT MODULE: {AsyncQdrantClient.__module__}")
-logger.critical(f"🔍 QDRANT-CLIENT HAS search(): {'search' in dir(AsyncQdrantClient)}")
+# Diagnostic logging for qdrant-client availability (debug level to reduce noise)
+logger.debug(f"Python version: {sys.version}")
+logger.debug(f"qdrant-client module: {AsyncQdrantClient.__module__}")
 if 'search' not in dir(AsyncQdrantClient):
-    logger.error(f"❌ MISSING METHODS - Available: {[m for m in dir(AsyncQdrantClient) if not m.startswith('_')]}")
-    logger.error("⚠️  This indicates qdrant-client is broken/incomplete - likely Python version issue!")
+    logger.error(f"qdrant-client is missing required methods - likely version/compatibility issue")
+    logger.debug(f"Available methods: {[m for m in dir(AsyncQdrantClient) if not m.startswith('_')]}")
 else:
-    logger.critical("✅ AsyncQdrantClient.search() is available")
+    logger.debug("qdrant-client AsyncQdrantClient.search() is available")
 
 class QdrantVectorClient(RetrievalClientBase):
     """
@@ -632,8 +631,7 @@ class QdrantVectorClient(RetrievalClientBase):
             alpha, beta = alpha_default, beta_default
             intent_type = "BALANCED"
 
-        logger.debug(f"Query intent: {intent_type} (exact_score={exact_score}, semantic_score={semantic_score}) → α={alpha}, β={beta}")
-        print(f"[INTENT] {intent_type}: α={alpha:.1f}, β={beta:.1f} | Query: {query[:50]}")
+        logger.info(f"Query intent: {intent_type} (exact_score={exact_score}, semantic_score={semantic_score}) → α={alpha}, β={beta}")
 
         return alpha, beta
 
@@ -648,7 +646,7 @@ class QdrantVectorClient(RetrievalClientBase):
         Returns:
             List[List[str]]: Formatted results
         """
-        print(f"[_format_results] Called with include_vectors={include_vectors}, {len(search_result)} items")
+        logger.debug(f"Formatting {len(search_result)} results, include_vectors={include_vectors}")
         results = []
         vectors_found = 0
         for i, item in enumerate(search_result):
@@ -659,8 +657,6 @@ class QdrantVectorClient(RetrievalClientBase):
             site_name = payload.get("site", "")
 
             has_vector = hasattr(item, 'vector') and item.vector is not None
-            if i == 0:
-                print(f"[_format_results] First item: has_vector={has_vector}, include_vectors={include_vectors}")
 
             if include_vectors and has_vector:
                 # Include vector as 5th element for MMR
@@ -670,9 +666,7 @@ class QdrantVectorClient(RetrievalClientBase):
                 # Standard format without vector
                 results.append([url, schema, name, site_name])
 
-        print(f"[_format_results] Returning {len(results)} results, vectors_found={vectors_found}")
-        if results:
-            print(f"[_format_results] First result has {len(results[0])} elements")
+        logger.debug(f"Formatted {len(results)} results, vectors_found={vectors_found}")
         return results
     
     async def search(self, query: str, site: Union[str, List[str]],
@@ -785,14 +779,13 @@ class QdrantVectorClient(RetrievalClientBase):
                     with_vectors=include_vectors,  # Include vectors for MMR if requested
                 )
 
-                # DIAGNOSTIC: Check if Qdrant returned vectors
+                # Check if Qdrant returned vectors
                 if search_result:
-                    print(f"[Qdrant POST-SEARCH] Retrieved {len(search_result)} points, include_vectors={include_vectors}")
+                    logger.debug(f"Retrieved {len(search_result)} points, include_vectors={include_vectors}")
                     first_point = search_result[0]
                     has_vector = hasattr(first_point, 'vector') and first_point.vector is not None
-                    print(f"[Qdrant POST-SEARCH] First point has vector: {has_vector}")
                     if has_vector:
-                        print(f"[Qdrant POST-SEARCH] Vector length: {len(first_point.vector)}")
+                        logger.debug(f"Vectors available, length: {len(first_point.vector)}")
 
                 # Apply keyword boosting to results
                 if all_keywords:
@@ -834,7 +827,6 @@ class QdrantVectorClient(RetrievalClientBase):
 
                         # Calculate corpus statistics
                         avg_doc_length, term_doc_counts = bm25_scorer.calculate_corpus_stats(documents)
-                        print(f"[BM25] Corpus stats - avg_length: {avg_doc_length:.1f}, unique_terms: {len(term_doc_counts)}")
                         logger.debug(f"BM25 corpus stats - avg_length: {avg_doc_length}, unique_terms: {len(term_doc_counts)}")
 
                     for point in search_result:
@@ -1016,14 +1008,11 @@ class QdrantVectorClient(RetrievalClientBase):
                     # Take top num_results
                     top_results = [point for _, point in scored_results[:num_results]]
 
-                    print(f"[HYBRID SEARCH] Retrieved {len(search_result)} candidates, returning top {len(top_results)} results")
                     logger.info(f"Hybrid search: retrieved {len(search_result)} candidates, returning top {len(top_results)} results")
                     logger.debug(f"Top 5 boosted scores: {[(f'{r[0]:.3f}', r[1].payload.get('name', '')[:40]) for r in scored_results[:5]]}")
 
                     # Log BM25 scores for top 5 results (if BM25 enabled)
                     if use_bm25 and scored_results:
-                        print("=" * 70)
-                        print("=== BM25 Score Breakdown (Top 5) ===")
                         logger.info("=== BM25 Score Breakdown (Top 5) ===")
                         for i, (final_score, point) in enumerate(scored_results[:5], 1):
                             url = point.payload.get("url", "")
@@ -1032,28 +1021,14 @@ class QdrantVectorClient(RetrievalClientBase):
                             vector_score = point.score
                             bm25_score = scores['bm25_score']
 
-                            print(f"  [{i}] {title}")
-                            print(f"      Vector: {vector_score:.4f} | BM25: {bm25_score:.4f} | Final: {final_score:.4f}")
-                            print(f"      Calculation: {alpha:.2f} * {vector_score:.4f} + {beta:.2f} * {bm25_score:.4f} = {final_score:.4f}")
                             logger.info(f"  [{i}] {title}")
                             logger.info(f"      Vector: {vector_score:.4f} | BM25: {bm25_score:.4f} | Final: {final_score:.4f}")
                             logger.info(f"      Calculation: {alpha:.2f} * {vector_score:.4f} + {beta:.2f} * {bm25_score:.4f} = {final_score:.4f}")
-                        print("=" * 70)
                         logger.info("=" * 50)
                 else:
                     # No keywords, use vector results as-is
                     top_results = search_result[:num_results]
                     logger.info(f"No keywords found, using pure vector search: {len(top_results)} results")
-
-                # DIAGNOSTIC: Check if vectors survived keyword boosting
-                if top_results:
-                    print(f"[Qdrant PRE-FORMAT] Formatting {len(top_results)} results, include_vectors={include_vectors}")
-                    first = top_results[0]
-                    print(f"[Qdrant PRE-FORMAT] First result type: {type(first)}")
-                    has_vector = hasattr(first, 'vector') and first.vector is not None
-                    print(f"[Qdrant PRE-FORMAT] First result has vector: {has_vector}")
-                    if has_vector:
-                        print(f"[Qdrant PRE-FORMAT] Vector length: {len(first.vector)}")
 
                 # Format the results
                 results = self._format_results(top_results, include_vectors=include_vectors)
@@ -1147,11 +1122,6 @@ class QdrantVectorClient(RetrievalClientBase):
                     "embedding_dim": len(embedding),
                 }
             )
-
-            # DIAGNOSTIC: Final check before returning
-            print(f"[Qdrant FINAL-RETURN] About to return {len(results)} results")
-            if results:
-                print(f"[Qdrant FINAL-RETURN] First result has {len(results[0])} elements")
 
             return results
             

@@ -203,13 +203,7 @@ class SummarizeResults(PromptRunner):
             result.pop('vector', None)
 
     async def do(self):
-        # MMR diversity re-ranking is already done in ranking.py
-        # No need to apply it again here - would be redundant
-        # await self.apply_mmr_reranking()  # REMOVED: duplicate MMR call
-
-        # Use ALL the final ranked answers that are shown in list view
-        # Don't limit to 3 - use the same results shown to the user
-        # self.handler.final_ranked_answers = self.handler.final_ranked_answers[:3]  # OLD: only used 3
+        # MMR diversity re-ranking is already done in ranking.py, no need to apply again
         response = await self.run_prompt(self.SUMMARIZE_RESULTS_PROMPT_NAME, timeout=20, max_length=1024)
         if (not response):
             return

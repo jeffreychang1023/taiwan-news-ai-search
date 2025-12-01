@@ -21,12 +21,12 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 
 # Copy requirements file first (for better Docker layer caching)
-COPY code/python/requirements.txt /app/requirements.txt
+COPY code/python/ /app/
 
 # Install Python dependencies including hnswlib
 # This will compile hnswlib from source using the g++ we just installed
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+    pip install --no-cache-dir -r 
 
 # Copy the application code
 COPY code/ /app/code/

@@ -344,7 +344,8 @@ class GenerateAnswer(NLWebHandler):
                                 else:
                                     filtered_embeddings.append([url, json_str, name, site])
                         # If no date, skip it for temporal queries
-                    except:
+                    except Exception as e:
+                        logger.warning(f"Failed to parse date for article {url}: {e}")
                         pass  # Skip articles with bad dates
 
                 # If we filtered too aggressively, take top 50 by semantic similarity anyway
@@ -602,7 +603,8 @@ class GenerateAnswer(NLWebHandler):
                         "items": []
                     }
                     await self.send_message(error_msg)
-                except:
+                except Exception as e:
+                    logger.warning(f"Failed to send error message to client: {e}")
                     pass
             raise
 
@@ -724,7 +726,8 @@ class GenerateAnswer(NLWebHandler):
                 try:
                     error_msg = {"message_type": "nlws", "@type": "GeneratedAnswer", "answer": "I encountered an error while generating your answer. Please try again.", "items": []}
                     await self.send_message(error_msg)
-                except:
+                except Exception as e:
+                    logger.warning(f"Failed to send error message to client: {e}")
                     pass
             raise
 

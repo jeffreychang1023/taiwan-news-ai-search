@@ -16,6 +16,7 @@ Backwards compatibility is not guaranteed at this time.
 import json
 import csv
 import io
+import os
 from aiohttp import web
 from pathlib import Path
 import time
@@ -575,8 +576,8 @@ class AnalyticsHandler:
             else:
                 ip = 'unknown'
 
-        # Hash with salt (should be configured in production)
-        salt = "nlweb-analytics-salt"  # TODO: Move to config
+        # Hash with salt from environment variable (falls back to default for local dev)
+        salt = os.getenv('ANALYTICS_SALT', 'nlweb-analytics-salt-default')
         hashed = hashlib.sha256(f"{ip}{salt}".encode()).hexdigest()[:16]
 
         return hashed

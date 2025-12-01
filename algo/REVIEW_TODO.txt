@@ -1,0 +1,46 @@
+# XGBoost Phase A Review - Critical TODO
+
+## ❌ CRITICAL: Missing User Behavior Features
+
+### Problem
+Current: 29 features
+Missing: Historical CTR, dwell time, URL frequency → 最重要的 ML signals!
+
+### Data Available
+✅ Analytics `user_interactions` table has: clicked, dwell_time_ms
+✅ Can calculate via SQL aggregation
+
+### Add 6 Features (29 → 35)
+30. url_historical_ctr
+31. url_historical_avg_dwell
+32. url_times_shown
+33. query_frequency
+34. url_avg_position_when_clicked
+35. url_last_interaction_days_ago
+
+### Files to Update
+- `training/feature_engineering.py` → add extract_historical_features()
+- `core/xgboost_ranker.py` → change (n,29) to (n,35)
+- `training/xgboost_trainer.py` → update n_features validation
+- `algo/XGBoost_implementation.md` → update Feature Definitions section
+- `config/config_retrieval.yaml` → feature_version: 2 → 3
+
+### SQL (Phase C implementation)
+```sql
+SELECT doc_url,
+       COUNT(CASE WHEN clicked=1 THEN 1 END)::FLOAT/NULLIF(COUNT(*),0) as ctr,
+       AVG(CASE WHEN clicked=1 THEN dwell_time_ms END) as avg_dwell,
+       COUNT(*) as times_shown
+FROM user_interactions
+WHERE doc_url=:url AND timestamp>NOW()-INTERVAL '90 days'
+GROUP BY doc_url;
+```
+
+### Cold Start
+New URLs: use defaults (ctr=0.05, times_shown=0)
+
+### When
+**Before Week 2 integration** (affects ranking.py, tests, mock data)
+
+### Effort
+~3-4 hours

@@ -148,18 +148,27 @@ Replace LLM-based ranking with XGBoost model that predicts document relevance sc
 
 ### Architecture
 
+**UPDATED** (2025-01-26): Corrected pipeline order based on Phase A implementation.
+
 **Cascading Model** (cost optimization):
 ```
 Retrieval (BM25 + Vector)
     ↓
-MMR Diversity Re-ranking
+LLM Ranking (50 results → scored)
     ↓
-XGBoost Ranking (ALL results)
+XGBoost Re-ranking (uses LLM scores as features)
     ↓
-LLM Refinement (top-10 ONLY if XGBoost confidence < 0.8)
+MMR Diversity Re-ranking (50 results → 10 results)
     ↓
 Final Results
 ```
+
+**Key Design Decision**: XGBoost runs AFTER LLM ranking because:
+- XGBoost uses LLM scores as input features (features 22-27 in feature list)
+- MMR should work on final relevance ranking from XGBoost
+- Allows graceful degradation if XGBoost disabled
+
+**Note**: This differs from the original Week 4 plan which suggested XGBoost before MMR without LLM. Phase A implementation (see `algo/XGBoost_implementation.md`) uses a hybrid approach where XGBoost enhances LLM ranking rather than replacing it entirely.
 
 ### Input Features (25-30 features)
 

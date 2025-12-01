@@ -59,8 +59,9 @@ PyJWT>=2.8.0
 # numpy
 
 # For Qdrant:
-# Pinned to 1.11.3 - last known stable version with Python 3.11
-# Version 1.15+ has issues with async client on certain Python versions
+# Pinned to 1.11.3 due to Python 3.13 incompatibility with qdrant-client
+# Python 3.13 → 3.11 downgrade (see Dockerfile) required for qdrant-client compatibility
+# Version 1.15+ has async client issues on Python 3.13
 qdrant-client==1.11.3
 
 # For OpenSearch or Snowflake (both use httpx):
@@ -85,3 +86,9 @@ pgvector>=0.4.0
 # For HNSW (Hierarchical Navigable Small World)
 # Using ChromaDB's fork which has prebuilt Linux wheels
 chroma-hnswlib>=0.7.0
+
+# Machine Learning dependencies for XGBoost ranking (Phase A - Week 1-2)
+pandas>=2.0.0
+numpy>=1.24.0
+scikit-learn>=1.3.0
+xgboost>=2.0.0

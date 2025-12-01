@@ -101,19 +101,16 @@ class MMRReranker:
             # SPECIFIC: Higher λ (0.8) - prioritize relevance
             adjusted_lambda = 0.8
             self.detected_intent = "SPECIFIC"
-            print(f"[MMR INTENT] SPECIFIC query detected - λ adjusted to {adjusted_lambda}")
             logger.info(f"[INTENT] SPECIFIC query detected - λ adjusted to {adjusted_lambda}")
         elif exploratory_score > specific_score:
             # EXPLORATORY: Lower λ (0.5) - prioritize diversity
             adjusted_lambda = 0.5
             self.detected_intent = "EXPLORATORY"
-            print(f"[MMR INTENT] EXPLORATORY query detected - λ adjusted to {adjusted_lambda}")
             logger.info(f"[INTENT] EXPLORATORY query detected - λ adjusted to {adjusted_lambda}")
         else:
             # BALANCED: Use default λ
             adjusted_lambda = self.lambda_param
             self.detected_intent = "BALANCED"
-            print(f"[MMR INTENT] BALANCED query - λ remains {adjusted_lambda}")
             logger.info(f"[INTENT] BALANCED query - λ remains {adjusted_lambda}")
 
         return adjusted_lambda
@@ -242,7 +239,6 @@ class MMRReranker:
         normalized_relevance = (candidates[first_idx]['ranking'].get('score', 0) - min_score) / score_range
         mmr_scores.append(normalized_relevance)
 
-        print(f"[MMR] Selected 1st: {candidates[first_idx]['name'][:50]} (score={candidates[first_idx]['ranking'].get('score', 0):.1f})")
         logger.debug(f"[MMR] Selected 1st: {candidates[first_idx]['name'][:50]} (score={candidates[first_idx]['ranking'].get('score', 0):.1f})")
 
         # Iteratively select remaining results
@@ -276,7 +272,6 @@ class MMRReranker:
                 selected_indices.add(best_idx)
                 mmr_scores.append(best_mmr_score)
 
-                print(f"[MMR] Selected {iteration + 1}th: {candidates[best_idx]['name'][:50]} (mmr={best_mmr_score:.3f}, score={candidates[best_idx]['ranking'].get('score', 0):.1f})")
                 logger.debug(f"[MMR] Selected {iteration + 1}th: {candidates[best_idx]['name'][:50]} "
                            f"(mmr={best_mmr_score:.3f}, score={candidates[best_idx]['ranking'].get('score', 0):.1f})")
 
@@ -301,7 +296,6 @@ class MMRReranker:
             avg_mmr_sim = np.mean(mmr_similarities) if mmr_similarities else 0.0
             diversity_reduction = avg_orig_sim - avg_mmr_sim
 
-            print(f"[MMR] Diversity improvement: avg similarity {avg_orig_sim:.3f} → {avg_mmr_sim:.3f} (reduction: {diversity_reduction:.3f})")
             logger.info(f"[MMR] Diversity improvement: avg similarity {avg_orig_sim:.3f} → {avg_mmr_sim:.3f} "
                        f"(reduction: {diversity_reduction:.3f})")
 

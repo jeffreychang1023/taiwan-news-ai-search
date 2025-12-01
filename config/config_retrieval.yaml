@@ -16,6 +16,14 @@ mmr_params:
   threshold: 3            # Only apply MMR if we have more than this many results
   include_vectors: true   # Retrieve document vectors from Qdrant for MMR calculation
 
+# XGBoost ML ranking parameters (Phase A - Week 1-2)
+xgboost_params:
+  enabled: false          # Feature flag: false during Phase A (infrastructure only)
+  model_path: "models/xgboost_ranker_v1_binary.json"  # Path to trained model (Phase C)
+  confidence_threshold: 0.8  # High confidence → trust XGBoost, low → use LLM scores
+  feature_version: 2      # Must match feature_vectors.schema_version in analytics DB
+  use_shadow_mode: true   # Phase A/B: Log predictions without affecting rankings
+
 endpoints:
 
 #Azure endpoints

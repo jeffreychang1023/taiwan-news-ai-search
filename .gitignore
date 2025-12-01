@@ -486,3 +486,20 @@ tests/cleanup_sessions.py
 tests/debug_qdrant.py
 tests/Untitled.ipynb
 tests/Untitled1.ipynb
+
+# Temporary files moved to testing/temp_files_archive/ (2024-11-22)
+testing/temp_files_archive/tmpsayil7w6.json
+testing/temp_files_archive/tmpvymsm1zk.xml
+testing/temp_files_archive/tmpwyd521pu.json
+testing/temp_files_archive/conversation.backup
+testing/temp_files_archive/baseHandler.py_old
+testing/temp_files_archive/fastTrack.py_old
+testing/temp_files_archive/prompts.py.backup
+testing/temp_files_archive/ranking.py.backup
+testing/temp_files_archive/generate_answer.py_old
+testing/temp_files_archive/old_generate_answer.log
+testing/temp_files_archive/old_prompt_runner.log
+testing/temp_files_archive/old_qdrant_client.log
+testing/temp_files_archive/old_retriever.log
+testing/temp_files_archive/old_query_logs.db
+testing/temp_files_archive/README.md

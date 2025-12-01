@@ -2,6 +2,35 @@
 
 ## Recent Milestones
 
+### 2025-01-26: XGBoost Phase A Started 🔄
+
+**XGBoost Infrastructure Preparation (Week 3-4)**
+
+Started implementation of XGBoost ML ranking system:
+
+1. **Documentation** (complete)
+   - Created `algo/XGBoost_implementation.md` (500+ lines)
+   - Updated `algo/Week4_ML_Enhancements.md` with corrected pipeline
+   - Documented 29 features, 3-phase training approach, risk mitigation
+
+2. **Configuration** (complete)
+   - Added xgboost_params to `config/config_retrieval.yaml`
+   - Updated `core/config.py` with xgboost_params loading
+   - Added ML dependencies to `requirements.txt`
+
+3. **Architecture** (finalized)
+   - Pipeline order: LLM → XGBoost → MMR
+   - XGBoost uses LLM scores as features (features 22-27)
+   - Shadow mode for Phase A/B validation
+
+**Next Steps**:
+- Implement feature engineering module
+- Implement XGBoost ranker module
+- Implement training pipeline
+- Integration and unit tests
+
+---
+
 ### 2024-11-17: Week 1-2 Track A COMPLETED ✅
 
 **Analytics Infrastructure Fully Deployed**

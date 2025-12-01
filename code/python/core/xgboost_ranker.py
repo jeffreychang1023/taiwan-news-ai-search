@@ -1,0 +1,449 @@
+# Copyright (c) 2025 Microsoft Corporation.
+# Licensed under the MIT License
+
+"""
+XGBoost Ranker Module for ML-based Ranking
+
+Loads trained XGBoost models and performs inference on ranking results.
+Supports shadow mode for validation and confidence-based cascading.
+
+WARNING: This code is under development and may undergo changes in future releases.
+Backwards compatibility is not guaranteed at this time.
+"""
+
+import os
+import json
+import numpy as np
+from typing import Dict, List, Tuple, Optional, Any
+from misc.logger.logging_config_helper import get_configured_logger
+
+logger = get_configured_logger("xgboost_ranker")
+
+# Global model cache to avoid reloading on every query
+_MODEL_CACHE: Dict[str, Any] = {}
+
+
+class XGBoostRanker:
+    """
+    XGBoost-based ranking model for ML-driven result re-ranking.
+
+    This class loads trained XGBoost models and performs fast inference
+    on ranking results. It supports:
+    - Shadow mode (log predictions without affecting rankings)
+    - Confidence-based cascading (high confidence → trust ML)
+    - Global model caching (avoid reload latency)
+    """
+
+    def __init__(self, config: Dict[str, Any]):
+        """
+        Initialize XGBoost ranker with configuration.
+
+        Args:
+            config: XGBoost configuration dictionary from CONFIG.xgboost_params
+                - enabled (bool): Feature flag
+                - model_path (str): Path to trained model JSON
+                - confidence_threshold (float): Confidence threshold (0-1)
+                - feature_version (int): Expected feature version
+                - use_shadow_mode (bool): Shadow mode flag
+        """
+        self.enabled = config.get('enabled', False)
+        self.model_path = config.get('model_path', 'models/xgboost_ranker_v1_binary.json')
+        self.confidence_threshold = config.get('confidence_threshold', 0.8)
+        self.feature_version = config.get('feature_version', 2)
+        self.use_shadow_mode = config.get('use_shadow_mode', True)
+        self.model = None
+
+        # Load model if enabled
+        if self.enabled:
+            self.load_model()
+        else:
+            logger.info("XGBoost ranker disabled (enabled=false in config)")
+
+    def load_model(self) -> None:
+        """
+        Load XGBoost model from disk with global caching.
+
+        Uses global cache to avoid reloading the same model multiple times.
+        Model is loaded from JSON format for portability.
+
+        Raises:
+            FileNotFoundError: If model file doesn't exist
+            ValueError: If model loading fails
+        """
+        # Check global cache first
+        if self.model_path in _MODEL_CACHE:
+            self.model = _MODEL_CACHE[self.model_path]
+            logger.info(f"Loaded XGBoost model from cache: {self.model_path}")
+            return
+
+        # Check if model file exists
+        if not os.path.exists(self.model_path):
+            logger.warning(f"XGBoost model not found: {self.model_path}")
+            logger.warning("Model will be trained in Phase C. Disabling XGBoost for now.")
+            self.enabled = False
+            return
+
+        try:
+            # Phase A: Placeholder for model loading
+            # Phase C: Load actual XGBoost model
+            # import xgboost as xgb
+            # self.model = xgb.Booster()
+            # self.model.load_model(self.model_path)
+
+            logger.warning(f"XGBoost model loading not yet implemented (Phase A)")
+            logger.info(f"Model path configured: {self.model_path}")
+
+            # Store in global cache
+            _MODEL_CACHE[self.model_path] = self.model
+
+        except Exception as e:
+            logger.error(f"Failed to load XGBoost model: {e}")
+            self.enabled = False
+
+    def extract_features(self, ranking_results: List[Any], query_text: str) -> np.ndarray:
+        """
+        Extract 29 features from in-memory ranking results.
+
+        Args:
+            ranking_results: List of ranking result objects (from ranking.py)
+            query_text: Original query string
+
+        Returns:
+            numpy array of shape (n_results, 29) with extracted features
+
+        Features (in order):
+            Query (6): query_length, word_count, has_quotes, has_numbers,
+                       has_question_words, keyword_count
+            Document (8): doc_length, recency_days, has_author, has_publication_date,
+                         schema_completeness, title_length, description_length, url_length
+            Retrieval (7): vector_similarity, bm25_score, keyword_boost, temporal_boost,
+                          final_retrieval_score, keyword_overlap_ratio, title_exact_match
+            Ranking (6): retrieval_position, ranking_position, llm_final_score,
+                        relative_score_to_top, score_percentile, position_change
+            MMR (2): mmr_diversity_score, detected_intent
+        """
+        # Import feature extraction functions
+        from training.feature_engineering import (
+            extract_query_features,
+            extract_document_features,
+            extract_query_doc_features,
+            extract_ranking_features,
+            extract_mmr_features
+        )
+
+        n_results = len(ranking_results)
+        features = np.zeros((n_results, 29))
+
+        # Extract query features (same for all documents)
+        query_feats = extract_query_features(query_text)
+
+        # Collect all LLM scores for percentile calculation
+        all_llm_scores = [
+            getattr(result, 'llm_score', 0.0) for result in ranking_results
+        ]
+
+        # Extract features for each result
+        for i, result in enumerate(ranking_results):
+            # Get result attributes (handle different object types)
+            doc_title = getattr(result, 'title', '')
+            doc_description = getattr(result, 'description', '')
+            doc_url = getattr(result, 'url', '')
+            published_date = getattr(result, 'published_date', None)
+            author = getattr(result, 'author', None)
+
+            # Retrieval scores
+            vector_score = getattr(result, 'vector_score', 0.0)
+            bm25_score = getattr(result, 'bm25_score', 0.0)
+            keyword_boost = getattr(result, 'keyword_boost', 0.0)
+            temporal_boost = getattr(result, 'temporal_boost', 0.0)
+            final_retrieval_score = getattr(result, 'final_retrieval_score', 0.0)
+
+            # Ranking scores
+            retrieval_position = getattr(result, 'retrieval_position', i)
+            ranking_position = i  # Current position after LLM ranking
+            llm_score = getattr(result, 'llm_score', 0.0)
+
+            # MMR scores (may not be available yet)
+            mmr_score = getattr(result, 'mmr_score', None)
+            detected_intent = getattr(result, 'detected_intent', 'BALANCED')
+
+            # Extract document features
+            doc_feats = extract_document_features(
+                doc_title, doc_description, published_date, author, doc_url
+            )
+
+            # Extract query-doc features
+            query_doc_feats = extract_query_doc_features(
+                query_text, doc_title, doc_description,
+                bm25_score, vector_score, keyword_boost,
+                temporal_boost, final_retrieval_score
+            )
+
+            # Extract ranking features
+            ranking_feats = extract_ranking_features(
+                retrieval_position, ranking_position,
+                llm_score, all_llm_scores
+            )
+
+            # Extract MMR features
+            mmr_feats = extract_mmr_features(mmr_score, detected_intent)
+
+            # Combine all features (29 total)
+            feature_vector = [
+                # Query features (6)
+                query_feats['query_length'],
+                query_feats['word_count'],
+                query_feats['has_quotes'],
+                query_feats['has_numbers'],
+                query_feats['has_question_words'],
+                query_feats['keyword_count'],
+
+                # Document features (8)
+                doc_feats['doc_length'],
+                doc_feats['recency_days'],
+                doc_feats['has_author'],
+                doc_feats['has_publication_date'],
+                doc_feats['schema_completeness'],
+                doc_feats['title_length'],
+                doc_feats['description_length'],
+                doc_feats['url_length'],
+
+                # Retrieval features (7)
+                query_doc_feats['vector_similarity_score'],
+                query_doc_feats['bm25_score'],
+                query_doc_feats['keyword_boost'],
+                query_doc_feats['temporal_boost'],
+                query_doc_feats['final_retrieval_score'],
+                query_doc_feats['keyword_overlap_ratio'],
+                query_doc_feats['title_exact_match'],
+
+                # Ranking features (6)
+                ranking_feats['retrieval_position'],
+                ranking_feats['ranking_position'],
+                ranking_feats['llm_final_score'],
+                ranking_feats['relative_score_to_top'],
+                ranking_feats['score_percentile'],
+                ranking_feats['position_change'],
+
+                # MMR features (2)
+                mmr_feats['mmr_diversity_score'],
+                mmr_feats['detected_intent']
+            ]
+
+            features[i, :] = feature_vector
+
+        return features
+
+    def predict(self, features: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Predict relevance scores and confidences for documents.
+
+        Args:
+            features: numpy array (n_results, 29)
+
+        Returns:
+            Tuple of:
+            - scores: numpy array (n_results,) - predicted relevance 0-1
+            - confidences: numpy array (n_results,) - prediction confidence 0-1
+
+        Note: Phase A returns dummy predictions. Phase C uses actual model.
+        """
+        n_results = features.shape[0]
+
+        if self.model is None:
+            # Phase A: Return dummy predictions based on LLM scores
+            # Feature 24 is llm_final_score (0-based index 23)
+            llm_scores = features[:, 23]
+
+            # Normalize to 0-1 range
+            if llm_scores.max() > 0:
+                normalized_scores = llm_scores / llm_scores.max()
+            else:
+                normalized_scores = np.zeros(n_results)
+
+            # Dummy confidences (uniform)
+            confidences = np.full(n_results, 0.5)
+
+            return normalized_scores, confidences
+
+        # Phase C: Actual XGBoost prediction
+        # import xgboost as xgb
+        # dmatrix = xgb.DMatrix(features)
+        # predictions = self.model.predict(dmatrix)
+        # confidences = self.calculate_confidence(predictions)
+        # return predictions, confidences
+
+        # Placeholder for Phase A
+        return np.zeros(n_results), np.zeros(n_results)
+
+    def calculate_confidence(self, predictions: np.ndarray) -> np.ndarray:
+        """
+        Calculate prediction confidence from model output.
+
+        High prediction margin = confident prediction
+        Low prediction margin = uncertain prediction
+
+        Args:
+            predictions: Raw model predictions
+
+        Returns:
+            numpy array of confidence scores (0-1)
+
+        Note: Actual implementation depends on model type:
+        - Binary: Use prediction probability (close to 0 or 1 = high confidence)
+        - Ranker: Use prediction margin or tree agreement variance
+        """
+        # Phase A: Dummy confidence
+        confidences = np.abs(predictions - 0.5) * 2  # 0.5 → 0, 0 or 1 → 1
+
+        return confidences
+
+    def rerank(
+        self,
+        ranking_results: List[Any],
+        query_text: str
+    ) -> Tuple[List[Any], Dict[str, Any]]:
+        """
+        Re-rank results using XGBoost model.
+
+        Args:
+            ranking_results: List of ranking result objects from LLM ranking
+            query_text: Original query string
+
+        Returns:
+            Tuple of:
+            - reranked_results: List sorted by XGBoost scores (or unchanged if disabled/shadow)
+            - metadata: Dict with avg_confidence, used_ml, shadow_mode, etc.
+
+        Behavior:
+        - If disabled: Return unchanged results
+        - If shadow mode: Log predictions but don't change ranking
+        - If production: Re-rank by XGBoost scores
+        """
+        metadata = {
+            'used_ml': False,
+            'shadow_mode': self.use_shadow_mode,
+            'avg_xgboost_score': 0.0,
+            'avg_confidence': 0.0,
+            'num_results': len(ranking_results)
+        }
+
+        # Check if enabled
+        if not self.enabled or self.model is None:
+            logger.debug("XGBoost disabled or no model loaded")
+            return ranking_results, metadata
+
+        try:
+            # Extract features
+            features = self.extract_features(ranking_results, query_text)
+
+            # Predict scores and confidences
+            scores, confidences = self.predict(features)
+
+            # Calculate metadata
+            avg_score = float(np.mean(scores))
+            avg_confidence = float(np.mean(confidences))
+
+            metadata['avg_xgboost_score'] = avg_score
+            metadata['avg_confidence'] = avg_confidence
+
+            # Shadow mode: Log but don't change ranking
+            if self.use_shadow_mode:
+                logger.info(
+                    f"[XGBoost Shadow] Query: {query_text[:50]}..., "
+                    f"Avg Score: {avg_score:.3f}, Avg Confidence: {avg_confidence:.3f}"
+                )
+                return ranking_results, metadata
+
+            # Production mode: Re-rank by XGBoost scores
+            # Attach scores to results
+            for i, result in enumerate(ranking_results):
+                result.xgboost_score = float(scores[i])
+                result.xgboost_confidence = float(confidences[i])
+
+            # Sort by XGBoost scores (descending)
+            reranked_results = sorted(
+                ranking_results,
+                key=lambda x: getattr(x, 'xgboost_score', 0.0),
+                reverse=True
+            )
+
+            metadata['used_ml'] = True
+
+            logger.info(
+                f"[XGBoost] Re-ranked {len(reranked_results)} results, "
+                f"Avg Confidence: {avg_confidence:.3f}"
+            )
+
+            return reranked_results, metadata
+
+        except Exception as e:
+            logger.error(f"XGBoost reranking failed: {e}")
+            logger.exception("Full traceback:")
+            return ranking_results, metadata
+
+
+if __name__ == "__main__":
+    # Test XGBoost ranker with mock data
+    print("Testing XGBoost Ranker Module")
+    print("=" * 50)
+
+    # Mock configuration
+    config = {
+        'enabled': True,
+        'model_path': 'models/mock_xgboost_ranker.json',
+        'confidence_threshold': 0.8,
+        'feature_version': 2,
+        'use_shadow_mode': True
+    }
+
+    # Create ranker
+    ranker = XGBoostRanker(config)
+    print(f"Ranker initialized: enabled={ranker.enabled}, shadow_mode={ranker.use_shadow_mode}")
+
+    # Mock ranking results
+    class MockResult:
+        def __init__(self, title, score, position):
+            self.title = title
+            self.description = f"Description for {title}"
+            self.url = f"https://example.com/{position}"
+            self.llm_score = score
+            self.retrieval_position = position
+            self.vector_score = 0.8
+            self.bm25_score = 100.0
+            self.keyword_boost = 5.0
+            self.temporal_boost = 2.0
+            self.final_retrieval_score = 107.0
+            self.published_date = "2025-01-20T10:00:00Z"
+            self.author = "Test Author"
+            self.detected_intent = "BALANCED"
+            self.mmr_score = None
+
+    mock_results = [
+        MockResult("Result 1", 95.0, 0),
+        MockResult("Result 2", 90.0, 1),
+        MockResult("Result 3", 85.0, 2),
+        MockResult("Result 4", 80.0, 3),
+        MockResult("Result 5", 75.0, 4),
+    ]
+
+    query = "Test query for XGBoost"
+
+    # Test feature extraction
+    print(f"\nExtracting features for {len(mock_results)} results...")
+    features = ranker.extract_features(mock_results, query)
+    print(f"Feature shape: {features.shape}")
+    print(f"Expected: ({len(mock_results)}, 29)")
+    print(f"Feature extraction: {'PASS' if features.shape == (5, 29) else 'FAIL'}")
+
+    # Test reranking
+    print(f"\nTesting reranking...")
+    reranked, metadata = ranker.rerank(mock_results, query)
+    print(f"Metadata: {metadata}")
+    print(f"Shadow mode: {metadata['shadow_mode']}")
+    print(f"Used ML: {metadata['used_ml']}")
+    print(f"Avg XGBoost Score: {metadata['avg_xgboost_score']:.3f}")
+    print(f"Avg Confidence: {metadata['avg_confidence']:.3f}")
+
+    print(f"\n{'=' * 50}")
+    print("XGBoost Ranker Module Test Complete")

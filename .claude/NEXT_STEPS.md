@@ -1,6 +1,62 @@
 # Next Steps - ML Search Enhancement
 
-## Immediate Tasks (Week 1-2)
+## Immediate Tasks (Week 3-4)
+
+### 🔄 IN PROGRESS: Phase A - XGBoost Infrastructure
+
+**Goal**: Build complete ML ranking infrastructure before data collection
+
+**Status**: Configuration complete (2025-01-26), now implementing modules
+
+**Completed**:
+- ✅ Documentation (`algo/XGBoost_implementation.md`)
+- ✅ Configuration (`config/config_retrieval.yaml`, `core/config.py`)
+- ✅ ML dependencies (`requirements.txt`)
+- ✅ Architecture finalization (LLM → XGBoost → MMR)
+
+**In Progress** (Week 1 Remaining):
+
+1. **Feature Engineering Module** (`code/python/training/feature_engineering.py`)
+   - Extract 29 features from analytics database
+   - Populate feature_vectors table in batches
+   - Query-level, document-level, and ranking features
+   - Handle missing values and edge cases
+
+2. **XGBoost Ranker Module** (`code/python/core/xgboost_ranker.py`)
+   - Load trained models with global caching
+   - Extract features from in-memory ranking results
+   - Run inference (<100ms target)
+   - Calculate confidence scores
+   - Shadow mode support
+
+3. **Training Pipeline** (`code/python/training/xgboost_trainer.py`)
+   - Binary classification trainer (Phase 1)
+   - LambdaMART trainer (Phase 2)
+   - XGBRanker trainer (Phase 3)
+   - Model evaluation (NDCG@10, Precision@10, MAP)
+   - Model saving with metadata
+
+**Week 2 Tasks**:
+
+4. **Integration** (`code/python/core/ranking.py`)
+   - Insert XGBoost call after LLM ranking, before MMR
+   - Handle enabled/disabled gracefully
+   - Log metadata for analytics
+
+5. **Unit Tests** (`code/python/testing/test_xgboost.py`)
+   - Feature extraction tests
+   - Model loading tests
+   - Inference pipeline tests
+   - Shadow mode validation
+
+6. **Mock Data** (`code/python/testing/mock_training_data.py`)
+   - Generate synthetic features (29 features)
+   - Generate labels (binary, regression)
+   - Create tiny XGBoost model for testing
+
+---
+
+## Previously Completed
 
 ### ✅ COMPLETED: Track A - Analytics Infrastructure
 All components deployed and operational:
@@ -12,7 +68,7 @@ All components deployed and operational:
 
 ---
 
-### 🔄 IN PROGRESS: Track B - BM25 Implementation
+### ✅ COMPLETED: Track B - BM25 Implementation
 
 **Goal**: Replace LLM keyword scoring with BM25 algorithm
 

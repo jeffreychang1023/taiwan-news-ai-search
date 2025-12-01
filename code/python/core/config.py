@@ -241,8 +241,8 @@ class AppConfig:
     def load_llm_config(self, path: str = "config_llm.yaml"):
         # Build the full path to the config file using the config directory
         full_path = os.path.join(self.config_directory, path)
-        
-        with open(full_path, "r") as f:
+
+        with open(full_path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f)
 
             self.preferred_llm_endpoint: str = data["preferred_endpoint"]
@@ -273,9 +273,9 @@ class AppConfig:
         """Load embedding model configuration."""
         # Build the full path to the config file using the config directory
         full_path = os.path.join(self.config_directory, path)
-        
+
         try:
-            with open(full_path, "r") as f:
+            with open(full_path, "r", encoding="utf-8") as f:
                 data = yaml.safe_load(f)
         except FileNotFoundError:
             # If config file doesn't exist, use defaults
@@ -308,9 +308,9 @@ class AppConfig:
     def load_retrieval_config(self, path: str = "config_retrieval.yaml"):
         # Build the full path to the config file using the config directory
         full_path = os.path.join(self.config_directory, path)
-        
+
         try:
-            with open(full_path, "r") as f:
+            with open(full_path, "r", encoding="utf-8") as f:
                 data = yaml.safe_load(f)
         except FileNotFoundError:
             # If config file doesn't exist, use defaults
@@ -343,6 +343,15 @@ class AppConfig:
             "include_vectors": True
         })
 
+        # Load XGBoost parameters (Phase A - Week 1-2)
+        self.xgboost_params: Dict[str, Any] = data.get("xgboost_params", {
+            "enabled": False,
+            "model_path": "models/xgboost_ranker_v1_binary.json",
+            "confidence_threshold": 0.8,
+            "feature_version": 2,
+            "use_shadow_mode": True
+        })
+
         # Changed from providers to endpoints
         for name, cfg in data.get("endpoints", {}).items():
             # Use the new method for all configuration values
@@ -362,9 +371,9 @@ class AppConfig:
     def load_webserver_config(self, path: str = "config_webserver.yaml"):
         # Build the full path to the config file using the config directory
         full_path = os.path.join(self.config_directory, path)
-        
+
         try:
-            with open(full_path, "r") as f:
+            with open(full_path, "r", encoding="utf-8") as f:
                 data = yaml.safe_load(f)
         except FileNotFoundError:
             # If config file doesn't exist, use defaults
@@ -429,9 +438,9 @@ class AppConfig:
         """Load Natural Language Web configuration."""
         # Build the full path to the config file using the config directory
         full_path = os.path.join(self.config_directory, path)
-        
+
         try:
-            with open(full_path, "r") as f:
+            with open(full_path, "r", encoding="utf-8") as f:
                 data = yaml.safe_load(f)
         except FileNotFoundError:
             # If config file doesn't exist, use defaults
@@ -732,9 +741,9 @@ class AppConfig:
         """Load OAuth provider configuration."""
         # Build the full path to the config file using the config directory
         full_path = os.path.join(self.config_directory, path)
-        
+
         try:
-            with open(full_path, "r") as f:
+            with open(full_path, "r", encoding="utf-8") as f:
                 data = yaml.safe_load(f)
         except FileNotFoundError:
             # If config file doesn't exist, use defaults
@@ -788,9 +797,9 @@ class AppConfig:
         """Load conversation storage configuration."""
         # Build the full path to the config file using the config directory
         full_path = os.path.join(self.config_directory, path)
-        
+
         try:
-            with open(full_path, "r") as f:
+            with open(full_path, "r", encoding="utf-8") as f:
                 data = yaml.safe_load(f)
                 
             # Load default storage endpoint
