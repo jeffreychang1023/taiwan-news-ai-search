@@ -62,6 +62,7 @@ def migrate_to_v2(db: AnalyticsDB):
                 ADD COLUMN IF NOT EXISTS query_length_chars INTEGER,
                 ADD COLUMN IF NOT EXISTS has_temporal_indicator INTEGER DEFAULT 0,
                 ADD COLUMN IF NOT EXISTS embedding_model VARCHAR(100),
+                ADD COLUMN IF NOT EXISTS parent_query_id VARCHAR(255),
                 ADD COLUMN IF NOT EXISTS schema_version INTEGER DEFAULT 2
             """)
         else:
@@ -71,6 +72,7 @@ def migrate_to_v2(db: AnalyticsDB):
                 "ALTER TABLE queries ADD COLUMN query_length_chars INTEGER",
                 "ALTER TABLE queries ADD COLUMN has_temporal_indicator INTEGER DEFAULT 0",
                 "ALTER TABLE queries ADD COLUMN embedding_model TEXT",
+                "ALTER TABLE queries ADD COLUMN parent_query_id TEXT",
                 "ALTER TABLE queries ADD COLUMN schema_version INTEGER DEFAULT 2"
             ]
             for sql in alter_queries:

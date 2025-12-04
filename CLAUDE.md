@@ -6,7 +6,7 @@ MOST IMPORTANT GUIDELINE: Only implement exactly what you have been asked to. Do
 
 ## Project Overview
 
-NLWeb is a conversational interface platform that enables natural language interactions with websites. It leverages Schema.org markup and supports MCP (Model Context Protocol) for AI agent interactions.
+This is a system based on NLWeb that enables natural language interactions with mainly news websites. The goal is to provide trusted, accurate, logically sound search and inference experience.
 
 ## Common Development Commands
 
@@ -22,20 +22,12 @@ python -m webserver.aiohttp_server
 
 ### Running Tests
 ```bash
-# Quick test suite (from code directory)
-cd code
-./python/testing/run_all_tests.sh
+# Quick test suite
+cd code && ./python/testing/run_all_tests.sh
 
 # Comprehensive test runner with options
 ./python/testing/run_tests_comprehensive.sh -m end_to_end  # Specific test type
 ./python/testing/run_tests_comprehensive.sh --quick        # Quick smoke tests
-
-# Run specific Python tests
-cd code/python
-python -m pytest testing/ -v
-
-# Single test execution
-python -m testing.run_tests --single --type end_to_end --query "test query"
 ```
 
 ### Linting and Type Checking
@@ -46,49 +38,36 @@ python -m testing.run_tests --single --type end_to_end --query "test query"
 
 ## Architecture Overview
 
-### Backend Architecture (code/python/)
-
 **Core Flow**: Query → Pre-retrieval Analysis → Tool Selection → Retrieval (with BM25) → Ranking → Response Generation
 
-1. **Entry Point**: `webserver/aiohttp_server.py` - Async HTTP server handling REST API and WebSocket connections
+**Backend Key Files** (refer to detailed documentation only when needed):
+- Entry Point: `webserver/aiohttp_server.py`
+- Request Handler: `core/baseHandler.py`
+- Pre-retrieval: `pre_retrieval/` (decontextualization, query rewrite)
+- Methods: `methods/` (tool implementations)
+- Retrieval: `retrieval/` (vector DB clients)
+  - BM25 Integration: `core/bm25.py`
+- Ranking: `core/ranking.py`
+- LLM Providers: `llm/`
+- Configuration: `config/` (YAML files)
 
-2. **Request Processing Pipeline**:
-   - `core/baseHandler.py` - Main request handler orchestrating the flow
-   - `pre_retrieval/` - Query analysis, decontextualization, relevance detection
-   - `methods/` - Tool implementations (search, item details, ensemble queries)
-   - `retrieval/` - Vector database clients (Qdrant, Azure AI Search, Milvus, Snowflake, Elasticsearch)
-     - **BM25 Integration**: `core/bm25.py` - Keyword relevance scoring with intent detection
-   - `core/ranking.py` - Result scoring and ranking
-   - `llm/` - LLM provider integrations (OpenAI, Anthropic, Gemini, Azure, etc.)
+**Frontend** (Production):
+- Main UI: `static/news-search-prototype.html`
+- SSE Streaming: Built-in EventSource
+- Rendering: Inline JavaScript with custom DOM manipulation
 
-3. **Chat/Conversation System** (In Development):
-   - `chat/websocket.py` - WebSocket connection management
-   - `chat/conversation.py` - Conversation orchestration
-   - `chat/participants.py` - Participant management (Human, NLWeb agents)
-   - `chat/storage.py` - Message persistence interface
+**Chat System** (In Development):
+- Backend: `chat/websocket.py`, `chat/conversation.py`, `chat/participants.py`
+- Frontend: `static/fp-chat-interface.js`, `static/conversation-manager.js`
 
-4. **Configuration**: YAML files in `config/` directory control all aspects:
-   - `config_nlweb.yaml` - Core settings
-   - `config_llm.yaml` - LLM provider configuration
-   - `config_retrieval.yaml` - Vector database settings
-   - `config_webserver.yaml` - Server configuration
-
-### Frontend Architecture (static/)
-
-**Main Components**:
-- `fp-chat-interface.js` - Primary chat interface
-- `conversation-manager.js` - Conversation state management
-- `chat-ui-common.js` - Shared UI components
-- `news-search-prototype.html` - The actual frontend
-- ES6 modules with clear separation of concerns
+See `systemmap.md` for API details and `.claude/SIMPLE_ARCHITECTURE.md` for chat design.
 
 ### Key Design Patterns
 
 1. **Streaming Responses**: SSE (Server-Sent Events) for real-time AI responses
 2. **Parallel Processing**: Multiple pre-retrieval checks run concurrently
-3. **Fast Track Path**: Optimized path for simple queries
-4. **Wrapper Pattern**: NLWebParticipant wraps existing handlers without modification
-5. **Cache-First**: Memory cache for active conversations
+3. **Wrapper Pattern**: NLWebParticipant wraps existing handlers without modification
+4. **Cache-First**: Memory cache for active conversations
 
 ## Important Implementation Details
 
@@ -105,17 +84,6 @@ python -m testing.run_tests --single --type end_to_end --query "test query"
 6. Optional post-processing (summarization, generation)
 7. Streaming response back to client
 
-### Error Handling
-- HTTP status codes: 429 (queue full), 401 (unauthorized), 400 (bad request), 500 (storage failure with retry)
-- Extensive retry logic throughout the system
-- Clear error messages in response payloads
-
-### Performance Optimizations
-- Direct routing for 2-participant conversations
-- In-memory caching for recent messages
-- Fast track for simple queries
-- Minimal context inclusion (last 5 human messages)
-
 ## Testing Strategy
 
 The testing framework (`code/python/testing/`) supports three test types:
@@ -127,13 +95,19 @@ Test files use JSON format with test_type field and type-specific parameters.
 
 ## Current Development Focus
 
-The codebase is on the `conversation-api-implementation` branch, focusing on:
-- WebSocket-based real-time conversations
-- Multi-participant support
-- Message persistence and retrieval
-- Maintaining backward compatibility with existing NLWebHandler
+**Phase A: XGBoost Infrastructure (Week 3-4)** - Building ML ranking system:
+- Feature engineering module (`training/feature_engineering.py`)
+- XGBoost ranker module (`core/xgboost_ranker.py`)
+- Training pipeline (`training/xgboost_trainer.py`)
+- Shadow mode validation before production deployment
+
+**Also In Progress**:
+- WebSocket-based chat system (`conversation-api-implementation` branch)
+- Multi-participant support with backward compatibility
 
 ## Algorithm Documentation Practice
+
+<!-- TODO: Remove/compress this section after algorithm development phase is complete -->
 
 **IMPORTANT**: When implementing or modifying search/ranking algorithms, ALWAYS document in the `algo/` directory.
 
@@ -176,58 +150,13 @@ algo/
 ## Notes for Development
 
 - Always check existing patterns in neighboring files before implementing new features
-- The system makes 50+ LLM calls per query - optimize carefully
-- Results are guaranteed to come from the database (no hallucination in list mode)
-- Frontend and backend are designed to be independently deployable
+- The system should be very scalable - optimize carefully
+- Always think about modularization
 - Configuration changes require server restart
-- **Algorithm changes require documentation in `algo/` directory** (see Algorithm Documentation Practice above)
+- Algorithm changes require documentation in `algo/` directory (see Algorithm Documentation Practice above)
 
 ## Docker Deployment Best Practices
 
-### Python Version Compatibility
+**Critical Lesson**: Use Python 3.11 for production (not 3.13). Python 3.13 causes library incompatibilities (e.g., `qdrant-client` missing methods). Always clear Docker build cache when changing base images.
 
-**Critical Lesson from Production (2025-01-20)**: Dockerfile used Python 3.13, causing production failure.
-
-**Issue**: Python 3.13 is too new for many ML/data libraries:
-- `qdrant-client` installs but `AsyncQdrantClient` is **missing methods** (e.g., `search()`)
-- Other async libraries may have similar incomplete implementations
-- Local development may use different Python version → issue only appears in production
-
-**Solution**:
-1. **Use Python 3.11 for production** - mature, stable, broad library support
-   ```dockerfile
-   FROM python:3.11-slim AS builder
-   FROM python:3.11-slim
-   COPY --from=builder /usr/local/lib/python3.11/site-packages ...
-   ```
-
-2. **Pin critical dependencies** - avoid surprises from bleeding-edge versions
-   ```
-   qdrant-client==1.11.3  # Specific version known to work
-   ```
-
-3. **Add runtime diagnostics** - verify environment at startup
-   ```python
-   # At module load time:
-   logger.critical(f"🐍 PYTHON VERSION: {sys.version}")
-   logger.critical(f"🔍 MODULE HAS method: {'method' in dir(Module)}")
-   ```
-
-4. **Clear Docker build cache** when changing base images
-   - Render: "Manual Deploy" → "Clear build cache & deploy"
-   - Otherwise old cached layers persist
-
-### Debugging Docker Deployment Failures
-
-When production fails but local works:
-1. **Check Python version first** - most common cause of "missing method" errors
-2. **Check Docker build logs** - verify correct base image used
-3. **Add diagnostic logging** - log versions and available methods at startup
-4. **Clear build cache** - force complete rebuild
-5. **Check for multiple processes** - old processes may still be running
-
-**Red Flags**:
-- Error: `'ClassName' object has no attribute 'method_name'`
-- Library imports but class is incomplete
-- Works locally but fails in Docker
-- → Likely Python version incompatibility
+**Only refer to `.claude/docker_deployment.md` when the task requires Docker deployment.**

@@ -260,7 +260,6 @@ class NLWebHandler:
 
 
     async def runQuery(self):
-        print(f"========== NLWEBHANDLER.runQuery() CALLED for query: {self.query}, generate_mode: {self.generate_mode} ==========")
         logger.info(f"Starting query execution for conversation_id: {self.conversation_id}")
 
         # Analytics: Generate unique query ID and log query start
@@ -280,6 +279,8 @@ class NLWebHandler:
                 model=self.model,
                 parent_query_id=self.parent_query_id
             )
+            # Allow parent commit to propagate to avoid foreign key race conditions
+            await asyncio.sleep(0.15)
         except Exception as e:
             logger.warning(f"Failed to log query start: {e}")
 
@@ -306,7 +307,6 @@ class NLWebHandler:
                     # Use query+site as fallback key if conversation_id is empty
                     cache_key = self.conversation_id if self.conversation_id else f"{self.query}_{self.site}"
                     cache.store(cache_key, self.final_ranked_answers, self.query)
-                    print(f"[CACHE] Stored {len(self.final_ranked_answers)} results for key {cache_key}")
                 except Exception as e:
                     logger.warning(f"Failed to cache results: {e}")
 
@@ -423,11 +423,9 @@ class NLWebHandler:
                 is_temporal_query = any(keyword in self.query for keyword in temporal_keywords)
 
                 if is_temporal_query:
-                    print(f"[TEMPORAL] Temporal query detected: '{self.query}' - retrieving 150 items for date filtering")
                     logger.info(f"[TEMPORAL] Temporal query detected: '{self.query}' - retrieving 150 items for date filtering")
                     num_to_retrieve = 150
                 else:
-                    print(f"[TEMPORAL] Non-temporal query: '{self.query}' - retrieving 50 items")
                     logger.info(f"[TEMPORAL] Non-temporal query: '{self.query}' - retrieving 50 items")
                     num_to_retrieve = 50
 
@@ -444,9 +442,8 @@ class NLWebHandler:
                 )
 
                 # DIAGNOSTIC: Check items immediately after search
-                print(f"[Handler POST-SEARCH] Received {len(items)} items from search")
                 if items:
-                    print(f"[Handler POST-SEARCH] First item has {len(items[0])} elements")
+                    pass  # Items received from search
 
                 # Pre-filter by date for temporal queries
                 if is_temporal_query and len(items) > 0:
@@ -511,14 +508,12 @@ class NLWebHandler:
     async def get_ranked_answers(self):
         try:
             # Debug: check items before passing to ranking
-            print(f"[Handler] Passing {len(self.final_retrieved_items)} items to ranking")
             if len(self.final_retrieved_items) > 0:
                 first_item_len = len(self.final_retrieved_items[0])
-                print(f"[Handler] First item has {first_item_len} elements")
                 if first_item_len == 5:
-                    print(f"[Handler] ✓ Items include vectors (5-tuple format)")
+                    pass  # Items include vectors
                 else:
-                    print(f"[Handler] ✗ Items do NOT include vectors (4-tuple format)")
+                    pass  # Items do not include vectors
 
             await ranking.Ranking(self, self.final_retrieved_items, ranking.Ranking.REGULAR_TRACK).do()
             return self.return_value

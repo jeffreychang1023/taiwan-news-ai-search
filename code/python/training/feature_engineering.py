@@ -22,6 +22,63 @@ logger = get_configured_logger("feature_engineering")
 # Feature version - must match analytics schema
 FEATURE_VERSION = 2
 
+# ============================================================================
+# Feature Index Constants (0-based)
+# Total: 29 features (Phase A)
+#
+# These constants define the position of each feature in the feature vector.
+# DO NOT change the order or indices - trained models depend on this structure.
+# Phase C will ADD new constants (30+), not replace existing ones.
+# ============================================================================
+
+# Query Features (0-5)
+FEATURE_IDX_QUERY_LENGTH = 0
+FEATURE_IDX_WORD_COUNT = 1
+FEATURE_IDX_HAS_QUOTES = 2
+FEATURE_IDX_HAS_NUMBERS = 3
+FEATURE_IDX_HAS_QUESTION_WORDS = 4
+FEATURE_IDX_KEYWORD_COUNT = 5
+
+# Document Features (6-13)
+FEATURE_IDX_DOC_LENGTH = 6
+FEATURE_IDX_RECENCY_DAYS = 7
+FEATURE_IDX_HAS_AUTHOR = 8
+FEATURE_IDX_HAS_PUBLICATION_DATE = 9
+FEATURE_IDX_SCHEMA_COMPLETENESS = 10
+FEATURE_IDX_TITLE_LENGTH = 11
+FEATURE_IDX_DESCRIPTION_LENGTH = 12
+FEATURE_IDX_URL_LENGTH = 13
+
+# Query-Document Features (14-20)
+FEATURE_IDX_VECTOR_SIMILARITY = 14
+FEATURE_IDX_BM25_SCORE = 15
+FEATURE_IDX_KEYWORD_BOOST = 16
+FEATURE_IDX_TEMPORAL_BOOST = 17
+FEATURE_IDX_FINAL_RETRIEVAL_SCORE = 18
+FEATURE_IDX_KEYWORD_OVERLAP_RATIO = 19
+FEATURE_IDX_TITLE_EXACT_MATCH = 20
+
+# Ranking Features (21-26)
+FEATURE_IDX_RETRIEVAL_POSITION = 21
+FEATURE_IDX_RANKING_POSITION = 22
+FEATURE_IDX_LLM_FINAL_SCORE = 23  # ← CRITICAL: XGBoost uses this
+FEATURE_IDX_RELATIVE_SCORE_TO_TOP = 24
+FEATURE_IDX_SCORE_PERCENTILE = 25
+FEATURE_IDX_POSITION_CHANGE = 26
+
+# MMR Features (27-28)
+FEATURE_IDX_MMR_DIVERSITY_SCORE = 27
+FEATURE_IDX_DETECTED_INTENT = 28
+
+# Total feature count for Phase A
+TOTAL_FEATURES_PHASE_A = 29
+
+# ============================================================================
+# Magic Numbers (for better code readability)
+# ============================================================================
+
+MISSING_RECENCY_DAYS = 999999  # Placeholder for documents with no publication date
+
 # === Query Feature Extraction ===
 
 def extract_query_features(query_text: str) -> Dict[str, Any]:
@@ -106,7 +163,7 @@ def extract_document_features(
     Returns:
         Dict with 8 document features:
         - doc_length: Word count in description
-        - recency_days: Days since publication (999999 if no date)
+        - recency_days: Days since publication (MISSING_RECENCY_DAYS if no date)
         - has_author: Boolean (0/1)
         - has_publication_date: Boolean (0/1)
         - schema_completeness: % of fields populated (0-1)
@@ -123,9 +180,9 @@ def extract_document_features(
             pub_dt = datetime.fromisoformat(published_date.replace('Z', '+00:00'))
             recency_days = (datetime.now(pub_dt.tzinfo) - pub_dt).days
         except:
-            recency_days = 999999  # Invalid date
+            recency_days = MISSING_RECENCY_DAYS  # Invalid date
     else:
-        recency_days = 999999  # No date
+        recency_days = MISSING_RECENCY_DAYS  # No date
 
     # Has author
     has_author = 1 if (author and len(author) > 0) else 0

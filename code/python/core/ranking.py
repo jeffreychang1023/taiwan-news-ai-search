@@ -2,7 +2,7 @@
 # Licensed under the MIT License
 
 """
-This file contains the code for the ranking stage. 
+This file contains the code for the ranking stage.
 
 WARNING: This code is under development and may undergo changes in future releases.
 Backwards compatibility is not guaranteed at this time.
@@ -13,6 +13,8 @@ from core.llm import ask_llm
 import asyncio
 from datetime import datetime, timezone
 import json
+from dataclasses import dataclass
+from typing import Optional, List, Dict
 from core.utils.json_utils import trim_json
 from core.prompts import find_prompt, fill_prompt
 from misc.logger.logging_config_helper import get_configured_logger
@@ -22,6 +24,44 @@ from core.schemas import create_assistant_result, create_status_message, Message
 from core.query_logger import get_query_logger
 
 logger = get_configured_logger("ranking_engine")
+
+
+@dataclass
+class RankingResult:
+    """
+    Unified data structure for search results through the ranking pipeline.
+    Stores all scores from retrieval, LLM ranking, XGBoost, and MMR stages.
+    """
+    # Basic information
+    url: str
+    title: str
+    description: str
+    site: str
+    schema_object: Dict
+
+    # Retrieval scores
+    vector_score: float
+    bm25_score: float
+    keyword_boost: float
+    final_retrieval_score: float
+
+    # LLM ranking scores
+    llm_score: float
+    llm_snippet: str
+
+    # Optional fields with defaults (must come after required fields)
+    temporal_boost: float = 0.0  # Phase A: placeholder for future temporal boosting
+
+    # XGBoost scores (Phase A: shadow mode)
+    xgboost_score: Optional[float] = None
+    xgboost_confidence: Optional[float] = None
+
+    # MMR diversity scores
+    mmr_score: Optional[float] = None
+    detected_intent: Optional[str] = None
+
+    # Vector for MMR diversity calculation
+    vector: Optional[List[float]] = None
 
 
 class Ranking:
@@ -162,25 +202,41 @@ The user's question is: {request.query}. The item's description is {item.descrip
         self.ranking_type = ranking_type
 #        self._results_lock = asyncio.Lock()  # Add lock for thread-safe operations
 
-    async def rankItem(self, url, json_str, name, site):
-       
+    async def rankItem(self, item):
+
         if (self.ranking_type == Ranking.FAST_TRACK and self.handler.state.should_abort_fast_track()):
             logger.info("Fast track aborted, skipping item ranking")
             logger.info("Aborting fast track")
             return
         try:
+            # Handle Dict format (new) or Tuple format (legacy)
+            if isinstance(item, dict):
+                url = item.get('url', '')
+                json_str = item.get('schema_json', '')
+                name = item.get('title', '')
+                site = item.get('site', '')
+                retrieval_scores = item.get('retrieval_scores', {})
+                vector = item.get('vector')
+            elif len(item) == 5:
+                url, json_str, name, site, vector = item
+                retrieval_scores = {}  # Legacy format doesn't have retrieval scores
+            else:
+                url, json_str, name, site = item
+                retrieval_scores = {}
+                vector = None
+
             prompt_str, ans_struc = self.get_ranking_prompt()
             description = trim_json(json_str)
             prompt = fill_prompt(prompt_str, self.handler, {"item.description": description})
             ranking = await ask_llm(prompt, ans_struc, level=self.level, query_params=self.handler.query_params)
-            
+
             # Handle both string and dictionary inputs for json_str
             schema_object = json_str if isinstance(json_str, dict) else json.loads(json_str)
-            
+
             # If schema_object is an array, set it to the first item
             if isinstance(schema_object, list) and len(schema_object) > 0:
                 schema_object = schema_object[0]
-            
+
             ansr = {
                 'url': url,
                 'site': site,
@@ -188,7 +244,12 @@ The user's question is: {request.query}. The item's description is {item.descrip
                 'ranking': ranking,
                 'schema_object': schema_object,
                 'sent': False,
+                'retrieval_scores': retrieval_scores,  # Preserve retrieval scores for XGBoost
             }
+
+            # Add vector if available (for MMR)
+            if vector is not None:
+                ansr['vector'] = vector
             
             # Check if required_item_type is specified and filter based on @type
             if self.handler.required_item_type is not None:
@@ -347,13 +408,15 @@ The user's question is: {request.query}. The item's description is {item.descrip
         if (self.handler.site == "all" or self.handler.site == "nlws"):
             sites_in_embeddings = {}
             for item in top_embeddings:
-                # Handle both 4-tuple and 5-tuple (with vector) formats
-                if len(item) == 5:
+                # Handle both Dict (new format) and Tuple (legacy) formats
+                if isinstance(item, dict):
+                    site = item.get('site', '')
+                elif len(item) == 5:
                     url, json_str, name, site, vector = item
                 else:
                     url, json_str, name, site = item
                 sites_in_embeddings[site] = sites_in_embeddings.get(site, 0) + 1
-            
+
             top_sites = sorted(sites_in_embeddings.items(), key=lambda x: x[1], reverse=True)[:3]
             top_sites_str = ", ".join([self.prettyPrintSite(x[0]) for x in top_sites])
             logger.info(f"Sending sites message: {top_sites_str}")
@@ -377,43 +440,40 @@ The user's question is: {request.query}. The item's description is {item.descrip
 
         # Create a mapping from URL to vector (if vectors are included)
         self.url_to_vector = {}
-        print(f"[Ranking] Checking items for vectors: total items = {len(self.items)}")
         for item in self.items:
-            if len(item) == 5:  # [url, json_str, name, site, vector]
+            # Handle Dict format (new)
+            if isinstance(item, dict):
+                url = item.get('url', '')
+                vector = item.get('vector')
+                if vector is not None:
+                    self.url_to_vector[url] = vector
+            # Handle Tuple format (legacy)
+            elif len(item) == 5:  # [url, json_str, name, site, vector]
                 url, _, _, _, vector = item
                 self.url_to_vector[url] = vector
             else:
-                print(f"[Ranking] Item has {len(item)} elements (expected 5 for vectors)")
+                pass  # Item does not have vector
 
-        print(f"[Ranking] url_to_vector mapping created: {len(self.url_to_vector)} vectors")
         if self.url_to_vector:
             logger.info(f"Vectors available for {len(self.url_to_vector)} items (MMR-ready)")
             # Store vectors on handler for PostRanking to use
             self.handler.url_to_vector = self.url_to_vector
         else:
-            print(f"[Ranking] WARNING: No vectors extracted from items")
+            pass  # No vectors available
 
-        print(f"[Ranking] Starting to create ranking tasks for {len(self.items)} items")
         tasks = []
         for item in self.items:
-            # Handle both 4-tuple (without vector) and 5-tuple (with vector) formats
-            if len(item) == 5:
-                url, json_str, name, site, vector = item
-            else:
-                url, json_str, name, site = item
-
+            # Pass the full item (Dict or Tuple) to rankItem for better data preservation
             if self.handler.connection_alive_event.is_set():  # Only add new tasks if connection is still alive
-                tasks.append(asyncio.create_task(self.rankItem(url, json_str, name, site)))
+                tasks.append(asyncio.create_task(self.rankItem(item)))
             else:
                 logger.warning("Connection lost, not creating new ranking tasks")
 
         await self.sendMessageOnSitesBeingAsked(self.items)
 
-        print(f"[Ranking] Created {len(tasks)} ranking tasks, starting execution")
         try:
             logger.debug(f"Running {len(tasks)} ranking tasks concurrently")
             await asyncio.gather(*tasks, return_exceptions=True)
-            print(f"[Ranking] All ranking tasks completed")
         except Exception as e:
             logger.error(f"Error during ranking tasks: {str(e)}")
             log(f"Error during ranking tasks: {str(e)}")
@@ -482,12 +542,48 @@ The user's question is: {request.query}. The item's description is {item.descrip
         filtered = [r for r in self.rankedAnswers if r['ranking']['score'] > 51]
         ranked = sorted(filtered, key=lambda x: x['ranking']["score"], reverse=True)
 
-        # Apply MMR diversity re-ranking if enabled and vectors available
+        # Phase A: Apply XGBoost ML re-ranking (shadow mode - logs predictions without changing rankings)
         from core.config import CONFIG
+        xgboost_enabled = CONFIG.xgboost_params.get('enabled', False)
+
+        if xgboost_enabled and len(ranked) > 0:
+            try:
+                from core.xgboost_ranker import XGBoostRanker
+
+                logger.info(f"[XGBoost] Starting shadow mode prediction for {len(ranked)} results")
+
+                # Initialize XGBoost ranker
+                xgb_ranker = XGBoostRanker(CONFIG.xgboost_params)
+
+                # Prepare ranking results for XGBoost (extract features from ranked results)
+                # Note: ranked is a list of dicts with structure: {'url', 'name', 'schema', 'ranking': {'score', 'snippet'}}
+                # XGBoost needs: url, llm_score, and query_id for logging
+
+                # Attach query_id to results for logging
+                for result in ranked:
+                    result['query_id'] = self.handler.query_id
+
+                # Call XGBoost rerank (in shadow mode, this logs but doesn't change order)
+                reranked_by_xgb, xgb_metadata = xgb_ranker.rerank(ranked, self.handler.query)
+
+                logger.info(f"[XGBoost Shadow] Avg score: {xgb_metadata.get('avg_xgboost_score', 0):.3f}, "
+                           f"Avg confidence: {xgb_metadata.get('avg_confidence', 0):.3f}")
+
+                # In shadow mode, reranked_by_xgb == ranked (unchanged)
+                # Continue with original ranking
+
+            except Exception as e:
+                logger.error(f"[XGBoost] Shadow mode failed: {e}")
+                logger.exception("XGBoost traceback:")
+                # Continue with original ranking if XGBoost fails
+        else:
+            if not xgboost_enabled:
+                logger.debug("[XGBoost] Disabled in config")
+
+        # Apply MMR diversity re-ranking if enabled and vectors available
         mmr_enabled = CONFIG.mmr_params.get('enabled', True)
         mmr_threshold = CONFIG.mmr_params.get('threshold', 3)
 
-        print(f"[MMR CHECK] mmr_enabled={mmr_enabled}, ranked={len(ranked)}, threshold={mmr_threshold}, vectors={len(self.url_to_vector)}")
         if mmr_enabled and len(ranked) > mmr_threshold and self.url_to_vector:
             logger.info(f"[MMR] Applying diversity re-ranking to {len(ranked)} results")
 
@@ -534,7 +630,6 @@ The user's question is: {request.query}. The item's description is {item.descrip
             elif len(ranked) <= mmr_threshold:
                 logger.info(f"MMR skipped: only {len(ranked)} results (threshold: {mmr_threshold})")
             elif not self.url_to_vector:
-                print(f"[MMR] SKIPPED: no vectors available")
                 logger.info("MMR skipped: no vectors available")
 
         logger.info(f"Filtered to {len(filtered)} results with score > 51")

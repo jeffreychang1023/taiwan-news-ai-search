@@ -91,7 +91,6 @@ class GenerateAnswer(NLWebHandler):
             return
 
         try:
-            print(f"[DEBUG] >>> rankItem() called for: {name[:50]}, site={site}")
             logger.debug(f"Ranking item: {name} from {site}")
 
             # Parse schema to extract metadata
@@ -131,10 +130,6 @@ class GenerateAnswer(NLWebHandler):
             prompt_str, ans_struc = find_prompt(site, self.item_type, self.RANKING_PROMPT_NAME)
 
             # DEBUG: Check what prompt we got
-            print(f"[DEBUG] Prompt for site={site}, item_type={self.item_type}, name={self.RANKING_PROMPT_NAME}")
-            print(f"[DEBUG] Prompt string length: {len(prompt_str) if prompt_str else 0}")
-            print(f"[DEBUG] Answer structure: {ans_struc}")
-            print(f"[DEBUG] Prompt contains 'TEMPORAL QUERY': {'TEMPORAL QUERY' in prompt_str if prompt_str else False}")
 
             description = trim_json_hard(json_str)
 
@@ -149,7 +144,6 @@ class GenerateAnswer(NLWebHandler):
             ranking = await ask_llm(prompt, ans_struc, level="low", query_params=self.query_params)
 
             # DEBUG: Print raw LLM response
-            print(f"[DEBUG] Raw ranking response for {name[:30]}: {ranking}")
 
             # Log the multi-signal breakdown
             final_score = ranking.get('final_score', ranking.get('score', 0))
@@ -200,6 +194,8 @@ class GenerateAnswer(NLWebHandler):
                 model=self.model,
                 parent_query_id=self.parent_query_id
             )
+            # Allow parent commit to propagate to avoid foreign key race conditions
+            await asyncio.sleep(0.15)
         except Exception as e:
             logger.warning(f"Failed to log query start: {e}")
 
@@ -632,8 +628,6 @@ class GenerateAnswer(NLWebHandler):
             logger.debug(f"Synthesis response received")
 
             # DEBUG: Print full response to see what LLM returned
-            print(f"[DEBUG] Full LLM response: {response}")
-            print(f"[DEBUG] Response keys: {response.keys() if response else 'None'}")
 
             json_results = []
             description_tasks = []
@@ -642,12 +636,10 @@ class GenerateAnswer(NLWebHandler):
             # Using <br><br> ensures visible paragraph spacing in both textContent and innerHTML contexts
             if "paragraphs" in response and isinstance(response["paragraphs"], list):
                 answer = "<br><br>".join(response["paragraphs"])
-                print(f"[DEBUG] Successfully joined {len(response['paragraphs'])} paragraphs with <br><br>")
                 logger.info(f"Joined {len(response['paragraphs'])} paragraphs into answer with HTML breaks")
             else:
                 # Fallback for old format
                 answer = response.get("answer", "")
-                print(f"[DEBUG] No paragraphs array found, using fallback. Response has keys: {list(response.keys()) if response else 'empty'}")
                 logger.warning("Response did not contain 'paragraphs' array, using fallback")
 
             # Clean up any raw URLs that the LLM may have included despite instructions

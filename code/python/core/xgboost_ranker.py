@@ -17,6 +17,12 @@ import numpy as np
 from typing import Dict, List, Tuple, Optional, Any
 from misc.logger.logging_config_helper import get_configured_logger
 
+# Import feature index constants
+from training.feature_engineering import (
+    FEATURE_IDX_LLM_FINAL_SCORE,
+    TOTAL_FEATURES_PHASE_A
+)
+
 logger = get_configured_logger("xgboost_ranker")
 
 # Global model cache to avoid reloading on every query
@@ -79,8 +85,13 @@ class XGBoostRanker:
         # Check if model file exists
         if not os.path.exists(self.model_path):
             logger.warning(f"XGBoost model not found: {self.model_path}")
-            logger.warning("Model will be trained in Phase C. Disabling XGBoost for now.")
-            self.enabled = False
+            if self.use_shadow_mode:
+                logger.info("Phase A: Shadow mode active - will use dummy predictions")
+                # Keep self.enabled = True, self.model = None
+                # predict() will use dummy predictions based on LLM scores
+            else:
+                logger.warning("Model will be trained in Phase C. Disabling XGBoost.")
+                self.enabled = False
             return
 
         try:
@@ -138,34 +149,67 @@ class XGBoostRanker:
         query_feats = extract_query_features(query_text)
 
         # Collect all LLM scores for percentile calculation
-        all_llm_scores = [
-            getattr(result, 'llm_score', 0.0) for result in ranking_results
-        ]
+        all_llm_scores = []
+        for result in ranking_results:
+            # Handle Dict format (from ranking.py)
+            if isinstance(result, dict):
+                llm_score = result.get('ranking', {}).get('score', 0.0)
+            # Handle RankingResult dataclass
+            else:
+                llm_score = getattr(result, 'llm_score', 0.0)
+            all_llm_scores.append(llm_score)
 
         # Extract features for each result
         for i, result in enumerate(ranking_results):
-            # Get result attributes (handle different object types)
-            doc_title = getattr(result, 'title', '')
-            doc_description = getattr(result, 'description', '')
-            doc_url = getattr(result, 'url', '')
-            published_date = getattr(result, 'published_date', None)
-            author = getattr(result, 'author', None)
+            # Handle Dict format (from ranking.py) or RankingResult dataclass
+            if isinstance(result, dict):
+                # Extract from Dict format
+                doc_title = result.get('name', '')  # 'name' is the title field
+                doc_url = result.get('url', '')
+                schema_object = result.get('schema_object', {})
+                doc_description = schema_object.get('description', '')
+                published_date = schema_object.get('datePublished')
+                author = schema_object.get('author')
 
-            # Retrieval scores
-            vector_score = getattr(result, 'vector_score', 0.0)
-            bm25_score = getattr(result, 'bm25_score', 0.0)
-            keyword_boost = getattr(result, 'keyword_boost', 0.0)
-            temporal_boost = getattr(result, 'temporal_boost', 0.0)
-            final_retrieval_score = getattr(result, 'final_retrieval_score', 0.0)
+                # Retrieval scores from nested dict
+                retrieval_scores = result.get('retrieval_scores', {})
+                vector_score = retrieval_scores.get('vector_score', 0.0)
+                bm25_score = retrieval_scores.get('bm25_score', 0.0)
+                keyword_boost = retrieval_scores.get('keyword_boost', 0.0)
+                temporal_boost = retrieval_scores.get('temporal_boost', 0.0)
+                final_retrieval_score = retrieval_scores.get('final_retrieval_score', 0.0)
 
-            # Ranking scores
-            retrieval_position = getattr(result, 'retrieval_position', i)
-            ranking_position = i  # Current position after LLM ranking
-            llm_score = getattr(result, 'llm_score', 0.0)
+                # Ranking scores
+                retrieval_position = i  # Phase A: we don't track original retrieval position
+                ranking_position = i  # Current position after LLM ranking
+                llm_score = result.get('ranking', {}).get('score', 0.0)
 
-            # MMR scores (may not be available yet)
-            mmr_score = getattr(result, 'mmr_score', None)
-            detected_intent = getattr(result, 'detected_intent', 'BALANCED')
+                # MMR scores (not available at this point in the pipeline)
+                mmr_score = None
+                detected_intent = 'BALANCED'  # Default intent
+            else:
+                # Handle RankingResult dataclass format
+                doc_title = getattr(result, 'title', '')
+                doc_description = getattr(result, 'description', '')
+                doc_url = getattr(result, 'url', '')
+                published_date = getattr(result, 'published_date', None)
+                author = getattr(result, 'author', None)
+
+                # Retrieval scores
+                vector_score = getattr(result, 'vector_score', 0.0)
+                bm25_score = getattr(result, 'bm25_score', 0.0)
+                keyword_boost = getattr(result, 'keyword_boost', 0.0)
+                temporal_boost = getattr(result, 'temporal_boost', 0.0)
+                final_retrieval_score = getattr(result, 'final_retrieval_score', 0.0)
+
+                # Ranking scores
+                retrieval_position = getattr(result, 'retrieval_position', i)
+                ranking_position = i  # Current position after LLM ranking
+                llm_score = getattr(result, 'llm_score', 0.0)
+
+                # MMR scores (may not be available yet)
+                mmr_score = getattr(result, 'mmr_score', None)
+                detected_intent = getattr(result, 'detected_intent', 'BALANCED')
 
             # Extract document features
             doc_feats = extract_document_features(
@@ -250,10 +294,13 @@ class XGBoostRanker:
         """
         n_results = features.shape[0]
 
+        # Validate feature count
+        assert features.shape[1] == TOTAL_FEATURES_PHASE_A, \
+            f"Expected {TOTAL_FEATURES_PHASE_A} features, got {features.shape[1]}"
+
         if self.model is None:
             # Phase A: Return dummy predictions based on LLM scores
-            # Feature 24 is llm_final_score (0-based index 23)
-            llm_scores = features[:, 23]
+            llm_scores = features[:, FEATURE_IDX_LLM_FINAL_SCORE]
 
             # Normalize to 0-1 range
             if llm_scores.max() > 0:
@@ -328,9 +375,14 @@ class XGBoostRanker:
             'num_results': len(ranking_results)
         }
 
-        # Check if enabled
-        if not self.enabled or self.model is None:
-            logger.debug("XGBoost disabled or no model loaded")
+        # Check if enabled (allow shadow mode even without model in Phase A)
+        if not self.enabled:
+            logger.debug("XGBoost disabled in config")
+            return ranking_results, metadata
+
+        # Phase A: Allow shadow mode even if model is None (uses dummy predictions)
+        if self.model is None and not self.use_shadow_mode:
+            logger.debug("XGBoost model not loaded and not in shadow mode")
             return ranking_results, metadata
 
         try:
@@ -347,12 +399,39 @@ class XGBoostRanker:
             metadata['avg_xgboost_score'] = avg_score
             metadata['avg_confidence'] = avg_confidence
 
-            # Shadow mode: Log but don't change ranking
+            # Shadow mode: Log predictions to analytics but don't change ranking
             if self.use_shadow_mode:
                 logger.info(
                     f"[XGBoost Shadow] Query: {query_text[:50]}..., "
                     f"Avg Score: {avg_score:.3f}, Avg Confidence: {avg_confidence:.3f}"
                 )
+
+                # Log XGBoost predictions to analytics database (Phase A)
+                from core.query_logger import get_query_logger
+                query_logger = get_query_logger()
+
+                for i, result in enumerate(ranking_results):
+                    try:
+                        # Get query_id and url from result (handle Dict or object)
+                        if isinstance(result, dict):
+                            query_id = result.get('query_id')
+                            doc_url = result.get('url', '')
+                        else:
+                            query_id = getattr(result, 'query_id', None)
+                            doc_url = getattr(result, 'url', '')
+
+                        if query_id:
+                            query_logger.log_xgboost_scores(
+                                query_id=query_id,
+                                doc_url=doc_url,
+                                xgboost_score=float(scores[i]),
+                                xgboost_confidence=float(confidences[i]),
+                                ranking_position=i
+                            )
+                    except Exception as log_err:
+                        logger.warning(f"Failed to log XGBoost score for result {i}: {log_err}")
+
+                logger.debug(f"[XGBoost Shadow] Logged predictions to analytics")
                 return ranking_results, metadata
 
             # Production mode: Re-rank by XGBoost scores

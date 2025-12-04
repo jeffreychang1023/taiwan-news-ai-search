@@ -635,36 +635,55 @@ class QdrantVectorClient(RetrievalClientBase):
 
         return alpha, beta
 
-    def _format_results(self, search_result: List[models.ScoredPoint], include_vectors: bool = False) -> List[List[str]]:
+    def _format_results(self, search_result: List[models.ScoredPoint], include_vectors: bool = False,
+                       point_scores: Dict = None) -> List[Dict]:
         """
-        Format Qdrant search results to match expected API: [url, text_json, name, site] or [url, text_json, name, site, vector].
+        Format Qdrant search results to Dict format for RankingResult pipeline.
 
         Args:
             search_result: Qdrant search results
             include_vectors: Whether to include document vectors (for MMR)
+            point_scores: Dictionary mapping URL to {'bm25_score', 'keyword_boost'} scores
 
         Returns:
-            List[List[str]]: Formatted results
+            List[Dict]: Formatted results with retrieval scores
         """
         logger.debug(f"Formatting {len(search_result)} results, include_vectors={include_vectors}")
         results = []
         vectors_found = 0
+        point_scores = point_scores or {}
+
         for i, item in enumerate(search_result):
             payload = item.payload
             url = payload.get("url", "")
-            schema = payload.get("schema_json", "")
+            schema_json = payload.get("schema_json", "")
             name = payload.get("name", "")
             site_name = payload.get("site", "")
 
             has_vector = hasattr(item, 'vector') and item.vector is not None
 
+            # Get retrieval scores
+            scores = point_scores.get(url, {'bm25_score': 0.0, 'keyword_boost': 0.0})
+
+            result_dict = {
+                'url': url,
+                'title': name,
+                'site': site_name,
+                'schema_json': schema_json,
+                'retrieval_scores': {
+                    'vector_score': float(item.score),  # Qdrant vector similarity score
+                    'bm25_score': float(scores.get('bm25_score', 0.0)),
+                    'keyword_boost': float(scores.get('keyword_boost', 0.0)),
+                    'temporal_boost': 0.0,  # Phase A: placeholder
+                    'final_retrieval_score': float(item.score),  # Will be overwritten if boosting applied
+                }
+            }
+
             if include_vectors and has_vector:
-                # Include vector as 5th element for MMR
-                results.append([url, schema, name, site_name, item.vector])
+                result_dict['vector'] = item.vector
                 vectors_found += 1
-            else:
-                # Standard format without vector
-                results.append([url, schema, name, site_name])
+
+            results.append(result_dict)
 
         logger.debug(f"Formatted {len(results)} results, vectors_found={vectors_found}")
         return results
@@ -1030,8 +1049,12 @@ class QdrantVectorClient(RetrievalClientBase):
                     top_results = search_result[:num_results]
                     logger.info(f"No keywords found, using pure vector search: {len(top_results)} results")
 
-                # Format the results
-                results = self._format_results(top_results, include_vectors=include_vectors)
+                # Format the results - pass point_scores if available (from keyword boosting)
+                results = self._format_results(
+                    top_results,
+                    include_vectors=include_vectors,
+                    point_scores=point_scores if 'point_scores' in locals() else None
+                )
 
                 # Analytics: Log retrieved documents with scores
                 handler = kwargs.get('handler')
@@ -1067,7 +1090,33 @@ class QdrantVectorClient(RetrievalClientBase):
 
                         # Log each retrieved document
                         for position, result in enumerate(results):
-                            if len(result) >= 4:
+                            # Handle Dict format (new format)
+                            if isinstance(result, dict):
+                                url = result['url']
+                                schema_json = result['schema_json']
+                                name = result['title']
+                                site_name = result['site']
+
+                                # Get scores directly from retrieval_scores
+                                retrieval_scores = result.get('retrieval_scores', {})
+                                vector_score = retrieval_scores.get('vector_score', 0.0)
+                                final_score = retrieval_scores.get('final_retrieval_score', 0.0)
+                                bm25_score = retrieval_scores.get('bm25_score', 0.0)
+                                keyword_boost_score = retrieval_scores.get('keyword_boost', 0.0)
+
+                                # Parse description from schema_json
+                                description = ""
+                                try:
+                                    if schema_json:
+                                        schema_dict = json.loads(schema_json)
+                                        description = schema_dict.get('description', '') or schema_dict.get('articleBody', '')
+                                        if isinstance(description, list):
+                                            description = ' '.join(description)
+                                        description = description[:500] if description else ""  # Limit length
+                                except:
+                                    pass
+                            # Handle legacy Tuple format (backward compatibility)
+                            elif len(result) >= 4:
                                 url = result[0]
                                 schema_json = result[1]
                                 name = result[2]
@@ -1091,19 +1140,21 @@ class QdrantVectorClient(RetrievalClientBase):
                                         description = description[:500] if description else ""  # Limit length
                                 except:
                                     pass
+                            else:
+                                continue
 
-                                query_logger.log_retrieved_document(
-                                    query_id=handler.query_id,
-                                    doc_url=url,
-                                    doc_title=name,
-                                    doc_description=description,
-                                    retrieval_position=position,
-                                    vector_similarity_score=float(vector_score),
-                                    bm25_score=float(bm25_score),
-                                    keyword_boost_score=float(keyword_boost_score),
-                                    final_retrieval_score=float(final_score),
-                                    doc_source='qdrant_hybrid_search'
-                                )
+                            query_logger.log_retrieved_document(
+                                query_id=handler.query_id,
+                                doc_url=url,
+                                doc_title=name,
+                                doc_description=description,
+                                retrieval_position=position,
+                                vector_similarity_score=float(vector_score),
+                                bm25_score=float(bm25_score),
+                                keyword_boost_score=float(keyword_boost_score),
+                                final_retrieval_score=float(final_score),
+                                doc_source='qdrant_hybrid_search'
+                            )
 
                         logger.info(f"Analytics: Logged {len(results)} retrieved documents for query {handler.query_id}")
                     except Exception as e:

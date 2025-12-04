@@ -32,6 +32,27 @@ from core.analytics_db import AnalyticsDB
 logger = get_configured_logger("query_logger")
 
 
+def get_project_root_db_path() -> str:
+    """
+    Get absolute path to analytics database from project root.
+
+    This ensures consistent database location regardless of working directory.
+    Working directory varies by startup method:
+    - startup_aiohttp.sh: /c/Users/User/NLWeb/code/python
+    - Direct python run: varies
+
+    Returns:
+        Absolute path to data/analytics/query_logs.db from project root
+    """
+    # Get path to this file (core/query_logger.py)
+    current_file = Path(__file__).resolve()
+    # Navigate up to project root: query_logger.py -> core/ -> python/ -> code/ -> NLWeb/
+    project_root = current_file.parent.parent.parent.parent
+    # Build absolute path to database
+    db_path = project_root / "data" / "analytics" / "query_logs.db"
+    return str(db_path)
+
+
 class QueryLogger:
     """
     Async query logger for collecting ML training data.
@@ -43,13 +64,18 @@ class QueryLogger:
     4. User interactions (clicks, dwell time, scroll depth)
     """
 
-    def __init__(self, db_path: str = "data/analytics/query_logs.db"):
+    def __init__(self, db_path: str = None):
         """
         Initialize the query logger.
 
         Args:
-            db_path: Path to SQLite database file (used if ANALYTICS_DATABASE_URL not set)
+            db_path: Path to SQLite database file (used if ANALYTICS_DATABASE_URL not set).
+                     If None, uses absolute path from project root.
         """
+        # Use absolute path from project root if not specified
+        if db_path is None:
+            db_path = get_project_root_db_path()
+
         # Initialize database abstraction layer
         self.db = AnalyticsDB(db_path)
 
@@ -165,6 +191,7 @@ class QueryLogger:
                     ALTER TABLE ranking_scores
                     ADD COLUMN IF NOT EXISTS relative_score DOUBLE PRECISION,
                     ADD COLUMN IF NOT EXISTS score_percentile DOUBLE PRECISION,
+                    ADD COLUMN IF NOT EXISTS xgboost_confidence DOUBLE PRECISION,
                     ADD COLUMN IF NOT EXISTS schema_version INTEGER DEFAULT 2
                 """)
 
@@ -197,6 +224,7 @@ class QueryLogger:
                     # ranking_scores table
                     ("ranking_scores", "relative_score", "REAL"),
                     ("ranking_scores", "score_percentile", "REAL"),
+                    ("ranking_scores", "xgboost_confidence", "REAL"),
                     ("ranking_scores", "schema_version", "INTEGER DEFAULT 2"),
                     # user_interactions table
                     ("user_interactions", "schema_version", "INTEGER DEFAULT 2"),
@@ -581,11 +609,13 @@ class QueryLogger:
 
     def _write_to_db(self, table_name: str, data: Dict[str, Any]):
         """Write data to database (synchronous, called by worker thread)."""
-        max_retries = 3
-        retry_delay = 0.5  # seconds
+        max_retries = 5  # Increased from 3
+        # Exponential backoff: 0.5s, 1s, 2s, 4s, 8s
+        retry_delays = [0.5, 1.0, 2.0, 4.0, 8.0]
 
         for attempt in range(max_retries):
             try:
+                print(f"[_write_to_db] Attempt {attempt + 1}/{max_retries} for table={table_name}")
                 conn = self.db.connect()
                 cursor = conn.cursor()
 
@@ -605,12 +635,18 @@ class QueryLogger:
                 error_msg = str(e)
                 # Check if it's a foreign key error
                 if "foreign key constraint" in error_msg.lower() and attempt < max_retries - 1:
-                    # Wait and retry (parent record might not be inserted yet)
-                    time.sleep(retry_delay)
-                    logger.warning(f"Foreign key constraint error on {table_name}, retrying ({attempt + 1}/{max_retries})...")
+                    # Wait and retry with exponential backoff
+                    delay = retry_delays[attempt]
+                    time.sleep(delay)
+                    logger.warning(
+                        f"Foreign key constraint error on {table_name}, "
+                        f"retrying in {delay}s (attempt {attempt + 2}/{max_retries})"
+                    )
                 else:
                     # Log error but don't crash
-                    logger.error(f"Error writing to database table {table_name}: {e}")
+                    logger.error(
+                        f"Failed to write to {table_name} after {attempt + 1} attempts: {e}"
+                    )
                     return
 
     def log_query_start(
@@ -657,7 +693,9 @@ class QueryLogger:
 
         # Write synchronously to ensure queries table has the record BEFORE
         # any child tables (retrieved_documents, ranking_scores, etc.) are written
+        print(f"[QueryLogger] log_query_start: About to write query_id={query_id}")
         self._write_to_db("queries", data)
+        print(f"[QueryLogger] log_query_start: _write_to_db returned")
 
     def log_query_complete(
         self,
@@ -875,6 +913,46 @@ class QueryLogger:
 
         self.log_queue.put({"table": "ranking_scores", "data": data})
 
+    def log_xgboost_scores(
+        self,
+        query_id: str,
+        doc_url: str,
+        xgboost_score: float,
+        xgboost_confidence: float,
+        ranking_position: int
+    ) -> None:
+        """
+        Log XGBoost predictions in shadow mode (Phase A).
+
+        Creates a NEW row in ranking_scores table with ranking_method='xgboost_shadow'.
+        This follows the Multiple INSERTs pattern - same (query_id, doc_url) will have:
+        - Row 1: ranking_method='llm' (LLM scores)
+        - Row 2: ranking_method='xgboost_shadow' (XGBoost predictions)
+        - Row 3: ranking_method='mmr' (MMR scores)
+
+        Args:
+            query_id: Query identifier
+            doc_url: Document URL
+            xgboost_score: XGBoost predicted relevance score (0-1)
+            xgboost_confidence: XGBoost prediction confidence (0-1)
+            ranking_position: Position in ranked results
+        """
+        data = {
+            "query_id": query_id,
+            "doc_url": doc_url,
+            "ranking_position": ranking_position,
+            "xgboost_score": xgboost_score,
+            "xgboost_confidence": xgboost_confidence,
+            "ranking_method": "xgboost_shadow",
+            # Placeholder values for other scores (not used in Phase A)
+            "llm_relevance_score": 0,
+            "llm_final_score": 0,
+            "mmr_diversity_score": 0,
+            "final_ranking_score": 0,
+        }
+
+        self.log_queue.put({"table": "ranking_scores", "data": data})
+
     def log_user_interaction(
         self,
         query_id: str,
@@ -1008,12 +1086,12 @@ class QueryLogger:
 _global_logger = None
 
 
-def get_query_logger(db_path: str = "data/analytics/query_logs.db") -> QueryLogger:
+def get_query_logger(db_path: str = None) -> QueryLogger:
     """
     Get the global QueryLogger instance (singleton pattern).
 
     Args:
-        db_path: Path to database file
+        db_path: Path to database file. If None, uses absolute path from project root.
 
     Returns:
         QueryLogger instance

@@ -31,12 +31,13 @@ class AnalyticsHandler:
     Handles HTTP requests for analytics data.
     """
 
-    def __init__(self, db_path: str = "data/analytics/query_logs.db"):
+    def __init__(self, db_path: str = None):
         """
         Initialize the analytics handler.
 
         Args:
-            db_path: Path to SQLite database (used if ANALYTICS_DATABASE_URL not set)
+            db_path: Path to SQLite database (used if ANALYTICS_DATABASE_URL not set).
+                     If None, uses absolute path from project root.
         """
         self.db = AnalyticsDB(db_path)
         logger.info(f"Analytics handler initialized with {self.db.db_type} database")
@@ -583,13 +584,13 @@ class AnalyticsHandler:
         return hashed
 
 
-def register_analytics_routes(app: web.Application, db_path: str = "data/analytics/query_logs.db"):
+def register_analytics_routes(app: web.Application, db_path: str = None):
     """
     Register analytics routes with the aiohttp application.
 
     Args:
         app: aiohttp Application instance
-        db_path: Path to SQLite database
+        db_path: Path to SQLite database. If None, uses absolute path from project root.
     """
     handler = AnalyticsHandler(db_path=db_path)
 

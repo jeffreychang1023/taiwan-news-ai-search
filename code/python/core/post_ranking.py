@@ -144,7 +144,6 @@ class SummarizeResults(PromptRunner):
         # Check if handler has url_to_vector mapping (from ranking phase)
         url_to_vector = getattr(self.handler, 'url_to_vector', {})
 
-        print(f"[MMR CHECK PostRanking] mmr_enabled={mmr_enabled}, ranked={len(ranked)}, threshold={mmr_threshold}, vectors={len(url_to_vector)}")
 
         if not mmr_enabled:
             logger.info("MMR disabled in config, using standard ranking")
@@ -155,7 +154,6 @@ class SummarizeResults(PromptRunner):
             return
 
         if not url_to_vector:
-            print(f"[MMR] SKIPPED: no vectors available in PostRanking")
             logger.info("MMR skipped: no vectors available")
             return
 

@@ -26,6 +26,22 @@ except ImportError:
     logger.warning("PostgreSQL libraries not available, falling back to SQLite")
 
 
+def get_project_root_db_path() -> str:
+    """
+    Get absolute path to analytics database from project root.
+
+    Returns:
+        Absolute path to data/analytics/query_logs.db from project root
+    """
+    # Get path to this file (core/analytics_db.py)
+    current_file = Path(__file__).resolve()
+    # Navigate up to project root: analytics_db.py -> core/ -> python/ -> code/ -> NLWeb/
+    project_root = current_file.parent.parent.parent.parent
+    # Build absolute path to database
+    db_path = project_root / "data" / "analytics" / "query_logs.db"
+    return str(db_path)
+
+
 class AnalyticsDB:
     """
     Database abstraction layer that supports both SQLite and PostgreSQL.
@@ -35,13 +51,18 @@ class AnalyticsDB:
     - ANALYTICS_DB_PATH: SQLite file path (fallback if DATABASE_URL not set)
     """
 
-    def __init__(self, db_path: str = "data/analytics/query_logs.db"):
+    def __init__(self, db_path: str = None):
         """
         Initialize database connection.
 
         Args:
-            db_path: Path to SQLite database (used if ANALYTICS_DATABASE_URL not set)
+            db_path: Path to SQLite database (used if ANALYTICS_DATABASE_URL not set).
+                     If None, uses absolute path from project root.
         """
+        # Use absolute path from project root if not specified
+        if db_path is None:
+            db_path = get_project_root_db_path()
+
         self.database_url = os.environ.get('ANALYTICS_DATABASE_URL')
         self.db_path = Path(db_path)
         self.db_type = 'postgres' if self.database_url and POSTGRES_AVAILABLE else 'sqlite'
@@ -90,6 +111,7 @@ class AnalyticsDB:
                     site TEXT NOT NULL,
                     mode TEXT NOT NULL,
                     model TEXT,
+                    parent_query_id TEXT,
                     latency_total_ms REAL,
                     latency_retrieval_ms REAL,
                     latency_ranking_ms REAL,
@@ -165,6 +187,7 @@ class AnalyticsDB:
                     site VARCHAR(100) NOT NULL,
                     mode VARCHAR(50) NOT NULL,
                     model VARCHAR(100),
+                    parent_query_id VARCHAR(255),
                     latency_total_ms DOUBLE PRECISION,
                     latency_retrieval_ms DOUBLE PRECISION,
                     latency_ranking_ms DOUBLE PRECISION,

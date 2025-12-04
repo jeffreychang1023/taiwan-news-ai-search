@@ -72,10 +72,8 @@ def init():
 
                     _preloaded_modules[db_type] = CloudflareAutoRAGClient
                 elif db_type == "hnswlib":
-                    print(f"[RETRIEVER] Preloading hnswlib module for endpoint: {endpoint_name}")
                     from retrieval_providers.hnswlib_client import HnswlibClient
                     _preloaded_modules[db_type] = HnswlibClient
-                    print(f"[RETRIEVER] Successfully preloaded hnswlib module")
                 elif db_type == "bing_search":
                     from retrieval_providers.bing_search_client import BingSearchClient
                     _preloaded_modules[db_type] = BingSearchClient
@@ -380,7 +378,6 @@ class VectorDBClient:
         if CONFIG.is_development_mode() and self.query_params:
             # Check for 'db' or 'retrieval_backend' parameter
             param_endpoint = self.query_params.get('db') or self.query_params.get('retrieval_backend')
-            print(f"[RETRIEVER] Development mode - param_endpoint from query_params: {param_endpoint}")
             if param_endpoint:
                 # Handle case where param_endpoint might be a list
                 if isinstance(param_endpoint, list):
@@ -577,10 +574,8 @@ class VectorDBClient:
                     from retrieval_providers.shopify_mcp import ShopifyMCPClient
                     client = ShopifyMCPClient(endpoint_name)
                 elif db_type == "hnswlib":
-                    print(f"[RETRIEVER] Creating hnswlib client for endpoint: {endpoint_name}")
                     from retrieval_providers.hnswlib_client import HnswlibClient
                     client = HnswlibClient(endpoint_name)
-                    print(f"[RETRIEVER] Successfully created hnswlib client")
                 elif db_type == "bing_search":
                     from retrieval_providers.bing_search_client import BingSearchClient
                     client = BingSearchClient(endpoint_name)
@@ -609,14 +604,26 @@ class VectorDBClient:
         url_to_result = {}
         
         for result in results:
-            # Assuming result format is [url, title, content, ...]
-            if len(result) >= 3:
+            # Handle both Dict and Tuple formats
+            if isinstance(result, dict):
+                url = result.get('url', '')
+                content = result.get('description', '') or result.get('schema_json', '')
+            elif len(result) >= 3:
                 url = result[0]
                 content = result[2] if len(result) > 2 else ""
-                
-                # If URL not seen before or current content is longer, keep it
-                if url not in url_to_result or len(content) > len(url_to_result[url][2]):
-                    url_to_result[url] = result
+            else:
+                continue
+
+            # If URL not seen before or current content is longer, keep it
+            if url:
+                if isinstance(result, dict):
+                    # For Dict format, compare content length
+                    if url not in url_to_result or len(content) > len(url_to_result.get(url, {}).get('description', '')):
+                        url_to_result[url] = result
+                else:
+                    # For Tuple format, use original logic
+                    if url not in url_to_result or len(content) > len(url_to_result[url][2]):
+                        url_to_result[url] = result
         
         # Return deduplicated results
         return list(url_to_result.values())
@@ -644,13 +651,25 @@ class VectorDBClient:
                 logger.debug(f"Got {len(results)} results from {endpoint_name}")
 
                 for result in results:
-                    if len(result) >= 4:  # Ensure we have [url, json, name, site] or [url, json, name, site, vector]
+                    # Handle both Dict (new format) and Tuple (legacy format)
+                    if isinstance(result, dict):
+                        # New Dict format
+                        url = result.get('url', '')
+                        json_data = result.get('schema_json', '')
+                        name = result.get('title', '')
+                        site = result.get('site', '')
+                        vector = result.get('vector')
+                    elif len(result) >= 4:
+                        # Legacy Tuple format: [url, json, name, site] or [url, json, name, site, vector]
                         url = result[0]
                         json_data = result[1]
                         name = result[2]
                         site = result[3]
-                        vector = result[4] if len(result) == 5 else None  # Preserve vector if present
+                        vector = result[4] if len(result) == 5 else None
+                    else:
+                        continue  # Skip invalid results
 
+                    if url:
                         if url not in url_to_data:
                             # First occurrence of this URL
                             url_to_data[url] = {
@@ -685,9 +704,15 @@ class VectorDBClient:
             for endpoint_name, iterator in iterators.items():
                 try:
                     result = next(iterator)
-                    if len(result) >= 1:
+                    # Handle both Dict and Tuple formats
+                    if isinstance(result, dict):
+                        url = result.get('url', '')
+                    elif len(result) >= 1:
                         url = result[0]
-                        if url and url not in seen_urls:
+                    else:
+                        url = None
+
+                    if url and url not in seen_urls:
                             seen_urls.add(url)
                             # Get the aggregated data for this URL
                             data = url_to_data.get(url)

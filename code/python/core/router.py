@@ -191,7 +191,6 @@ class ToolSelector:
             self.site_id = 'default'
         
         print(f"\n[TOOL-SELECTOR] Initializing for site: {self.site_id}")
-        print(f"[TOOL-SELECTOR] Handler site value: {handler.site}")
         
         # Load tools if not already cached
         tools_xml_path = os.path.join(CONFIG.config_directory, "tools.xml")
@@ -273,7 +272,6 @@ class ToolSelector:
                     pass
                 except Exception as e:
                     # Log the error but continue evaluating other tools
-                    print(f"[TOOL-SELECTOR] Error processing completed task: {str(e)}")
                     logger.error(f"Error processing completed task: {str(e)}", exc_info=True)
                     pass
             

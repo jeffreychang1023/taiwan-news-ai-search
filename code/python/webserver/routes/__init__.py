@@ -33,6 +33,11 @@ def setup_routes(app):
     analytics_db_path = os.environ.get('ANALYTICS_DB_PATH', 'data/analytics/query_logs.db')
     try:
         register_analytics_routes(app, db_path=analytics_db_path)
+        
+        # Register ranking analytics routes
+        from ranking_analytics_handler import register_ranking_analytics_routes
+        register_ranking_analytics_routes(app, db_path=analytics_db_path)
+        
     except Exception as e:
         import logging
         logger = logging.getLogger(__name__)

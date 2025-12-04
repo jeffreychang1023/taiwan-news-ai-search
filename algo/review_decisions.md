@@ -99,6 +99,32 @@ This document records the **final approved specifications** for implementation. 
 
 *   **Spec 4: Integration Point** (`core/xgboost_ranker.py`)
     *   **Action**: Call `query_logger.log_xgboost_scores()` inside the `rerank()` method when `shadow_mode=True`.
+
+*   **🔴 CLARIFICATION: Multiple INSERTs Pattern**
+    *   XGBoost scores 寫入 **新的 rows**（不是 UPDATE 現有 LLM rows）
+    *   同一個 `(query_id, doc_url)` 可能有多筆記錄：
+        - Row 1: `ranking_method='llm'`, `llm_final_score=92.5`, `xgboost_score=NULL`
+        - Row 2: `ranking_method='xgboost_shadow'`, `llm_final_score=NULL`, `xgboost_score=0.85`
+        - Row 3: `ranking_method='mmr'`, `mmr_diversity_score=0.75`
+    *   **Analytics Query Pattern for Phase C**:
+        ```sql
+        -- Training Data Export: JOIN by ranking_method
+        SELECT
+          llm.llm_final_score,
+          xgb.xgboost_score,
+          xgb.xgboost_confidence,
+          mmr.mmr_diversity_score
+        FROM ranking_scores llm
+        LEFT JOIN ranking_scores xgb
+          ON llm.query_id = xgb.query_id
+          AND llm.doc_url = xgb.doc_url
+          AND xgb.ranking_method = 'xgboost_shadow'
+        LEFT JOIN ranking_scores mmr
+          ON llm.query_id = mmr.query_id
+          AND llm.doc_url = mmr.doc_url
+          AND mmr.ranking_method = 'mmr'
+        WHERE llm.ranking_method = 'llm'
+        ```
 ---
 ### **Issue #3: Historical Features (29 → 35)**
 
@@ -591,3 +617,249 @@ xgboost_params:
 *   **Tuple Modification**: Rejected. Do not modify the existing Tuple structure; switch to Dict instead.
 *   **Real-time DB Query**: Rejected. No querying Analytics DB during ranking.
 *   **Traffic Splitting**: Deferred to Phase C.
+
+---
+
+## 🔴 ADDITIONAL CLARIFICATIONS (Response to Review Agent)
+
+### Clarification #1: Issue #2 - Multiple INSERTs Pattern ✅ ADDED ABOVE
+已在 Issue #2 補充說明 (Line 103-127)
+
+### Clarification #2: Issue #3 - url_stats Table Schema
+
+**Phase B `url_stats` Table Schema**:
+```sql
+CREATE TABLE url_stats (
+    doc_url TEXT PRIMARY KEY,
+
+    -- CTR metrics
+    ctr_7d REAL DEFAULT 0.0,
+    ctr_30d REAL DEFAULT 0.0,
+
+    -- Engagement metrics
+    avg_dwell_time_ms REAL DEFAULT 0.0,
+
+    -- Frequency metrics
+    times_shown_7d INTEGER DEFAULT 0,
+    times_shown_30d INTEGER DEFAULT 0,
+    times_clicked_7d INTEGER DEFAULT 0,
+    times_clicked_30d INTEGER DEFAULT 0,
+
+    -- Position metrics
+    avg_position_when_clicked REAL,
+
+    -- Recency
+    last_interaction_timestamp REAL,
+
+    -- Metadata
+    last_updated REAL NOT NULL,
+    schema_version INTEGER DEFAULT 1
+);
+
+CREATE INDEX idx_url_stats_updated ON url_stats(last_updated);
+```
+
+**Background Job SQL (Aggregation Logic)**:
+```sql
+INSERT OR REPLACE INTO url_stats (doc_url, ctr_7d, ctr_30d, avg_dwell_time_ms, ...)
+SELECT
+    doc_url,
+    -- 7-day CTR
+    COUNT(CASE WHEN clicked=1 AND timestamp > NOW() - INTERVAL '7 days' THEN 1 END)::FLOAT /
+      NULLIF(COUNT(CASE WHEN timestamp > NOW() - INTERVAL '7 days' THEN 1 END), 0) as ctr_7d,
+    -- 30-day CTR
+    COUNT(CASE WHEN clicked=1 AND timestamp > NOW() - INTERVAL '30 days' THEN 1 END)::FLOAT /
+      NULLIF(COUNT(CASE WHEN timestamp > NOW() - INTERVAL '30 days' THEN 1 END), 0) as ctr_30d,
+    -- Average dwell time (only for clicked results)
+    AVG(CASE WHEN clicked=1 THEN dwell_time_ms END) as avg_dwell_time_ms,
+    ...
+FROM user_interactions
+GROUP BY doc_url;
+```
+
+---
+
+### Clarification #3: Issue #4 - Feature Version Management
+
+**🟡 IMPORTANT: Feature Version Compatibility Strategy**
+
+**Problem**: Phase A model (29 features) vs Phase C model (35 features) compatibility
+
+**Solution**: Model Metadata + Version Namespacing
+
+**Implementation**:
+
+1. **Feature Constants Versioning** (`training/feature_engineering.py`):
+   ```python
+   # Phase A constants (keep forever)
+   TOTAL_FEATURES_PHASE_A = 29
+   FEATURE_IDX_LLM_FINAL_SCORE = 23  # Position stays same
+
+   # Phase C constants (new, don't replace old ones)
+   TOTAL_FEATURES_PHASE_C = 35
+   FEATURE_IDX_URL_CTR_7D = 29       # Historical features start at 29
+   FEATURE_IDX_URL_CTR_30D = 30
+   ...
+   ```
+
+2. **Model Metadata** (stored with model file):
+   ```json
+   {
+       "model_version": "v1_binary",
+       "expected_features": 29,
+       "feature_version": "phase_a",
+       "trained_date": "2025-02-15"
+   }
+   ```
+
+3. **Inference Validation** (`xgboost_ranker.py`):
+   ```python
+   def load_model(self):
+       # Load model + metadata
+       model_metadata = load_json(f"{model_path}.metadata.json")
+
+       # Validate feature count
+       self.expected_features = model_metadata['expected_features']
+
+   def predict(self, features):
+       # Validate shape
+       assert features.shape[1] >= self.expected_features, \
+           f"Model needs {self.expected_features} features, got {features.shape[1]}"
+
+       # Truncate if needed (35 features → use first 29 for v1 model)
+       model_features = features[:, :self.expected_features]
+       return self.model.predict(model_features)
+   ```
+
+**Backward Compatibility**:
+- Phase C feature extraction 生成 35 features
+- Phase A model (v1) 只用前 29 個
+- Phase C model (v2) 用全部 35 個
+- 不需要兩套 extraction logic ✅
+
+---
+
+### Clarification #4: Issue #7 - Thread Safety Edge Case
+
+**🟢 Edge Case: `run_in_executor` for Blocking Operations**
+
+**Current Implementation** (Phase A):
+- `load_model()` 是 **sync function**
+- 在 `__init__` 呼叫（不在 async context）
+- **No threading, no lock needed** ✅
+
+**Potential Future Scenario** (Phase B consideration):
+```python
+# If model loading becomes async + blocking
+async def load_model(self):
+    loop = asyncio.get_event_loop()
+    # pickle.load is sync blocking → runs in thread pool
+    model = await loop.run_in_executor(None, self._load_model_sync, self.model_path)
+    _MODEL_CACHE[self.model_path] = model
+
+def _load_model_sync(self, path):
+    import pickle
+    with open(path, 'rb') as f:
+        return pickle.load(f)  # Blocking I/O
+```
+
+**If using `run_in_executor`**:
+- Multiple threads 可能同時執行 → 需要 `threading.Lock()`（不是 `asyncio.Lock()`）
+- **But**: 目前不需要，Phase A 用 sync loading in `__init__`
+
+**Recommended Approach** (Phase B):
+- **Option 1**: Eager loading at startup（推薦）→ 不需要 lock
+- **Option 2**: If must lazy load → use `threading.Lock()` with `run_in_executor`
+
+---
+
+### Clarification #5: Issue #10 - "Dummy Model" Definition
+
+**🟢 Phase A Dummy Model 行為說明**
+
+**Implementation** (`xgboost_ranker.py:253-267`):
+```python
+if self.model is None:
+    # Phase A: Return dummy predictions based on LLM scores
+    llm_scores = features[:, FEATURE_IDX_LLM_FINAL_SCORE]
+
+    # Normalize to 0-1 range
+    normalized_scores = llm_scores / llm_scores.max()
+
+    # Fixed dummy confidence
+    confidences = np.full(n_results, 0.5)
+
+    return normalized_scores, confidences
+```
+
+**Behavior**:
+- `xgboost_score` = **normalized LLM score**（只是縮放到 0-1）
+- `xgboost_confidence` = **固定 0.5**（不是真實 confidence）
+- **Purpose**: 測試 infrastructure，不測試 model accuracy
+
+**Why Comparison Metrics 沒用**:
+- XGBoost scores ≈ LLM scores（只是 normalized）
+- Top-10 overlap 永遠 ~100%
+- Rank correlation 永遠 ~1.0
+- **Phase B 才有意義**（真實 Binary Classifier predictions）
+
+---
+
+### Clarification #6: Issue #11 - Bucketing Unit Fix
+
+**🔴 CRITICAL FIX: Use session_id Instead of query_id**
+
+**Problem with Original Design**:
+```python
+# ❌ WRONG: query_id is per-request unique
+bucket = md5(query_id) % 100 < traffic_percentage
+
+# Example:
+# User 第一次搜 "台北天氣" → query_id=query_001 → hash=15 → XGBoost
+# User 第二次搜 "台北天氣" → query_id=query_002 → hash=67 → Control
+# → Inconsistent UX! 同樣問題不同結果
+```
+
+**Corrected Design**:
+```python
+# ✅ CORRECT: Use session_id for consistent UX
+bucket = md5(session_id) % 100 < traffic_percentage
+
+# Same session → same path (XGBoost or Control)
+# Clean A/B test (users don't cross groups within session)
+```
+
+**Updated Config**:
+```yaml
+xgboost_params:
+  traffic_percentage: 10  # 0-100
+  bucketing_strategy: "session_id"  # Changed from "query_id"
+```
+
+**Trade-offs**:
+- ✅ **session_id**: Session 內一致，跨 session 可能不同（可接受）
+- ❌ **query_id**: 每次都不同（UX 不一致）
+- ❌ **query_text**: Exact match sensitive（"台北天氣" ≠ "台北 天氣"）
+- ❌ **user_id**: Privacy concern + 需要 long-term tracking
+
+**Rationale for session_id**:
+1. Consistent UX within session
+2. Clean A/B test separation
+3. Privacy-friendly（不需要跨 session tracking）
+4. Session 是合理的實驗單位（一次完整的使用體驗）
+
+---
+
+## 📊 Final Review Summary
+
+**🔴 Critical Clarifications Added**:
+1. ✅ Issue #2: Multiple INSERTs pattern + SQL query 範例
+2. ✅ Issue #3: `url_stats` table schema + aggregation SQL
+3. ✅ Issue #4: Feature version management strategy
+4. ✅ Issue #11: Bucketing unit 改為 `session_id`
+
+**🟡 Medium Clarifications Added**:
+5. ✅ Issue #7: `run_in_executor` edge case 說明
+6. ✅ Issue #10: Dummy model 行為定義
+
+**All 6 clarifications addressed. Document is now complete for Phase A implementation.** 🎉
