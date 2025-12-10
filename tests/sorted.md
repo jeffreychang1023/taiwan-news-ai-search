@@ -249,3 +249,94 @@ except Exception as e:
 ⚠️ **重要**: 在 Render 部署時添加環境變數 `ANALYTICS_SALT`
 - 建議值: 隨機生成的 32+ 字元字串
 - 範例: `openssl rand -base64 32` 生成
+
+## 2025-12-07 (File Cleanup)
+
+### Files Deleted - Cleanup-files Skill Execution
+
+#### Architecture Development Scripts (6 files)
+1. **add_draggable_boxes.py**
+   - Purpose: Script to add draggable box functionality to architecture diagram
+   - Reason: One-time development script for architecture visualization
+
+2. **clean_architecture.py**
+   - Purpose: Script to clean up architecture diagram data
+   - Reason: One-time cleanup script
+
+3. **fix_layout_comprehensive.py**
+   - Purpose: Script to fix comprehensive layout issues
+   - Reason: One-time layout fix script
+
+4. **implement_edges_and_resize.py**
+   - Purpose: Script to implement edges and resize functionality
+   - Reason: One-time development script
+
+5. **temp_fix_architecture.py**
+   - Purpose: Temporary architecture fix script
+   - Reason: Explicitly marked as temporary (filename prefix)
+
+6. **update_architecture_layout.py**
+   - Purpose: Script to update architecture layout
+   - Reason: One-time layout update script
+
+#### Backup Files (4 files)
+7. **architecture-diagram.json.before_reorg**
+   - Purpose: Backup of architecture diagram before reorganization
+   - Reason: Historical backup, current version is stable
+
+8. **new_graphdata.json**
+   - Purpose: New version of graph data (intermediate file)
+   - Reason: Superseded by current graphData.json
+
+9. **static/architecture.html.before_new_arch**
+   - Purpose: HTML backup before new architecture
+   - Reason: Historical backup, current version is stable
+
+10. **static/architecture.html.before_reorg**
+    - Purpose: HTML backup before reorganization
+    - Reason: Historical backup, current version is stable
+
+#### Patch Scripts (2 files)
+11. **code/python/training/patch_qdrant.py**
+    - Purpose: Patch script for Qdrant integration
+    - Reason: One-time patch for development, no longer needed
+
+12. **code/python/training/patch_xgboost_ranker.py**
+    - Purpose: Patch script for XGBoost ranker
+    - Reason: One-time patch for development, no longer needed
+
+#### Documentation Files (3 files)
+13. **EDGE_EDITING_GUIDE.md**
+    - Purpose: Guide for editing edges in architecture diagram
+    - Reason: Development documentation, no longer needed
+
+14. **DATA_FLOW_EDGES.md**
+    - Purpose: Data flow edges documentation
+    - Reason: Development documentation, no longer needed
+
+15. **algo/PHASE_BC_IMPLEMENTATION_PLAN.md**
+    - Purpose: Phase B/C implementation plan
+    - Reason: Planning document, implementation details in other docs
+
+#### Scripts (1 file)
+16. **scripts/apply_new_architecture.py**
+    - Purpose: Script to apply new architecture
+    - Reason: One-time migration script, architecture already applied
+
+**Total**: 16 files deleted
+
+**Action**: All files permanently deleted (not moved to tests/ or archive)
+
+**Files Kept** (User decision):
+- .obsidian/ folder (Obsidian vault)
+- 1217演講.pptx (presentation file)
+- scripts/update_architecture.py (may still be useful)
+- models/ directory (potentially ML models)
+- code/python/jobs/ directory (need to check contents)
+
+**Verification Steps**:
+1. ✅ Check git status - untracked files reduced
+2. ✅ Verify architecture.html still loads correctly
+3. ✅ Verify architecture-diagram.json exists and is current
+4. ✅ Verify graphData.json exists and is current
+5. ✅ Check training scripts still run (export_training_data.py, train_phase_c1.py, etc.)

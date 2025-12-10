@@ -159,19 +159,14 @@ class ToolSelector:
     STEP_NAME = "ToolSelector"
     MIN_TOOL_SCORE_THRESHOLD = 70  # Minimum score required to select a tool
     
-    # Type hierarchy for schema.org types
-    # TODO: This is a placeholder for now. We need to have a proper type hierarchy from schema.org
+    # Type hierarchy for news schema types
+    # NewsQuery is the primary type for news-related queries
     TYPE_HIERARCHY = {
-        "Recipe": ["Item"],
-        "Movie": ["Item"],
-        "Product": ["Item"],
-        "Restaurant": ["Item"],
-        "Event": ["Item"],
-        "Podcast": ["Item"]
+        "NewsQuery": [],  # NewsQuery has no parent types
     }
-    
+
     # Pre-cache these types for faster lookup
-    PRE_CACHE_TYPES = ["Item", "Recipe", "Movie", "Product", "Restaurant", "Event", "Podcast", "Statistics"]
+    PRE_CACHE_TYPES = ["NewsQuery"]
     
     # Class-level cache for get_tools_by_type results
     # Key is (site_id, schema_type) tuple
@@ -304,9 +299,9 @@ class ToolSelector:
         types_to_check = [schema_type]
         if schema_type in self.TYPE_HIERARCHY:
             types_to_check.extend(self.TYPE_HIERARCHY[schema_type])
-        elif schema_type != "Item":
-            # If type not in hierarchy, assume it inherits from Item
-            types_to_check.append("Item")
+        elif schema_type != "NewsQuery":
+            # If type not in hierarchy, assume it's a NewsQuery type
+            types_to_check.append("NewsQuery")
         
         # Collect tools from all relevant types
         tools_by_name = {}
@@ -397,7 +392,7 @@ class ToolSelector:
             if (self.handler.site == "all" and not CONFIG.is_aggregation_enabled()):
                 logger.info("Site is 'all' and aggregation is disabled, defaulting to search tool")
                 # Find the search tool
-                tools = self.get_tools_by_type("Item")  # Search is typically an Item-level tool
+                tools = self.get_tools_by_type("NewsQuery")  # Search is typically a NewsQuery-level tool
                 search_tool = next((t for t in tools if t.name == 'search'), None)
                 
                 if search_tool:

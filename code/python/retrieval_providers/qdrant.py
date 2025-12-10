@@ -635,6 +635,48 @@ class QdrantVectorClient(RetrievalClientBase):
 
         return alpha, beta
 
+    def _parse_schema_metadata(self, schema_json: str) -> Tuple[str, str, str]:
+        """
+        Parse author, date_published, and description from schema_json.
+
+        Args:
+            schema_json: JSON string containing schema.org metadata
+
+        Returns:
+            Tuple of (description, author, date_published)
+        """
+        description = ""
+        author = ""
+        date_published = ""
+
+        try:
+            if schema_json:
+                schema_dict = json.loads(schema_json)
+
+                # Extract description
+                description = schema_dict.get('description', '') or schema_dict.get('articleBody', '')
+                if isinstance(description, list):
+                    description = ' '.join(description)
+                description = description[:500] if description else ""
+
+                # Extract author
+                author_data = schema_dict.get('author', '')
+                if isinstance(author_data, dict):
+                    author = author_data.get('name', '')
+                elif isinstance(author_data, list) and author_data:
+                    author = author_data[0].get('name', '') if isinstance(author_data[0], dict) else str(author_data[0])
+                elif isinstance(author_data, str):
+                    author = author_data
+
+                # Extract date published
+                date_published = (schema_dict.get('datePublished', '') or
+                                schema_dict.get('dateCreated', '') or
+                                schema_dict.get('publishDate', ''))
+        except (json.JSONDecodeError, KeyError, TypeError, AttributeError) as e:
+            logger.debug(f"Failed to parse metadata from schema_json: {e}")
+
+        return description, author, date_published
+
     def _format_results(self, search_result: List[models.ScoredPoint], include_vectors: bool = False,
                        point_scores: Dict = None) -> List[Dict]:
         """
@@ -1104,17 +1146,8 @@ class QdrantVectorClient(RetrievalClientBase):
                                 bm25_score = retrieval_scores.get('bm25_score', 0.0)
                                 keyword_boost_score = retrieval_scores.get('keyword_boost', 0.0)
 
-                                # Parse description from schema_json
-                                description = ""
-                                try:
-                                    if schema_json:
-                                        schema_dict = json.loads(schema_json)
-                                        description = schema_dict.get('description', '') or schema_dict.get('articleBody', '')
-                                        if isinstance(description, list):
-                                            description = ' '.join(description)
-                                        description = description[:500] if description else ""  # Limit length
-                                except:
-                                    pass
+                                # Parse metadata from schema_json using helper
+                                description, author, date_published = self._parse_schema_metadata(schema_json)
                             # Handle legacy Tuple format (backward compatibility)
                             elif len(result) >= 4:
                                 url = result[0]
@@ -1129,17 +1162,8 @@ class QdrantVectorClient(RetrievalClientBase):
                                 bm25_score = score_data.get('bm25_score', 0.0)
                                 keyword_boost_score = score_data.get('keyword_boost', 0.0)
 
-                                # Parse description from schema_json
-                                description = ""
-                                try:
-                                    if schema_json:
-                                        schema_dict = json.loads(schema_json)
-                                        description = schema_dict.get('description', '') or schema_dict.get('articleBody', '')
-                                        if isinstance(description, list):
-                                            description = ' '.join(description)
-                                        description = description[:500] if description else ""  # Limit length
-                                except:
-                                    pass
+                                # Parse metadata from schema_json using helper
+                                description, author, date_published = self._parse_schema_metadata(schema_json)
                             else:
                                 continue
 
@@ -1153,6 +1177,8 @@ class QdrantVectorClient(RetrievalClientBase):
                                 bm25_score=float(bm25_score),
                                 keyword_boost_score=float(keyword_boost_score),
                                 final_retrieval_score=float(final_score),
+                                doc_published_date=date_published,
+                                doc_author=author,
                                 doc_source='qdrant_hybrid_search'
                             )
 

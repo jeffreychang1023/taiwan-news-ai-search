@@ -401,10 +401,20 @@ class XGBoostRanker:
 
             # Shadow mode: Log predictions to analytics but don't change ranking
             if self.use_shadow_mode:
+                # Calculate comparison metrics (Task B2)
+                comparison_metrics = self._calculate_comparison_metrics(
+                    ranking_results, scores
+                )
+
                 logger.info(
                     f"[XGBoost Shadow] Query: {query_text[:50]}..., "
-                    f"Avg Score: {avg_score:.3f}, Avg Confidence: {avg_confidence:.3f}"
+                    f"Avg Score: {avg_score:.3f}, Avg Confidence: {avg_confidence:.3f}, "
+                    f"Top10 Overlap: {comparison_metrics['top10_overlap']:.2f}, "
+                    f"Rank Corr: {comparison_metrics['rank_correlation']:.3f}"
                 )
+
+                # Add comparison metrics to metadata
+                metadata.update(comparison_metrics)
 
                 # Log XGBoost predictions to analytics database (Phase A)
                 from core.query_logger import get_query_logger
@@ -460,6 +470,92 @@ class XGBoostRanker:
             logger.error(f"XGBoost reranking failed: {e}")
             logger.exception("Full traceback:")
             return ranking_results, metadata
+
+
+
+    def _calculate_comparison_metrics(
+        self,
+        ranking_results: List[Any],
+        xgboost_scores: np.ndarray
+    ) -> Dict[str, float]:
+        """
+        Calculate comparison metrics between LLM and XGBoost rankings (Task B2).
+
+        Args:
+            ranking_results: List of ranking results (LLM-ranked)
+            xgboost_scores: XGBoost predicted scores
+
+        Returns:
+            Dict with comparison metrics:
+            - top10_overlap: Overlap between top-10 (0-1)
+            - rank_correlation: Kendall's Tau correlation
+            - avg_position_change: Average position change
+        """
+        try:
+            from scipy.stats import kendalltau
+        except ImportError:
+            logger.warning("scipy not available, using fallback correlation")
+            kendalltau = None
+
+        n = len(ranking_results)
+
+        # Get LLM ranking (already in order)
+        llm_urls = []
+        for result in ranking_results:
+            if isinstance(result, dict):
+                llm_urls.append(result.get('url', ''))
+            else:
+                llm_urls.append(getattr(result, 'url', ''))
+
+        # Get XGBoost ranking (sort by predicted scores)
+        xgb_ranked_indices = np.argsort(-xgboost_scores)  # Descending
+        xgb_urls = [llm_urls[i] for i in xgb_ranked_indices]
+
+        # 1. Top-10 overlap
+        top_k = min(10, n)
+        llm_top10 = set(llm_urls[:top_k])
+        xgb_top10 = set(xgb_urls[:top_k])
+        overlap = len(llm_top10.intersection(xgb_top10))
+        top10_overlap = overlap / top_k if top_k > 0 else 0.0
+
+        # 2. Rank correlation (Kendall's Tau)
+        if kendalltau and n > 1:
+            # Create rank arrays
+            llm_ranks = {url: i for i, url in enumerate(llm_urls)}
+            xgb_ranks = {url: i for i, url in enumerate(xgb_urls)}
+
+            # Ensure same order for correlation
+            common_urls = [url for url in llm_urls if url in xgb_ranks]
+            if len(common_urls) > 1:
+                llm_rank_array = [llm_ranks[url] for url in common_urls]
+                xgb_rank_array = [xgb_ranks[url] for url in common_urls]
+                tau, _ = kendalltau(llm_rank_array, xgb_rank_array)
+                rank_correlation = float(tau)
+            else:
+                rank_correlation = 0.0
+        else:
+            # Fallback: Spearman's rho approximation
+            if n > 1:
+                llm_ranks_array = np.arange(n)
+                xgb_ranks_array = np.array([llm_urls.index(url) for url in xgb_urls])
+                rank_correlation = float(np.corrcoef(llm_ranks_array, xgb_ranks_array)[0, 1])
+            else:
+                rank_correlation = 0.0
+
+        # 3. Average position change
+        position_changes = []
+        for i, url in enumerate(llm_urls):
+            if url in xgb_urls:
+                xgb_position = xgb_urls.index(url)
+                position_changes.append(abs(i - xgb_position))
+
+        avg_position_change = float(np.mean(position_changes)) if position_changes else 0.0
+
+        return {
+            'top10_overlap': top10_overlap,
+            'rank_correlation': rank_correlation,
+            'avg_position_change': avg_position_change
+        }
 
 
 if __name__ == "__main__":
