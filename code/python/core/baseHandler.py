@@ -19,8 +19,9 @@ from datetime import datetime, timezone, timedelta
 import json
 import core.query_analysis.decontextualize as decontextualize
 import core.query_analysis.analyze_query as analyze_query
-import core.query_analysis.memory as memory   
+import core.query_analysis.memory as memory
 import core.query_analysis.query_rewrite as query_rewrite
+import core.query_analysis.time_range_extractor as time_range_extractor
 import core.ranking as ranking
 import core.query_analysis.required_info as required_info
 import traceback
@@ -369,6 +370,7 @@ class NLWebHandler:
         # FastTrack disabled - all searches now use regular path for unified vector/MMR handling
         # tasks.append(asyncio.create_task(fastTrack.FastTrack(self).do()))
         tasks.append(asyncio.create_task(query_rewrite.QueryRewrite(self).do()))
+        tasks.append(asyncio.create_task(time_range_extractor.TimeRangeExtractor(self).do()))
         
         # Check if a specific tool is requested via the 'tool' parameter
         requested_tool = get_param(self.query_params, "tool", str, None)
@@ -418,13 +420,22 @@ class NLWebHandler:
                 self.final_retrieved_items = []
                 self.retrieval_done_event.set()
             else:
-                # Detect if query has temporal keywords
-                temporal_keywords = ['最新', '最近', '近期', 'latest', 'recent', '新', '現在', '目前', '當前']
-                is_temporal_query = any(keyword in self.query for keyword in temporal_keywords)
+                # Get parsed time range (TimeRangeExtractor runs in parallel during prepare())
+                temporal_range = getattr(self, 'temporal_range', None)
 
-                if is_temporal_query:
-                    logger.info(f"[TEMPORAL] Temporal query detected: '{self.query}' - retrieving 150 items for date filtering")
-                    num_to_retrieve = 150
+                if temporal_range and temporal_range.get('is_temporal'):
+                    # Adjust retrieval volume based on time window
+                    days = temporal_range.get('relative_days') or 365
+                    if days <= 7:
+                        num_to_retrieve = 100  # Recent queries need more candidates
+                    elif days <= 30:
+                        num_to_retrieve = 150
+                    else:
+                        num_to_retrieve = 200
+
+                    logger.info(f"[TEMPORAL] Temporal query detected (method: {temporal_range.get('method')})")
+                    logger.info(f"[TEMPORAL] Time range: {temporal_range.get('start_date')} to {temporal_range.get('end_date')} ({days} days)")
+                    logger.info(f"[TEMPORAL] Retrieving {num_to_retrieve} items for date filtering")
                 else:
                     logger.info(f"[TEMPORAL] Non-temporal query: '{self.query}' - retrieving 50 items")
                     num_to_retrieve = 50
@@ -445,9 +456,11 @@ class NLWebHandler:
                 if items:
                     pass  # Items received from search
 
-                # Pre-filter by date for temporal queries
-                if is_temporal_query and len(items) > 0:
-                    cutoff_date = datetime.now(timezone.utc) - timedelta(days=365)
+                # Pre-filter by date for temporal queries using parsed time range
+                if temporal_range and temporal_range.get('is_temporal') and len(items) > 0:
+                    # Use precise date filtering from parsed range
+                    cutoff_date = datetime.strptime(temporal_range['start_date'], '%Y-%m-%d')
+                    cutoff_date = cutoff_date.replace(tzinfo=timezone.utc)
                     filtered_items = []
 
                     for item in items:
@@ -467,7 +480,7 @@ class NLWebHandler:
                                 pub_date = datetime.strptime(date_str, '%Y-%m-%d')
                                 pub_date = pub_date.replace(tzinfo=timezone.utc)
 
-                                # Keep only recent articles
+                                # Keep only articles within the parsed time range
                                 if pub_date >= cutoff_date:
                                     if vector is not None:
                                         filtered_items.append([url, json_str, name, site, vector])
@@ -479,11 +492,12 @@ class NLWebHandler:
                             pass
 
                     # If we filtered too aggressively, take top 50 anyway
+                    days = temporal_range.get('relative_days') or 365
                     if len(filtered_items) < 50:
-                        logger.info(f"[TEMPORAL] Only {len(filtered_items)} recent articles found, using all {len(items)} retrieved")
+                        logger.info(f"[TEMPORAL] Only {len(filtered_items)} articles found in last {days} days, using all {len(items)} retrieved")
                         self.final_retrieved_items = items[:80]
                     else:
-                        logger.info(f"[TEMPORAL] Filtered {len(items)} → {len(filtered_items)} recent articles (last 365 days)")
+                        logger.info(f"[TEMPORAL] Filtered {len(items)} → {len(filtered_items)} articles (last {days} days)")
                         self.final_retrieved_items = filtered_items[:80]
                 else:
                     self.final_retrieved_items = items

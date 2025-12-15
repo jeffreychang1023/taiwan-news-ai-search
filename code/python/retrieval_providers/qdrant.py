@@ -1030,8 +1030,9 @@ class QdrantVectorClient(RetrievalClientBase):
                                         recency_multiplier = 0.5
 
                                     final_score = final_score * recency_multiplier
-                            except:
+                            except Exception as e:
                                 # If we can't parse date, don't apply recency boost
+                                logger.warning(f"Failed to parse date for recency boost at {doc_url}: {e}")
                                 pass
 
                         # Store BM25 and keyword boost scores in dictionary for later logging

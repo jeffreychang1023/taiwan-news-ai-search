@@ -504,14 +504,6 @@ testing/temp_files_archive/old_retriever.log
 testing/temp_files_archive/old_query_logs.db
 testing/temp_files_archive/README.md
 
-# Architecture and temporary build files
-static/architecture.html
-scripts/update_architecture.py
-architecture_levels.yaml
-graphData.json
-architecture-diagram.json
-fix_architecture_html.py
-
 # Training phase files (Phase C1 - under development)
 code/python/training/train_phase_c1.py
 

@@ -1,0 +1,33 @@
+reasoning:
+  enabled: true
+  max_iterations: 3
+  analyst_timeout: 60
+  critic_timeout: 30
+  writer_timeout: 45
+
+source_tiers:
+  # Tier 1: Official (3 sources)
+  "中央社": {tier: 1, type: "official"}
+  "公視": {tier: 1, type: "official"}
+  "行政院": {tier: 1, type: "government"}
+
+  # Tier 2: Mainstream (3 sources)
+  "聯合報": {tier: 2, type: "news"}
+  "經濟日報": {tier: 2, type: "news"}
+  "自由時報": {tier: 2, type: "news"}
+
+  # Tier 3: Digital (2 sources)
+  "報導者": {tier: 3, type: "digital"}
+  "關鍵評論網": {tier: 3, type: "digital"}
+
+  # Tier 5: Social (2 sources)
+  "PTT": {tier: 5, type: "social"}
+  "Dcard": {tier: 5, type: "social"}
+
+mode_configs:
+  strict:
+    max_tier: 2
+  discovery:
+    max_tier: 5
+  monitor:
+    compare_tiers: [1, 5]

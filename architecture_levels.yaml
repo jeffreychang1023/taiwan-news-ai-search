@@ -1,0 +1,346 @@
+levels:
+  mod-storage:
+    level: 0
+    children:
+    - sys-db
+    - sys-cache
+    label: 儲存
+    description: ''
+  mod-retrieval:
+    level: 0
+    children:
+    - ret-1
+    - internal-index
+    - sys-vec
+    - web-search-api
+    - web-search
+    - multi-source
+    - node-1765349715587
+    label: 檢索
+    description: ''
+  mod-ranking:
+    level: 0
+    children:
+    - mmr
+    - weight-calibrator
+    - xgboost-ranker
+    - xgboost
+    - rule-weight
+    - llm-weight
+    label: 排序
+    description: ''
+  mod-search:
+    level: 0
+    children:
+    - gap-detection
+    - iterative-search
+    - query-decomp
+    - query-router
+    label: 搜尋
+    description: ''
+  mod-reasoning:
+    level: 0
+    children:
+    - evidence-chain
+    - fact-grounding
+    - knowledge-boundary
+    - knowledge-gap
+    - iterative-search
+    - domain-classifier
+    - logic-verify
+    - logic-transparency
+    - knowledge-graph
+    - synthesis
+    label: 推論
+    description: ''
+  mod-output:
+    level: 0
+    children:
+    - sys-api
+    - sys-fe
+    - sys-llm
+    - llm-safety-net
+    - synthesis
+    - visualizer-engine
+    - graph-editor
+    - dashboard-ui
+    - source-collab-mgr
+    - export-service
+    label: 輸出
+    description: ''
+  mod-others:
+    level: 0
+    children:
+    - anomaly-detector
+    - idx-4
+    - domain-allowlist
+    - domain-classifier
+    - idx-2
+    - light-ner
+    - prompt-guardrails
+    - quality-gate
+    - regex-parser
+    - src-auth
+    - sys-ana
+    - verify-module
+    label: 數據處理
+    description: ''
+  sys-db:
+    level: 1
+    label: 資料庫
+    description: ''
+  sys-cache:
+    level: 1
+    label: 記憶體快取
+    description: ''
+  ret-1:
+    level: 1
+    label: 混合索引
+    description: ''
+  internal-index:
+    level: 1
+    label: 內部索引
+    description: ''
+  sys-vec:
+    level: 1
+    label: 向量資料庫
+    description: ''
+  web-search-api:
+    level: 1
+    label: 網路搜尋API
+    description: ''
+  mmr:
+    level: 1
+    label: MMR多樣性
+    description: ''
+  weight-calibrator:
+    level: 1
+    label: 權重校準器
+    description: ''
+  xgboost-ranker:
+    level: 1
+    label: XGBoost排序器
+    description: ''
+  gap-detection:
+    level: 1
+    label: 缺口偵測
+    description: ''
+  iterative-search:
+    level: 1
+    label: 遞迴搜尋
+    description: ''
+  query-decomp:
+    level: 1
+    label: 查詢拆解
+    description: ''
+  query-router:
+    level: 1
+    label: 查詢路由器
+    description: ''
+  evidence-chain:
+    level: 1
+    label: 證據鏈
+    description: ''
+  fact-grounding:
+    level: 1
+    label: 事實接地
+    description: ''
+  knowledge-boundary:
+    level: 1
+    label: 知識邊界
+    description: ''
+  sys-api:
+    level: 1
+    label: API閘道
+    description: ''
+  sys-fe:
+    level: 1
+    label: 前端介面
+    description: ''
+  sys-llm:
+    level: 1
+    label: GPT-4服務
+    description: ''
+  llm-safety-net:
+    level: 1
+    label: LLM安全網
+    description: ''
+  synthesis:
+    level: 1
+    label: 綜合驗證
+    description: ''
+  anomaly-detector:
+    level: 1
+    label: 異常偵測器
+    description: ''
+  idx-4:
+    level: 1
+    label: 文件物件
+    description: ''
+  domain-allowlist:
+    level: 1
+    label: 域名白名單
+    description: ''
+  domain-classifier:
+    level: 1
+    label: 領域分類器
+    description: ''
+  idx-2:
+    level: 1
+    label: 數據擷取
+    description: ''
+  light-ner:
+    level: 1
+    label: 輕量實體識別
+    description: ''
+  prompt-guardrails:
+    level: 1
+    label: 提示防護欄
+    description: ''
+  quality-gate:
+    level: 1
+    label: 品質閘門
+    description: ''
+  regex-parser:
+    level: 1
+    label: 規則解析器
+    description: ''
+  src-auth:
+    level: 1
+    label: 來源權威
+    description: ''
+  sys-ana:
+    level: 1
+    label: 分析平台
+    description: ''
+  verify-module:
+    level: 1
+    label: 驗證模組
+    description: ''
+  mod-indexing:
+    level: 0
+    children:
+    - sys-db
+    - sys-cache
+    - sys-vec
+    - sqlite-dev
+    - data-chunking
+    - auto-crawler
+    - format-detect
+    - user-data
+    - ingestion
+    - quality-gate
+    - light-ner
+    - src-auth
+    - domain-allowlist
+    - regex-parser
+    - anomaly-detector
+    label: 索引與數據
+    description: ''
+  mod-input:
+    level: 0
+    children:
+    - prompt-guardrails
+    - upload-gateway
+    - query-decomp
+    label: 入口與安全
+    description: ''
+  mod-infrastructure:
+    level: 0
+    children:
+    - sys-llm
+    - sys-ana
+    - sys-db
+    - sys-cache
+    - sqlite-dev
+    - user-data
+    label: 基礎設施
+    description: ''
+  sqlite-dev:
+    level: 1
+    label: SQLite開發庫
+    description: ''
+  data-chunking:
+    level: 1
+    label: 資料分級
+    description: ''
+  auto-crawler:
+    level: 1
+    label: 自動爬蟲
+    description: ''
+  format-detect:
+    level: 1
+    label: 格式偵測
+    description: ''
+  user-data:
+    level: 1
+    label: 使用者資料
+    description: ''
+  ingestion:
+    level: 1
+    label: 資料攝取
+    description: ''
+  upload-gateway:
+    level: 1
+    label: 上傳閘道
+    description: ''
+  web-search:
+    level: 1
+    label: 網路搜尋
+    description: ''
+  multi-source:
+    level: 1
+    label: 多源搜尋
+    description: ''
+  xgboost:
+    level: 1
+    label: XGBoost排序
+    description: ''
+  rule-weight:
+    level: 1
+    label: 規則權重
+    description: ''
+  llm-weight:
+    level: 1
+    label: LLM權重
+    description: ''
+  knowledge-gap:
+    level: 1
+    label: 知識缺口
+    description: ''
+  logic-verify:
+    level: 1
+    label: 邏輯驗證
+    description: ''
+  logic-transparency:
+    level: 1
+    label: 邏輯透明
+    description: ''
+  knowledge-graph:
+    level: 1
+    label: 知識圖譜
+    description: ''
+  visualizer-engine:
+    level: 1
+    label: 視覺化引擎
+    description: ''
+  graph-editor:
+    level: 1
+    label: 圖譜編輯器
+    description: ''
+  dashboard-ui:
+    level: 1
+    label: 儀表板介面
+    description: ''
+  source-collab-mgr:
+    level: 1
+    label: 來源協作管理
+    description: ''
+  export-service:
+    level: 1
+    label: 匯出服務
+    description: ''
+  node-1765349715587:
+    level: 1
+    label: 多來源搜尋整合
+    description: ''

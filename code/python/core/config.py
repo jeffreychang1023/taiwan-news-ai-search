@@ -155,6 +155,7 @@ class AppConfig:
         self.load_llm_config()
         self.load_embedding_config()
         self.load_retrieval_config()
+        self.load_reasoning_config()
         self.load_webserver_config()
         self.load_nlweb_config()
         self.load_sites_config()
@@ -367,7 +368,39 @@ class AppConfig:
                 use_knn=cfg.get("use_knn"),
                 vector_type=cfg.get("vector_type")
             )
-    
+
+    def load_reasoning_config(self, path: str = "config_reasoning.yaml"):
+        """Load reasoning module configuration including source tiers and mode configs."""
+        # Build the full path to the config file using the config directory
+        full_path = os.path.join(self.config_directory, path)
+
+        try:
+            with open(full_path, "r", encoding="utf-8") as f:
+                data = yaml.safe_load(f)
+        except FileNotFoundError:
+            # If config file doesn't exist, use defaults
+            print(f"Warning: {path} not found. Using default reasoning configuration.")
+            data = {
+                "reasoning": {"enabled": False},
+                "source_tiers": {},
+                "mode_configs": {}
+            }
+
+        # Load reasoning parameters
+        self.reasoning_params: Dict[str, Any] = data.get("reasoning", {
+            "enabled": False,
+            "max_iterations": 3,
+            "analyst_timeout": 60,
+            "critic_timeout": 30,
+            "writer_timeout": 45
+        })
+
+        # Load source tier knowledge base
+        self.reasoning_source_tiers: Dict[str, Dict[str, Any]] = data.get("source_tiers", {})
+
+        # Load mode-specific configurations
+        self.reasoning_mode_configs: Dict[str, Dict[str, Any]] = data.get("mode_configs", {})
+
     def load_webserver_config(self, path: str = "config_webserver.yaml"):
         # Build the full path to the config file using the config directory
         full_path = os.path.join(self.config_directory, path)

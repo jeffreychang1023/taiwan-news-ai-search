@@ -148,6 +148,20 @@ def get_prompt_variable_value(variable, handler):
         value = getattr(handler, 'details_requested', '')
     elif variable == "system.current_date":
         value = datetime.now().strftime("%Y-%m-%d")
+    elif variable == "system.temporal_range":
+        # Inject temporal context from parsed time range
+        temporal_range = getattr(handler, 'temporal_range', None)
+        if temporal_range and temporal_range.get('is_temporal'):
+            value = f"User asked for news from {temporal_range['start_date']} to {temporal_range['end_date']}"
+        else:
+            value = ""
+    elif variable == "system.temporal_constraint":
+        # Inject temporal constraint for LLM prompts
+        temporal_range = getattr(handler, 'temporal_range', None)
+        if temporal_range and temporal_range.get('relative_days'):
+            value = f"Focus on the most recent {temporal_range['relative_days']} days"
+        else:
+            value = ""
     else:
         logger.warning(f"Unknown variable: {variable}")
         value = ""

@@ -426,9 +426,9 @@ class ToolSelector:
                 await self.handler.state.precheck_step_done(self.STEP_NAME)
                 return
 
-            # Skip tool selection if generate_mode is summarize or generate
+            # Skip tool selection if generate_mode is summarize, generate, or deep_research
             generate_mode = getattr(self.handler, 'generate_mode', 'none')
-            if generate_mode in ['summarize', 'generate']:
+            if generate_mode in ['summarize', 'generate', 'deep_research']:
                 logger.info(f"Skipping tool selection because generate_mode is '{generate_mode}'")
                 await self.handler.state.precheck_step_done(self.STEP_NAME)
                 return

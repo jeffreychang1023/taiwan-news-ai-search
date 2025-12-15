@@ -1384,4 +1384,82 @@
     </Item>
   </Site>
 
+  <!-- Reasoning Module Prompts -->
+  <Site id="reasoning">
+    <Item>
+      <Prompt ref="AnalystAgentPrompt">
+        <promptString>
+          [PLACEHOLDER] Analyst Agent: Research and draft generation.
+          This prompt will be implemented with detailed instructions for researching sources and creating initial drafts.
+        </promptString>
+        <returnStruc>
+          {
+            "status": "SEARCH_REQUIRED or DRAFT_READY",
+            "new_queries": ["query1", "query2"],
+            "draft": "Markdown content",
+            "reasoning_chain": "Step-by-step analysis"
+          }
+        </returnStruc>
+      </Prompt>
+
+      <Prompt ref="AnalystRevisePrompt">
+        <promptString>
+          [PLACEHOLDER] Analyst Agent: Revise draft based on critique.
+          This prompt will be implemented with detailed instructions for incorporating critic feedback.
+        </promptString>
+        <returnStruc>
+          {
+            "status": "SEARCH_REQUIRED or DRAFT_READY",
+            "new_queries": ["query1", "query2"],
+            "draft": "Markdown content",
+            "reasoning_chain": "Step-by-step analysis"
+          }
+        </returnStruc>
+      </Prompt>
+
+      <Prompt ref="CriticAgentPrompt">
+        <promptString>
+          [PLACEHOLDER] Critic Agent: Quality review and compliance check.
+          This prompt will be implemented with detailed instructions for evaluating draft quality.
+        </promptString>
+        <returnStruc>
+          {
+            "status": "PASS or WARN or REJECT",
+            "critique": "Detailed review",
+            "suggestions": ["suggestion1"],
+            "mode_compliance": "符合 or 違反",
+            "logical_gaps": ["gap1"]
+          }
+        </returnStruc>
+      </Prompt>
+
+      <Prompt ref="WriterAgentPrompt">
+        <promptString>
+          [PLACEHOLDER] Writer Agent: Final report formatting.
+          This prompt will be implemented with detailed instructions for formatting final reports.
+        </promptString>
+        <returnStruc>
+          {
+            "final_report": "Markdown formatted report",
+            "sources_used": ["source1"],
+            "confidence_level": "High or Medium or Low"
+          }
+        </returnStruc>
+      </Prompt>
+
+      <Prompt ref="ClarificationAgentPrompt">
+        <promptString>
+          [PLACEHOLDER] Clarification Agent: Ambiguity resolution (stub).
+          This prompt will be implemented when frontend clarification flow is ready.
+        </promptString>
+        <returnStruc>
+          {
+            "clarification_options": ["option1", "option2"],
+            "ambiguity_type": "temporal or factual or scope"
+          }
+        </returnStruc>
+      </Prompt>
+    </Item>
+  </Site>
+
 </root>

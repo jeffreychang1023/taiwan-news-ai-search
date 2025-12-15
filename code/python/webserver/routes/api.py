@@ -76,12 +76,17 @@ async def handle_streaming_ask(request: web.Request, query_params: Dict[str, Any
     try:
         # Determine which handler to use based on generate_mode
         generate_mode = query_params.get('generate_mode', 'none')
-        
+
         if generate_mode == 'generate':
             handler = GenerateAnswer(query_params, wrapper)
             await handler.runQuery()
+        elif generate_mode == 'deep_research':
+            # Deep research mode with multi-agent reasoning
+            from methods.deep_research import DeepResearchHandler
+            handler = DeepResearchHandler(query_params, wrapper)
+            await handler.runQuery()
         else:
-            # Use base NLWebHandler for other modes
+            # Use base NLWebHandler for other modes (summarize, none)
             from core.baseHandler import NLWebHandler
             handler = NLWebHandler(query_params, wrapper)
             await handler.runQuery()
@@ -104,10 +109,15 @@ async def handle_regular_ask(request: web.Request, query_params: Dict[str, Any])
     try:
         # Determine which handler to use
         generate_mode = query_params.get('generate_mode', 'none')
-        
+
         if generate_mode == 'generate':
             handler = GenerateAnswer(query_params, None)
+        elif generate_mode == 'deep_research':
+            # Deep research mode with multi-agent reasoning
+            from methods.deep_research import DeepResearchHandler
+            handler = DeepResearchHandler(query_params, None)
         else:
+            # Use base NLWebHandler for other modes (summarize, none)
             from core.baseHandler import NLWebHandler
             handler = NLWebHandler(query_params, None)
         

@@ -2,10 +2,10 @@
 # Licensed under the MIT License
 
 """
-Deep Research Handler - Interface for Reasoning Module
+Deep Research Handler - Full Handler for Reasoning Module
 
-This is a stub/interface for the complex Reasoning Module (Orchestrator + Actor-Critic Loop).
-The Router treats this as a "super tool" and doesn't need to know internal details.
+This handler extends NLWebHandler to reuse all infrastructure (retrieval, temporal detection, etc.)
+while adding multi-agent reasoning capabilities.
 
 Future implementation will include:
 - DeepResearchOrchestrator
@@ -15,77 +15,191 @@ Future implementation will include:
 """
 
 from typing import Dict, Any, Optional
+from datetime import datetime
+from core.baseHandler import NLWebHandler
 from misc.logger.logging_config_helper import get_configured_logger
 
 logger = get_configured_logger("deep_research_handler")
 
 
-class DeepResearchHandler:
+class DeepResearchHandler(NLWebHandler):
     """
-    Entry point for the Reasoning Module.
+    Full handler for deep research mode.
 
-    This handler accepts queries and routes them through different reasoning modes:
-    - strict: Fact-checking, high-accuracy requirements (Tier 1/2 sources only)
-    - discovery: General exploration, trend analysis (cross-tier)
-    - monitor: Detect gaps between official statements and public sentiment
+    Inherits retrieval/ranking infrastructure from NLWebHandler.
+    Adds multi-agent reasoning with mode detection (strict/discovery/monitor).
     """
 
-    def __init__(self, handler):
+    def __init__(self, query_params, http_handler):
         """
-        Initialize the Deep Research Handler.
+        Initialize Deep Research Handler.
 
         Args:
-            handler: The base request handler (provides query, context, etc.)
+            query_params: Query parameters from API request
+            http_handler: HTTP streaming wrapper
         """
-        self.handler = handler
-        logger.info("DeepResearchHandler initialized")
+        # Call parent constructor - sets up all infrastructure
+        super().__init__(query_params, http_handler)
 
-        # Future: Initialize Analyst, Critic, Writer agents here
+        self.research_mode = None  # Will be set in prepare()
+
+        logger.info("DeepResearchHandler initialized")
+        logger.info(f"  Query: {self.query}")
+        logger.info(f"  Site: {self.site}")
+
+        # Future: Initialize Orchestrator
         # self.orchestrator = DeepResearchOrchestrator(...)
 
-    async def execute(self, params: Dict[str, Any]) -> Dict[str, Any]:
+    async def runQuery(self):
         """
-        Execute deep research based on the specified mode.
+        Main entry point for query execution.
+        Follows standard handler pattern.
+        """
+        logger.info(f"[DEEP RESEARCH] Starting query execution for: {self.query}")
 
-        Args:
-            params: Dictionary containing:
-                - mode: 'strict' | 'discovery' | 'monitor'
-                - reasoning_focus: What specifically needs to be analyzed
-                - query: The user's original query
-                - time_range: Optional time constraints (from TimeRangeExtractor)
+        try:
+            # Call parent prepare() - gets retrieval, temporal detection, etc.
+            await self.prepare()
+
+            if self.query_done:
+                logger.info("[DEEP RESEARCH] Query done prematurely")
+                return self.return_value
+
+            # Execute deep research
+            await self.execute_deep_research()
+
+            self.return_value["conversation_id"] = self.conversation_id
+            logger.info(f"[DEEP RESEARCH] Query execution completed")
+
+            return self.return_value
+
+        except Exception as e:
+            logger.error(f"[DEEP RESEARCH] Error in runQuery: {e}", exc_info=True)
+            raise
+
+    async def prepare(self):
+        """
+        Run pre-checks and retrieval.
+        Extends parent prepare() to add mode detection.
+        """
+        # Call parent prepare() - handles:
+        # - Decontextualization
+        # - Query rewrite
+        # - Tool selection (will be skipped due to generate_mode)
+        # - Memory retrieval
+        # - Temporal detection
+        # - Vector search with date filtering
+        await super().prepare()
+
+        # Additional: Detect research mode
+        self.research_mode = await self._detect_research_mode()
+        logger.info(f"[DEEP RESEARCH] Mode detected: {self.research_mode.upper()}")
+
+    async def _detect_research_mode(self) -> str:
+        """
+        Detect which research mode to use based on query.
+
+        Future: Read from query_params['research_mode'] (user UI selection)
+        Current: Rule-based detection from query keywords
 
         Returns:
-            Dictionary with research results
+            'strict' | 'discovery' | 'monitor'
         """
-        mode = params.get('mode', 'discovery')
-        focus = params.get('reasoning_focus', 'general analysis')
-        query = params.get('query') or self.handler.query
-        time_range = params.get('time_range')
+        query = self.query.lower()
 
-        logger.info(f"[DEEP RESEARCH] Starting {mode.upper()} mode")
-        logger.info(f"  Query: {query}")
-        logger.info(f"  Focus: {focus}")
-        if time_range:
-            logger.info(f"  Time Range: {time_range}")
+        # Fact-checking indicators → strict mode
+        fact_check_keywords = [
+            'verify', 'is it true', 'fact check', 'check if',
+            '真的嗎', '查證', '驗證', '是真的', '確認'
+        ]
+        if any(kw in query for kw in fact_check_keywords):
+            return 'strict'
 
-        # TODO: Future implementation will call:
-        # result = await self.orchestrator.run_research(
-        #     query=query,
-        #     mode=mode,
-        #     focus=focus,
-        #     time_range=time_range
-        # )
+        # Monitoring/tracking indicators → monitor mode
+        monitor_keywords = [
+            'how has', 'evolution', 'trend', 'sentiment', 'tracking',
+            'over time', 'changed', 'shift',
+            '輿情', '變化', '趨勢', '演變', '追蹤'
+        ]
+        if any(kw in query for kw in monitor_keywords):
+            return 'monitor'
 
-        # For now, return mock result to prove routing works
-        mock_result = self._generate_mock_result(query, mode, focus)
+        # Default: discovery mode (general exploration)
+        return 'discovery'
 
-        return mock_result
-
-    def _generate_mock_result(self, query: str, mode: str, focus: str) -> Dict[str, Any]:
+    async def execute_deep_research(self):
         """
-        Generate a mock result for testing purposes.
+        Execute deep research using reasoning orchestrator.
+        If reasoning module disabled, falls back to mock implementation.
+        """
+        from core.config import CONFIG
 
-        This will be replaced with actual Orchestrator logic.
+        # Access pre-filtered items from parent's prepare()
+        items = self.final_retrieved_items
+
+        logger.info(f"[DEEP RESEARCH] Executing {self.research_mode} mode")
+        logger.info(f"[DEEP RESEARCH] Retrieved items: {len(items)}")
+
+        # Get temporal context from parent
+        temporal_context = self._get_temporal_context()
+        logger.info(f"[DEEP RESEARCH] Temporal context: {temporal_context}")
+
+        # Feature flag check
+        if not CONFIG.reasoning_params.get("enabled", False):
+            logger.info("[DEEP RESEARCH] Reasoning module disabled, using mock implementation")
+            results = self._generate_mock_results(items, temporal_context)
+        else:
+            # Import and run orchestrator
+            logger.info("[DEEP RESEARCH] Reasoning module enabled, using orchestrator")
+            from reasoning.orchestrator import DeepResearchOrchestrator
+
+            orchestrator = DeepResearchOrchestrator(handler=self)
+
+            # Run research (returns List[Dict] in NLWeb Item format)
+            results = await orchestrator.run_research(
+                query=self.query,
+                mode=self.research_mode,
+                items=items,
+                temporal_context=temporal_context
+            )
+
+        # Send results using parent's message sender
+        from core.schemas import create_assistant_result
+        create_assistant_result(results, handler=self, send=True)
+
+        logger.info(f"[DEEP RESEARCH] Sent {len(results)} results to frontend")
+
+    def _get_temporal_context(self) -> Dict[str, Any]:
+        """
+        Package temporal metadata for reasoning module.
+        Reuses parent's temporal detection.
+
+        Returns:
+            Dictionary with temporal information
+        """
+        # Check if temporal parsing was done
+        temporal_range = getattr(self, 'temporal_range', None)
+
+        return {
+            'is_temporal_query': temporal_range.get('is_temporal', False) if temporal_range else False,
+            'method': temporal_range.get('method') if temporal_range else 'none',
+            'start_date': temporal_range.get('start_date') if temporal_range else None,
+            'end_date': temporal_range.get('end_date') if temporal_range else None,
+            'relative_days': temporal_range.get('relative_days') if temporal_range else None,
+            'current_date': datetime.now().strftime("%Y-%m-%d")
+        }
+
+    def _generate_mock_results(self, items: list, temporal_context: Dict) -> list:
+        """
+        Generate mock results for testing.
+        Will be replaced by Orchestrator output.
+
+        Args:
+            items: Retrieved and filtered items from parent handler
+            temporal_context: Temporal metadata
+
+        Returns:
+            List of result items in standard format
         """
         mode_descriptions = {
             'strict': 'High-accuracy fact-checking with Tier 1/2 sources only',
@@ -93,33 +207,34 @@ class DeepResearchHandler:
             'monitor': 'Gap detection between official statements and public sentiment'
         }
 
-        return {
-            'status': 'success',
-            'mode': mode,
-            'mode_description': mode_descriptions.get(mode, 'Unknown mode'),
-            'query': query,
-            'focus': focus,
-            'message': f'[MOCK RESULT] Deep Research Handler activated in {mode.upper()} mode.',
-            'next_steps': [
-                'TODO: Initialize Analyst Agent',
-                'TODO: Run Actor-Critic Loop',
-                'TODO: Synthesize results with Writer Agent'
-            ],
-            'note': 'This is a placeholder. Actual Reasoning Module implementation pending.'
-        }
-
-    async def validate_sources(self, sources: list, tier_requirement: Optional[str] = None) -> list:
-        """
-        Filter sources based on tier requirements (for strict mode).
-
-        Args:
-            sources: List of source documents
-            tier_requirement: 'tier1', 'tier2', or None (all tiers)
-
-        Returns:
-            Filtered list of sources
-        """
-        # TODO: Implement tier-based filtering
-        # This will integrate with your source credibility system
-        logger.info(f"[MOCK] Validating sources with tier requirement: {tier_requirement}")
-        return sources
+        return [{
+            "@type": "Item",
+            "url": f"https://deep-research.internal/{self.research_mode}",
+            "name": f"[MOCK] Deep Research Result - {self.research_mode.upper()} Mode",
+            "site": "Deep Research Module",
+            "siteUrl": "internal",
+            "score": 95,
+            "description": (
+                f"This is a placeholder result from deep_research handler.\n\n"
+                f"**Query:** {self.query}\n\n"
+                f"**Mode:** {self.research_mode} - {mode_descriptions.get(self.research_mode, 'Unknown')}\n\n"
+                f"**Items Retrieved:** {len(items)} articles\n\n"
+                f"**Temporal Context:**\n"
+                f"- Is Temporal: {temporal_context['is_temporal_query']}\n"
+                f"- Method: {temporal_context['method']}\n"
+                f"- Date Range: {temporal_context.get('start_date', 'N/A')} to {temporal_context.get('end_date', 'N/A')}\n\n"
+                f"**Future:** This will be replaced by DeepResearchOrchestrator output with:\n"
+                f"- Analyst Agent findings\n"
+                f"- Critic Agent validation\n"
+                f"- Writer Agent synthesis\n"
+                f"- Actor-Critic loop iterations"
+            ),
+            "schema_object": {
+                "@type": "Article",
+                "headline": f"Deep Research: {self.research_mode} Mode",
+                "description": "Mock implementation - infrastructure testing",
+                "mode": self.research_mode,
+                "temporal_detected": temporal_context['is_temporal_query'],
+                "num_items_retrieved": len(items)
+            }
+        }]
