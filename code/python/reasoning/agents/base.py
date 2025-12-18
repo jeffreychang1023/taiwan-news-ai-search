@@ -3,10 +3,12 @@ Base class for reasoning agents providing common LLM interaction patterns.
 """
 
 import asyncio
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Type
+from pydantic import BaseModel, ValidationError
 from misc.logger.logging_config_helper import get_configured_logger
 from core.llm import ask_llm
 from core.prompts import find_prompt, fill_prompt
+from core.utils.json_repair_utils import safe_parse_llm_json
 
 
 class BaseReasoningAgent:
@@ -110,3 +112,125 @@ class BaseReasoningAgent:
 
         # Should not reach here
         raise ValueError(f"Failed to get response for {prompt_name}")
+
+    async def call_llm_validated(
+        self,
+        prompt: str,
+        response_schema: Type[BaseModel],
+        level: str = "high"
+    ) -> BaseModel:
+        """
+        Call LLM with Pydantic validation.
+
+        This method calls the LLM with a direct prompt string (not a template)
+        and validates the response against a Pydantic schema. It includes
+        retry logic with exponential backoff for validation failures.
+
+        Args:
+            prompt: Direct prompt string (not template name)
+            response_schema: Pydantic model class for validation
+            level: LLM quality level ("high" or "low")
+
+        Returns:
+            Validated Pydantic model instance
+
+        Raises:
+            ValidationError: If max retries exceeded
+            TimeoutError: If LLM call exceeds timeout
+        """
+        for attempt in range(self.max_retries):
+            try:
+                # Call LLM
+                self.logger.info(
+                    f"{self.agent_name} calling LLM with {response_schema.__name__} "
+                    f"validation (attempt {attempt + 1}/{self.max_retries})"
+                )
+
+                response = await asyncio.wait_for(
+                    ask_llm(
+                        prompt,
+                        schema={},  # Schema enforcement via Pydantic post-validation
+                        level=level,
+                        query_params=getattr(self.handler, 'query_params', {}),
+                        max_length=4096  # Increase for research outputs
+                    ),
+                    timeout=self.timeout
+                )
+
+                # Log raw response for debugging
+                self.logger.info(f"{self.agent_name} raw LLM response type: {type(response)}")
+                self.logger.info(f"{self.agent_name} raw LLM response: {response}")
+
+                # Check if response is empty (indicates LLM call failure)
+                if not response or (isinstance(response, dict) and len(response) == 0):
+                    raise ValueError(
+                        f"LLM returned empty response. This usually indicates an error in the LLM provider. "
+                        f"Check logs above for LLM error messages."
+                    )
+
+                # Parse and validate
+                if isinstance(response, dict):
+                    validated = response_schema.model_validate(response)
+                elif isinstance(response, str):
+                    # Response is JSON string - try direct parse first
+                    try:
+                        validated = response_schema.model_validate_json(response)
+                    except (ValidationError, ValueError) as parse_error:
+                        # Direct parse failed - try repair
+                        self.logger.debug(f"Direct JSON parse failed, attempting repair: {parse_error}")
+                        repaired = safe_parse_llm_json(response)
+                        if repaired:
+                            validated = response_schema.model_validate(repaired)
+                        else:
+                            raise ValueError("Failed to parse or repair JSON response")
+                else:
+                    raise ValueError(f"Unexpected response type: {type(response)}")
+
+                self.logger.info(
+                    f"{self.agent_name} response validated against {response_schema.__name__}"
+                )
+                return validated
+
+            except ValidationError as e:
+                self.logger.error(
+                    f"{self.agent_name} validation failed "
+                    f"(attempt {attempt+1}/{self.max_retries}): {e}"
+                )
+                self.logger.error(f"Failed response content: {response}")
+
+                # Try JSON repair before giving up
+                if isinstance(response, str):
+                    self.logger.info(f"{self.agent_name} attempting JSON repair on string response")
+                    repaired = safe_parse_llm_json(response)
+                    if repaired:
+                        try:
+                            validated = response_schema.model_validate(repaired)
+                            self.logger.info(
+                                f"{self.agent_name} validation successful after JSON repair"
+                            )
+                            return validated
+                        except ValidationError as repair_error:
+                            self.logger.debug(f"Validation still failed after repair: {repair_error}")
+
+                if attempt == self.max_retries - 1:
+                    # Last attempt - raise error
+                    self.logger.error(
+                        f"{self.agent_name} max retries exceeded for {response_schema.__name__}"
+                    )
+                    raise
+                # Exponential backoff
+                await asyncio.sleep(2 ** attempt)
+
+            except asyncio.TimeoutError:
+                self.logger.error(
+                    f"{self.agent_name} LLM call timed out after {self.timeout}s"
+                )
+                raise TimeoutError(f"LLM call timed out after {self.timeout} seconds")
+
+            except Exception as e:
+                # Unexpected error
+                self.logger.error(f"{self.agent_name} unexpected error: {e}", exc_info=True)
+                raise
+
+        # Should not reach here
+        raise ValueError(f"Max retries exceeded for {response_schema.__name__}")

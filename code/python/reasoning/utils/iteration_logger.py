@@ -79,6 +79,11 @@ class IterationLogger:
         filename = f"iteration_{iteration}_{agent_name}.json"
         filepath = self.query_dir / filename
 
+        # Convert Pydantic models to dict for JSON serialization
+        from pydantic import BaseModel
+        if isinstance(output_response, BaseModel):
+            output_response = output_response.model_dump()
+
         log_data = {
             "query_id": self.query_id,
             "iteration": iteration,

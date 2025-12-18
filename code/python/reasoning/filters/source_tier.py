@@ -29,6 +29,23 @@ class SourceTierFilter:
         """
         self.source_tiers = source_tiers
 
+    def _extract_site(self, item: Any) -> str:
+        """
+        Extract site name from item regardless of format.
+
+        Args:
+            item: Item in dict or tuple/list format
+
+        Returns:
+            Site name string
+        """
+        if isinstance(item, dict):
+            return item.get("site", "").strip()
+        elif isinstance(item, (list, tuple)) and len(item) > 3:
+            return item[3].strip() if item[3] else ""
+        else:
+            return ""
+
     def filter_and_enrich(
         self,
         items: List[Dict[str, Any]],
@@ -55,7 +72,7 @@ class SourceTierFilter:
 
         for item in items:
             # Extract source from item
-            source = item.get("site", "").strip()
+            source = self._extract_site(item)
 
             # Get tier info
             tier_info = self._get_tier_info(source)
@@ -74,9 +91,33 @@ class SourceTierFilter:
 
         # Check for empty result in strict mode
         if mode == "strict" and not filtered_items:
-            raise NoValidSourcesError(
-                f"All sources filtered out in strict mode (max_tier={max_tier})"
+            # Graceful fallback: Retry with discovery mode (max_tier=5)
+            from misc.logger.logging_config_helper import get_configured_logger
+            logger = get_configured_logger("reasoning.source_tier")
+            logger.warning(
+                f"Strict mode filtered out all sources! Falling back to Discovery mode."
             )
+
+            # Retry with discovery mode (max_tier=5)
+            for item in items:
+                source = self._extract_site(item)
+                tier_info = self._get_tier_info(source)
+                tier = tier_info["tier"]
+                source_type = tier_info["type"]
+
+                if tier <= 5:  # Discovery mode max_tier
+                    enriched_item = self._enrich_item(item, tier, source_type, source)
+                    # Add fallback warning to metadata
+                    if "_reasoning_metadata" not in enriched_item:
+                        enriched_item["_reasoning_metadata"] = {}
+                    enriched_item["_reasoning_metadata"]["fallback_warning"] = (
+                        "原始為 Strict 模式，但過濾後無來源，已自動切換為 Discovery 模式"
+                    )
+                    filtered_items.append(enriched_item)
+
+            # If still empty after fallback, raise error
+            if not filtered_items:
+                raise NoValidSourcesError("No valid sources available in any mode")
 
         return filtered_items
 
@@ -108,16 +149,33 @@ class SourceTierFilter:
         Enrich item with tier metadata and description prefix.
 
         Args:
-            item: Original item
+            item: Original item (dict or tuple/list)
             tier: Source tier (1-5 or 999)
             source_type: Source type (official, news, digital, social, unknown)
             original_source: Original source name
 
         Returns:
-            Enriched item with metadata and tier prefix
+            Enriched dict item with metadata and tier prefix
         """
-        # Create a copy to avoid mutating original
-        enriched = item.copy()
+        # Convert to dict if tuple/list format
+        if isinstance(item, (list, tuple)):
+            # Legacy tuple format: (url, schema_json, name, site, [vector])
+            import json
+            enriched = {
+                "url": item[0] if len(item) > 0 else "",
+                "title": item[2] if len(item) > 2 else "",
+                "site": item[3] if len(item) > 3 else "",
+            }
+            # Extract description from schema_json
+            try:
+                schema_json = item[1] if len(item) > 1 else "{}"
+                schema_obj = json.loads(schema_json) if isinstance(schema_json, str) else schema_json
+                enriched["description"] = schema_obj.get("description", "")
+            except:
+                enriched["description"] = ""
+        else:
+            # Create a copy to avoid mutating original
+            enriched = item.copy()
 
         # Add reasoning metadata
         enriched["_reasoning_metadata"] = {
