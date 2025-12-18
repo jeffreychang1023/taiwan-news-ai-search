@@ -24,6 +24,16 @@ xgboost_params:
   feature_version: 2      # Must match feature_vectors.schema_version in analytics DB
   use_shadow_mode: true   # Phase A/B: Log predictions without affecting rankings (SHADOW MODE ACTIVE)
 
+# Deep Research reasoning module parameters (Phase 4-5)
+reasoning_params:
+  enabled: true                # Feature flag: Enable multi-agent reasoning system
+  max_iterations: 3            # Maximum iterations for Analyst-Critic loop (includes gap searches)
+  max_gap_searches: 1          # Maximum number of gap search iterations per query (built into max_iterations)
+  gap_search_num_results: 20   # Number of results per new_query in gap search (smaller than main search)
+  analyst_timeout: 60          # Analyst agent timeout in seconds
+  critic_timeout: 30           # Critic agent timeout in seconds
+  writer_timeout: 45           # Writer agent timeout in seconds
+
 endpoints:
 
 #Azure endpoints

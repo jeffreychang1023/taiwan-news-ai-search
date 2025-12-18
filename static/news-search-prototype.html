@@ -82,22 +82,38 @@
             color: #2563eb;
         }
 
-        /* Mode Toggle Switch */
+        /* Mode Toggle Buttons */
         .mode-toggle {
             display: flex;
             align-items: center;
-            gap: 10px;
+            gap: 4px;
             background: white;
-            padding: 6px 12px;
+            padding: 4px;
             border-radius: 8px;
             border: 1px solid #e5e5e5;
         }
 
-        .mode-toggle-label {
+        .mode-button {
+            padding: 6px 14px;
             font-size: 13px;
-            color: #666;
             font-weight: 500;
-            min-width: 60px;
+            color: #666;
+            background: transparent;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s;
+            white-space: nowrap;
+        }
+
+        .mode-button:hover {
+            background: #f5f5f5;
+            color: #1a1a1a;
+        }
+
+        .mode-button.active {
+            background: #2563eb;
+            color: white;
         }
 
         .mode-info-icon {
@@ -144,35 +160,83 @@
             z-index: 1000;
         }
 
-        .toggle-switch {
-            position: relative;
-            width: 44px;
-            height: 24px;
-            background: #e5e5e5;
-            border-radius: 12px;
-            cursor: pointer;
-            transition: background 0.3s;
+        /* Research Mode Selector */
+        .research-mode-selector {
+            margin-top: 12px;
+            padding: 12px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            border: 1px solid #e5e7eb;
         }
 
-        .toggle-switch.active {
-            background: #2563eb;
+        .research-mode-label {
+            display: block;
+            font-size: 13px;
+            font-weight: 600;
+            color: #374151;
+            margin-bottom: 8px;
         }
 
-        .toggle-slider {
-            position: absolute;
-            top: 2px;
-            left: 2px;
-            width: 20px;
-            height: 20px;
+        .research-mode-options {
+            display: flex;
+            gap: 8px;
+        }
+
+        .research-mode-option {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 12px;
             background: white;
-            border-radius: 50%;
-            transition: transform 0.3s;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            border: 2px solid #e5e7eb;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
         }
 
-        .toggle-switch.active .toggle-slider {
-            transform: translateX(20px);
+        .research-mode-option:hover {
+            border-color: #2563eb;
+            background: #f0f7ff;
         }
+
+        .research-mode-option.active {
+            border-color: #2563eb;
+            background: #eff6ff;
+            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+        }
+
+        .research-mode-icon {
+            font-size: 20px;
+            flex-shrink: 0;
+        }
+
+        .research-mode-content {
+            flex: 1;
+            text-align: left;
+        }
+
+        .research-mode-name {
+            font-size: 13px;
+            font-weight: 600;
+            color: #1f2937;
+            margin-bottom: 2px;
+        }
+
+        .research-mode-desc {
+            font-size: 11px;
+            color: #6b7280;
+            line-height: 1.3;
+        }
+
+        .research-mode-option.active .research-mode-name {
+            color: #2563eb;
+        }
+
+        .research-mode-option.active .research-mode-desc {
+            color: #1d4ed8;
+        }
+
 
         /* Main Content */
         main {
@@ -1002,6 +1066,81 @@
             line-height: 1.8;
             /* Better readability */
         }
+
+        /* Deep Research Progress Display */
+        .reasoning-progress-container {
+            background: linear-gradient(135deg, #f0f4f8 0%, #e2e8f0 100%);
+            border-radius: 12px;
+            padding: 20px;
+            margin: 20px 0;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+
+        .progress-header {
+            font-weight: 600;
+            font-size: 16px;
+            margin-bottom: 15px;
+            color: #334155;
+        }
+
+        .progress-stages {
+            display: flex;
+            justify-content: space-around;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+
+        .stage {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 12px;
+            background: white;
+            border-radius: 8px;
+            opacity: 0.4;
+            transition: opacity 0.3s, transform 0.3s;
+            min-width: 100px;
+        }
+
+        .stage.active {
+            opacity: 1;
+            animation: pulse 1.5s infinite;
+            transform: scale(1.05);
+        }
+
+        .stage.complete {
+            opacity: 1;
+        }
+
+        .stage .icon {
+            font-size: 24px;
+            margin-bottom: 5px;
+        }
+
+        .stage .label {
+            font-size: 12px;
+            font-weight: 500;
+            color: #64748b;
+        }
+
+        .stage .status {
+            font-size: 11px;
+            margin-top: 5px;
+            color: #059669;
+        }
+
+        .progress-details {
+            text-align: center;
+            font-size: 13px;
+            color: #475569;
+            font-style: italic;
+            min-height: 20px;
+        }
+
+        @keyframes pulse {
+            0%, 100% { transform: scale(1.05); }
+            50% { transform: scale(1.1); }
+        }
     </style>
 </head>
 <body>
@@ -1040,13 +1179,40 @@
                     ></textarea>
                     <div class="search-actions">
                         <div class="mode-toggle" id="modeToggle">
-                            <span class="mode-toggle-label" id="modeLabel">新聞搜尋</span>
-                            <div class="toggle-switch" id="toggleSwitch">
-                                <div class="toggle-slider"></div>
-                            </div>
-                            <span class="mode-toggle-label">自由對話</span>
-                            <span class="mode-info-icon" data-tooltip="自由對話不會觸發搜尋行為，只會根據目前有的搜尋內容和問答回覆">?</span>
+                            <button class="mode-button active" data-mode="search">新聞搜尋</button>
+                            <button class="mode-button" data-mode="deep_research">Deep Research</button>
+                            <button class="mode-button" data-mode="chat">自由對話</button>
+                            <span class="mode-info-icon" data-tooltip="Deep Research: 深度分析，使用 Actor-Critic 多輪推理；自由對話：基於當前對話內容回答，不觸發搜尋">?</span>
                         </div>
+
+                        <!-- Research Mode Selector (visible only when Deep Research is selected) -->
+                        <div class="research-mode-selector" id="researchModeSelector" style="display: none;">
+                            <label class="research-mode-label">🔧 研究模式</label>
+                            <div class="research-mode-options">
+                                <button class="research-mode-option active" data-research-mode="discovery">
+                                    <span class="research-mode-icon">🔍</span>
+                                    <div class="research-mode-content">
+                                        <div class="research-mode-name">廣泛探索</div>
+                                        <div class="research-mode-desc">包含社群/論壇 (Tier 1-5)</div>
+                                    </div>
+                                </button>
+                                <button class="research-mode-option" data-research-mode="strict">
+                                    <span class="research-mode-icon">✓</span>
+                                    <div class="research-mode-content">
+                                        <div class="research-mode-name">嚴謹查核</div>
+                                        <div class="research-mode-desc">僅官方/權威 (Tier 1-2)</div>
+                                    </div>
+                                </button>
+                                <button class="research-mode-option" data-research-mode="monitor">
+                                    <span class="research-mode-icon">📊</span>
+                                    <div class="research-mode-content">
+                                        <div class="research-mode-name">情報監測</div>
+                                        <div class="research-mode-desc">比對官方與民間落差</div>
+                                    </div>
+                                </button>
+                            </div>
+                        </div>
+
                         <button class="btn-search" id="btnSearch">搜尋</button>
                     </div>
                 </div>
@@ -1167,6 +1333,9 @@
     <!-- Analytics Tracker -->
     <script src="/static/analytics-tracker-sse.js"></script>
 
+    <!-- Marked.js for Markdown rendering -->
+    <script src="https://cdn.jsdelivr.net/npm/marked@11.1.1/marked.min.js"></script>
+
     <script>
         const searchInput = document.getElementById('searchInput');
         const btnSearch = document.getElementById('btnSearch');
@@ -1186,7 +1355,7 @@
         const btnCloseMySearches = document.getElementById('btnCloseMySearches');
         const savedSessionsList = document.getElementById('savedSessionsList');
         const modeToggle = document.getElementById('modeToggle');
-        const toggleSwitch = document.getElementById('toggleSwitch');
+        const modeButtons = document.querySelectorAll('.mode-button');
         const chatContainer = document.getElementById('chatContainer');
         const chatMessagesEl = document.getElementById('chatMessages');
         const searchContainer = document.getElementById('searchContainer');
@@ -1218,12 +1387,15 @@
         // Track the current loaded session ID to prevent duplicate saves
         let currentLoadedSessionId = null;
 
-        // Mode tracking: 'search' or 'chat'
+        // Mode tracking: 'search', 'deep_research', or 'chat'
         let currentMode = 'search';
 
         // ==================== ANALYTICS INITIALIZATION ====================
         const analyticsTracker = new AnalyticsTrackerSSE('/api/analytics/event');
         let currentAnalyticsQueryId = null;
+
+        // Track current conversation ID for multi-turn conversations
+        let currentConversationId = null;
 
         // Event delegation: Track all clicks on article links (left, middle, right)
         const handleLinkClick = (event) => {
@@ -1283,48 +1455,74 @@
         // Accumulated articles from ALL searches in this conversation
         let accumulatedArticles = [];
 
-        // Mode Toggle handler
-        toggleSwitch.addEventListener('click', () => {
-            if (currentMode === 'search') {
-                // Switch to chat mode
-                currentMode = 'chat';
-                toggleSwitch.classList.add('active');
-                btnSearch.textContent = '發送';
-                searchInput.placeholder = '繼續對話...';
+        // Mode Toggle handler - Handle three modes
+        modeButtons.forEach(button => {
+            button.addEventListener('click', () => {
+                const newMode = button.dataset.mode;
 
-                // Show results section and chat container (important for homepage without search results)
-                resultsSection.classList.add('active');
-                chatContainer.classList.add('active');
+                // Don't do anything if clicking the current mode
+                if (newMode === currentMode) return;
 
-                // Move search container into chat input area
-                chatInputContainer.appendChild(searchContainer);
-                chatInputContainer.style.display = 'block';
+                // Update button states
+                modeButtons.forEach(btn => btn.classList.remove('active'));
+                button.classList.add('active');
 
-                // Keep news results AND view tabs visible
-                // Don't hide summary toggle - keep it visible
-                // document.getElementById('summaryToggle').style.display = 'none';
-            } else {
-                // Switch back to search mode
-                currentMode = 'search';
-                toggleSwitch.classList.remove('active');
-                btnSearch.textContent = '搜尋';
-                searchInput.placeholder = '問我任何新聞相關問題，例如：最近台灣資安政策有什麼進展？';
+                // Update current mode
+                const previousMode = currentMode;
+                currentMode = newMode;
 
-                // Move search container back to original position
-                const mainContainer = document.querySelector('main .container');
-                const loadingState = document.getElementById('loadingState');
-                mainContainer.insertBefore(searchContainer, loadingState);
-                chatInputContainer.style.display = 'none';
+                // Handle mode-specific UI changes
+                if (newMode === 'search' || newMode === 'deep_research') {
+                    // Both search modes use similar UI
+                    btnSearch.textContent = '搜尋';
+                    searchInput.placeholder = newMode === 'deep_research'
+                        ? '輸入問題進行深度研究分析...'
+                        : '問我任何新聞相關問題，例如：最近台灣資安政策有什麼進展？';
 
-                // Hide chat container
-                chatContainer.classList.remove('active');
+                    // Move search container back to original position if coming from chat
+                    if (previousMode === 'chat') {
+                        const mainContainer = document.querySelector('main .container');
+                        const loadingState = document.getElementById('loadingState');
+                        mainContainer.insertBefore(searchContainer, loadingState);
+                        chatInputContainer.style.display = 'none';
+                        chatContainer.classList.remove('active');
+                    }
+                } else if (newMode === 'chat') {
+                    // Chat mode
+                    btnSearch.textContent = '發送';
+                    searchInput.placeholder = '繼續對話...';
 
-                // Restore last search results if available
-                if (sessionHistory.length > 0) {
-                    const lastSession = sessionHistory[sessionHistory.length - 1];
-                    populateResultsFromAPI(lastSession.data, lastSession.query);
+                    // Show results section and chat container
+                    resultsSection.classList.add('active');
+                    chatContainer.classList.add('active');
+                    chatInputContainer.appendChild(searchContainer);
+                    chatInputContainer.style.display = 'block';
                 }
-            }
+
+                // Show/hide research mode selector based on mode
+                const researchModeSelector = document.getElementById('researchModeSelector');
+                if (newMode === 'deep_research') {
+                    researchModeSelector.style.display = 'block';
+                } else {
+                    researchModeSelector.style.display = 'none';
+                }
+            });
+        });
+
+        // Research Mode Selection Handler
+        const researchModeOptions = document.querySelectorAll('.research-mode-option');
+        let currentResearchMode = 'discovery'; // Default mode
+
+        researchModeOptions.forEach(option => {
+            option.addEventListener('click', () => {
+                // Update button states
+                researchModeOptions.forEach(opt => opt.classList.remove('active'));
+                option.classList.add('active');
+
+                // Update current research mode
+                currentResearchMode = option.dataset.researchMode;
+                console.log('[Research Mode] Selected:', currentResearchMode);
+            });
         });
 
         // New Thread button handler
@@ -1380,11 +1578,12 @@
             accumulatedArticles = []; // Clear accumulated articles
             chatHistory = []; // Clear chat history
             currentLoadedSessionId = null; // Reset loaded session ID
+            currentConversationId = null; // Reset conversation ID for new conversation
 
             // Reset free conversation mode to search mode
             if (currentMode === 'chat') {
                 currentMode = 'search';
-                toggleSwitch.classList.remove('active');
+                modeButtons.forEach(btn => btn.classList.remove('active')); modeButtons[0].classList.add('active');
                 btnSearch.textContent = '搜尋';
                 searchInput.placeholder = '搜尋台灣新聞...';
 
@@ -1487,11 +1686,15 @@
                         // Handle different message types
                         switch(data.message_type) {
                             case 'begin-nlweb-response':
-                                // Query started - capture query_id for analytics
+                                // Query started - capture query_id and conversation_id
                                 if (data.query_id) {
                                     currentAnalyticsQueryId = data.query_id;
                                     analyticsTracker.startQuery(currentAnalyticsQueryId, data.query);
                                     console.log('[Analytics] Using backend query_id:', currentAnalyticsQueryId);
+                                }
+                                if (data.conversation_id) {
+                                    currentConversationId = data.conversation_id;
+                                    console.log('[Conversation] Using backend conversation_id:', currentConversationId);
                                 }
                                 break;
 
@@ -1501,6 +1704,17 @@
                                     showMemoryNotification(data.item_to_remember);
                                     memoryNotifications.push(data.item_to_remember);
                                 }
+                                break;
+
+                            case 'intermediate_result':
+                                // Deep Research progress update
+                                updateReasoningProgress(data);
+                                break;
+
+                            case 'clarification_required':
+                                // Phase 4: Clarification needed before proceeding
+                                console.log('[Clarification] Request received:', data.clarification);
+                                showClarificationModal(data.clarification, data.query, eventSource);
                                 break;
 
                             case 'complete':
@@ -1529,6 +1743,121 @@
                     resolve(accumulatedData);
                 };
             });
+        }
+
+        // Function to update Deep Research progress display
+        function updateReasoningProgress(data) {
+            console.log('[Progress] updateReasoningProgress called with stage:', data.stage);
+            let container = document.getElementById('reasoning-progress');
+
+            // Create container if doesn't exist
+            if (!container) {
+                console.log('[Progress] Creating new progress container');
+                container = document.createElement('div');
+                container.id = 'reasoning-progress';
+                container.className = 'reasoning-progress-container';
+                container.innerHTML = `
+                    <div class="progress-header">🔬 Deep Research Progress</div>
+                    <div class="progress-stages">
+                        <div class="stage" id="stage-analyst">
+                            <span class="icon">📊</span>
+                            <span class="label">Analyzing</span>
+                            <span class="status"></span>
+                        </div>
+                        <div class="stage" id="stage-critic">
+                            <span class="icon">🔍</span>
+                            <span class="label">Reviewing</span>
+                            <span class="status"></span>
+                        </div>
+                        <div class="stage" id="stage-writer">
+                            <span class="icon">✍️</span>
+                            <span class="label">Writing</span>
+                            <span class="status"></span>
+                        </div>
+                    </div>
+                    <div class="progress-details"></div>
+                `;
+
+                // Insert into loading state (which is visible during Deep Research)
+                const loadingState = document.getElementById('loadingState');
+                if (loadingState) {
+                    loadingState.appendChild(container);
+                } else {
+                    // Fallback: Insert before results
+                    const resultsSection = document.getElementById('results');
+                    if (resultsSection) {
+                        resultsSection.insertBefore(container, resultsSection.firstChild);
+                    }
+                }
+            }
+
+            // Update stage status
+            const stage = data.stage;
+            const details = container.querySelector('.progress-details');
+
+            if (stage === 'analyst_analyzing') {
+                const stageEl = document.getElementById('stage-analyst');
+                console.log('[Progress] stage-analyst element:', stageEl);
+                if (stageEl) {
+                    stageEl.classList.add('active');
+                    if (details) details.textContent = `Iteration ${data.iteration}/${data.total_iterations}: Analyzing sources...`;
+                } else {
+                    console.error('[Progress] stage-analyst element not found!');
+                }
+            } else if (stage === 'analyst_complete') {
+                const stageEl = document.getElementById('stage-analyst');
+                if (stageEl) {
+                    stageEl.classList.remove('active');
+                    stageEl.classList.add('complete');
+                    const statusEl = stageEl.querySelector('.status');
+                    if (statusEl) statusEl.textContent = `✓ ${data.citations_count || 0} sources`;
+                }
+            } else if (stage === 'gap_search_started') {
+                // Phase 5: Gap Detection - Secondary search in progress
+                const stageEl = document.getElementById('stage-analyst');
+                if (stageEl && details) {
+                    stageEl.classList.add('active');
+                    stageEl.classList.remove('complete');
+                    const queryList = data.new_queries ? data.new_queries.map(q => `「${q}」`).join(', ') : '';
+                    details.innerHTML = `
+                        <div style="color: #f59e0b; font-weight: 500;">🔍 正在補充搜尋...</div>
+                        <div style="font-size: 11px; margin-top: 4px; color: #64748b;">
+                            ${data.gap_reason || '發現資訊缺口'}
+                        </div>
+                        ${queryList ? `<div style="font-size: 10px; margin-top: 2px; color: #94a3b8;">查詢：${queryList}</div>` : ''}
+                    `;
+                }
+            } else if (stage === 'critic_reviewing') {
+                const stageEl = document.getElementById('stage-critic');
+                if (stageEl) {
+                    stageEl.classList.add('active');
+                    if (details) details.textContent = 'Reviewing draft for quality and compliance...';
+                }
+            } else if (stage === 'critic_complete') {
+                const stageEl = document.getElementById('stage-critic');
+                if (stageEl) {
+                    stageEl.classList.remove('active');
+                    stageEl.classList.add('complete');
+                    const emoji = data.status === 'PASS' ? '✅' : data.status === 'WARN' ? '⚠️' : '❌';
+                    const statusEl = stageEl.querySelector('.status');
+                    if (statusEl) statusEl.textContent = `${emoji} ${data.status}`;
+                }
+            } else if (stage === 'writer_composing') {
+                const stageEl = document.getElementById('stage-writer');
+                if (stageEl) {
+                    stageEl.classList.add('active');
+                    if (details) details.textContent = 'Composing final report...';
+                }
+            } else if (stage === 'writer_complete') {
+                const stageEl = document.getElementById('stage-writer');
+                if (stageEl) {
+                    stageEl.classList.remove('active');
+                    stageEl.classList.add('complete');
+                    const statusEl = stageEl.querySelector('.status');
+                    if (statusEl) statusEl.textContent = '✓ Done';
+                    if (details) details.textContent = '✅ Research complete!';
+                }
+            }
         }
 
         // Function to show memory notification
@@ -1783,6 +2112,12 @@
                 return;
             }
 
+            if (currentMode === 'deep_research') {
+                // Deep Research mode - use Actor-Critic reasoning
+                await performDeepResearch(query);
+                return;
+            }
+
             // Search mode - normal flow
             // Show loading
             loadingState.classList.add('active');
@@ -1895,6 +2230,132 @@
                 loadingState.classList.remove('active');
                 alert('搜尋失敗，請稍後再試。Error: ' + error.message);
             }
+        }
+
+        // Deep Research Mode function
+        async function performDeepResearch(query) {
+            console.log('=== Deep Research Mode ===');
+            console.log('Query:', query);
+
+            // Save query before clearing (for conversation history)
+            const savedQuery = query;
+
+            // Clear input
+            searchInput.value = '';
+
+            // Show loading
+            loadingState.classList.add('active');
+            resultsSection.classList.remove('active');
+
+            try {
+                const base = window.location.origin;
+
+                // Call Deep Research API with SSE streaming
+                const deepResearchUrl = new URL('/api/deep_research', base);
+                deepResearchUrl.searchParams.append('query', query);
+                deepResearchUrl.searchParams.append('site', 'all');
+                deepResearchUrl.searchParams.append('research_mode', currentResearchMode); // User-selected mode
+                deepResearchUrl.searchParams.append('max_iterations', '3');
+
+                // Add conversation_id for context continuity across modes
+                if (currentConversationId) {
+                    deepResearchUrl.searchParams.append('conversation_id', currentConversationId);
+                    console.log('[Deep Research] Using existing conversation_id:', currentConversationId);
+                }
+
+                console.log('Deep Research URL:', deepResearchUrl.toString());
+
+                // Use SSE streaming to get progress updates
+                const eventSource = new EventSource(deepResearchUrl.toString());
+
+                let fullReport = '';
+                let progressContainer = null;
+
+                eventSource.onmessage = (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+                        console.log('Deep Research SSE:', data);
+
+                        // Handle different message types
+                        if (data.message_type === 'begin-nlweb-response') {
+                            // Query started - capture conversation_id
+                            if (data.conversation_id) {
+                                currentConversationId = data.conversation_id;
+                                console.log('[Deep Research] Using backend conversation_id:', currentConversationId);
+                            }
+                        } else if (data.message_type === 'intermediate_result') {
+                            // Progress update - show reasoning progress
+                            updateReasoningProgress(data);
+                        } else if (data.message_type === 'final_result') {
+                            // Final report received
+                            fullReport = data.final_report || '';
+
+                            // Close event source
+                            eventSource.close();
+
+                            // Hide loading
+                            loadingState.classList.remove('active');
+
+                            // Display results
+                            displayDeepResearchResults(fullReport, data, savedQuery);
+                        } else if (data.message_type === 'complete') {
+                            // Stream complete - close connection
+                            eventSource.close();
+                            console.log('Deep Research stream complete');
+                        } else if (data.message_type === 'error') {
+                            console.error('Deep Research error:', data.error);
+                            eventSource.close();
+                            loadingState.classList.remove('active');
+                            alert('Deep Research 發生錯誤: ' + data.error);
+                        }
+                    } catch (e) {
+                        console.error('Failed to parse SSE data:', e);
+                    }
+                };
+
+                eventSource.onerror = (error) => {
+                    console.error('SSE connection error:', error);
+                    eventSource.close();
+                    loadingState.classList.remove('active');
+                    alert('Deep Research 連線錯誤');
+                };
+
+            } catch (error) {
+                console.error('Deep Research error:', error);
+                loadingState.classList.remove('active');
+                alert('Deep Research 發生錯誤: ' + error.message);
+            }
+        }
+
+        function displayDeepResearchResults(report, metadata, savedQuery) {
+            console.log('[Deep Research] Displaying results');
+
+            // Show results section
+            resultsSection.classList.add('active');
+
+            // Clear and display report in listView
+            listView.innerHTML = '';
+
+            // Create report container
+            const reportContainer = document.createElement('div');
+            reportContainer.className = 'deep-research-report';
+            reportContainer.style.cssText = 'padding: 20px; max-width: 900px; margin: 0 auto;';
+            reportContainer.innerHTML = marked.parse(report || '無結果');
+
+            listView.appendChild(reportContainer);
+
+            // Add to conversation history (use savedQuery parameter)
+            if (savedQuery) {
+                conversationHistory.push(savedQuery);
+            }
+
+            // Remove progress indicator
+            const progressContainer = document.getElementById('reasoning-progress');
+            if (progressContainer) {
+                progressContainer.remove();
+            }
+
+            console.log('[Deep Research] Results displayed successfully');
         }
 
         // Free Conversation Mode function
@@ -2264,7 +2725,7 @@
 
                 // Optionally switch to chat mode
                 currentMode = 'chat';
-                toggleSwitch.classList.add('active');
+                modeButtons.forEach(btn => btn.classList.remove('active')); modeButtons[2].classList.add('active');
                 btnSearch.textContent = '發送';
                 searchInput.placeholder = '繼續對話...';
 
@@ -2584,7 +3045,7 @@
                 const originalText = btn.textContent;
                 btn.textContent = btn.textContent.includes('👍') ? '✓ 已回饋' : '✓ 已回報';
                 btn.style.color = '#059669';
-                
+
                 setTimeout(() => {
                     btn.textContent = originalText;
                     btn.style.color = '';
@@ -2592,6 +3053,164 @@
             });
         });
 
+        // Phase 4: Clarification Modal Functions
+        function showClarificationModal(clarificationData, originalQuery, eventSource) {
+            console.log('[Clarification] Showing modal:', clarificationData);
+
+            const modal = document.getElementById('clarificationModal');
+            const hint = document.getElementById('clarificationHint');
+            const optionsContainer = document.getElementById('clarificationOptions');
+            const fallback = document.getElementById('clarificationFallback');
+
+            // Set hint text
+            hint.textContent = clarificationData.context_hint || '請選擇一個選項：';
+
+            // Clear previous options
+            optionsContainer.innerHTML = '';
+
+            // Create option buttons
+            clarificationData.options.forEach((option, index) => {
+                const button = document.createElement('button');
+                button.className = 'clarification-option';
+                button.textContent = option.label;
+                button.style.cssText = 'padding: 12px 16px; border: 2px solid #e2e8f0; border-radius: 8px; background: white; color: #111827; cursor: pointer; font-size: 14px; text-align: left; transition: all 0.2s;';
+
+                button.onmouseover = () => {
+                    button.style.borderColor = '#3b82f6';
+                    button.style.background = '#eff6ff';
+                };
+                button.onmouseout = () => {
+                    button.style.borderColor = '#e2e8f0';
+                    button.style.background = 'white';
+                };
+
+                button.onclick = () => {
+                    handleClarificationChoice(option, originalQuery, eventSource);
+                };
+
+                optionsContainer.appendChild(button);
+            });
+
+            // Show fallback suggestion
+            if (clarificationData.fallback_suggestion) {
+                fallback.textContent = clarificationData.fallback_suggestion;
+                fallback.style.display = 'block';
+            } else {
+                fallback.style.display = 'none';
+            }
+
+            // Show modal
+            modal.classList.add('active');
+
+            // Hide loading state
+            loadingState.classList.remove('active');
+        }
+
+        function closeClarificationModal() {
+            const modal = document.getElementById('clarificationModal');
+            modal.classList.remove('active');
+        }
+
+        async function handleClarificationChoice(option, originalQuery, eventSource) {
+            console.log('[Clarification] User selected:', option);
+
+            // Close modal
+            closeClarificationModal();
+
+            // Close the original event source
+            if (eventSource) {
+                eventSource.close();
+            }
+
+            // Show loading again
+            loadingState.classList.add('active');
+
+            // Extract time_range if available
+            const timeRange = option.time_range;
+
+            // Reconstruct query with clarification
+            // Option A: Modify query string to include selected option
+            let clarifiedQuery = originalQuery;
+            if (timeRange && timeRange.start) {
+                // Add time info to query
+                clarifiedQuery = `${originalQuery} (${option.label})`;
+            }
+
+            // Re-submit the search with clarified parameters
+            // For Deep Research mode
+            if (currentMode === 'deep_research') {
+                console.log('[Clarification] Re-submitting Deep Research with:', clarifiedQuery);
+
+                // Store the time_range in query_params for backend
+                // This will be picked up by the handler
+                const base = window.location.origin;
+                const deepResearchUrl = new URL('/api/query', base);
+                deepResearchUrl.searchParams.append('query', clarifiedQuery);
+                deepResearchUrl.searchParams.append('mode', 'generate');
+                deepResearchUrl.searchParams.append('stream', 'true');
+
+                // Add time_range as JSON if available
+                if (timeRange) {
+                    deepResearchUrl.searchParams.append('time_range_start', timeRange.start || '');
+                    deepResearchUrl.searchParams.append('time_range_end', timeRange.end || '');
+                }
+
+                if (currentConversationId) {
+                    deepResearchUrl.searchParams.append('conversation_id', currentConversationId);
+                }
+
+                // Restart Deep Research with clarified query
+                const newEventSource = new EventSource(deepResearchUrl.toString());
+
+                newEventSource.onmessage = (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+                        console.log('Deep Research SSE (clarified):', data);
+
+                        // Handle messages same as normal Deep Research
+                        if (data.message_type === 'intermediate_result') {
+                            updateReasoningProgress(data);
+                        } else if (data.message_type === 'final_result') {
+                            newEventSource.close();
+                            loadingState.classList.remove('active');
+                            displayDeepResearchResults(data.final_report || '', data, clarifiedQuery);
+                        }
+                    } catch (e) {
+                        console.error('Error parsing SSE message:', e);
+                    }
+                };
+
+                newEventSource.onerror = (error) => {
+                    console.error('SSE error:', error);
+                    newEventSource.close();
+                    loadingState.classList.remove('active');
+                };
+            }
+        }
+
     </script>
+
+    <!-- Phase 4: Clarification Modal -->
+    <div id="clarificationModal" class="modal-overlay">
+        <div class="modal" style="max-width: 600px;">
+            <h2 style="margin: 0 0 16px 0; font-size: 20px; color: #111827;">需要澄清查詢內容</h2>
+            <p id="clarificationHint" style="margin: 0 0 24px 0; color: #64748b; font-size: 14px;"></p>
+
+            <div id="clarificationOptions" style="display: flex; flex-direction: column; gap: 12px; margin-bottom: 24px;">
+                <!-- Options will be dynamically inserted here -->
+            </div>
+
+            <div id="clarificationFallback" style="margin-top: 16px; padding: 12px; background: #f8fafc; border-radius: 8px; font-size: 13px; color: #64748b; display: none;">
+                <!-- Fallback suggestion will be inserted here -->
+            </div>
+
+            <div style="display: flex; gap: 12px; justify-content: flex-end; margin-top: 24px;">
+                <button onclick="closeClarificationModal()" style="padding: 8px 16px; border: 1px solid #e2e8f0; border-radius: 6px; background: white; color: #64748b; cursor: pointer; font-size: 14px;">
+                    取消
+                </button>
+            </div>
+        </div>
+    </div>
+
 </body>
 </html>
