@@ -15,20 +15,49 @@ logger = get_configured_logger("reasoning.iteration_logger")
 
 def get_project_root_iterations_path() -> Path:
     """
-    Get absolute path to reasoning iterations directory from project root.
+    Get absolute path to reasoning iterations directory.
 
-    This ensures consistent directory location regardless of working directory.
+    Priority:
+    1. /tmp/reasoning/iterations/ (for read-only deployments like Render)
+    2. {NLWEB_OUTPUT_DIR}/data/reasoning/iterations/ (if env var set)
+    3. {project_root}/data/reasoning/iterations/ (local development)
 
     Returns:
-        Absolute Path to data/reasoning/iterations/ from project root
+        Absolute Path to iterations directory
     """
+    # Check if running on read-only filesystem (Render, Docker, etc.)
+    # Use /tmp which is always writable
+    tmp_path = Path("/tmp/reasoning/iterations")
+
+    # Check environment variable for output directory
+    output_dir = os.getenv("NLWEB_OUTPUT_DIR")
+    if output_dir:
+        env_path = Path(output_dir) / "data" / "reasoning" / "iterations"
+        # Prefer env path over /tmp if it's writable
+        if env_path.parent.exists():
+            try:
+                env_path.mkdir(parents=True, exist_ok=True)
+                return env_path
+            except PermissionError:
+                pass  # Fall through to /tmp
+
     # Get path to this file (reasoning/utils/iteration_logger.py)
     current_file = Path(__file__).resolve()
     # Navigate up to project root: iteration_logger.py -> utils/ -> reasoning/ -> python/ -> code/ -> NLWeb/
     project_root = current_file.parent.parent.parent.parent.parent
     # Build absolute path to iterations directory
-    iterations_path = project_root / "data" / "reasoning" / "iterations"
-    return iterations_path
+    local_path = project_root / "data" / "reasoning" / "iterations"
+
+    # Test if local path is writable
+    if local_path.parent.exists():
+        try:
+            local_path.mkdir(parents=True, exist_ok=True)
+            return local_path
+        except PermissionError:
+            pass  # Fall through to /tmp
+
+    # Default to /tmp (always writable, ephemeral)
+    return tmp_path
 
 
 class IterationLogger:
@@ -48,15 +77,23 @@ class IterationLogger:
         """
         self.query_id = query_id
         self.logger = get_configured_logger(f"reasoning.iteration_logger.{query_id}")
+        self.file_logging_enabled = False
 
         # Get base iterations directory
         base_path = get_project_root_iterations_path()
 
-        # Create query-specific directory
+        # Create query-specific directory with graceful degradation
         self.query_dir = base_path / query_id
-        self.query_dir.mkdir(parents=True, exist_ok=True)
-
-        self.logger.info(f"Initialized iteration logger: {self.query_dir}")
+        try:
+            self.query_dir.mkdir(parents=True, exist_ok=True)
+            self.file_logging_enabled = True
+            self.logger.info(f"Iteration file logging enabled: {self.query_dir}")
+        except (PermissionError, OSError) as e:
+            self.logger.warning(
+                f"Cannot create iteration log directory (file logging disabled): {e}. "
+                f"Console logging will continue."
+            )
+            # Console logging still works - don't crash the application
 
     def log_agent_output(
         self,
@@ -76,6 +113,16 @@ class IterationLogger:
             output_response: Response received from agent
             metadata: Optional metadata (e.g., timing, model used)
         """
+        # Always log to console (visible in Render Dashboard)
+        self.logger.info(
+            f"[Iteration {iteration}] {agent_name} completed. "
+            f"Prompt length: {len(input_prompt)} chars"
+        )
+
+        # Skip file logging if disabled
+        if not self.file_logging_enabled:
+            return
+
         filename = f"iteration_{iteration}_{agent_name}.json"
         filepath = self.query_dir / filename
 
@@ -97,9 +144,9 @@ class IterationLogger:
         try:
             with open(filepath, "w", encoding="utf-8") as f:
                 json.dump(log_data, f, indent=2, ensure_ascii=False)
-            self.logger.info(f"Logged {agent_name} output: {filename}")
+            self.logger.info(f"Logged {agent_name} output to file: {filename}")
         except Exception as e:
-            self.logger.error(f"Failed to log agent output: {e}")
+            self.logger.error(f"Failed to log agent output to file: {e}")
 
     def log_summary(
         self,
@@ -117,6 +164,16 @@ class IterationLogger:
             mode: Research mode used (strict, discovery, monitor)
             metadata: Optional metadata (e.g., timing, sources analyzed)
         """
+        # Always log summary to console (visible in Render Dashboard)
+        self.logger.info(
+            f"[Session Complete] Query: {self.query_id}, "
+            f"Iterations: {total_iterations}, Status: {final_status}, Mode: {mode}"
+        )
+
+        # Skip file logging if disabled
+        if not self.file_logging_enabled:
+            return
+
         filename = "session_summary.json"
         filepath = self.query_dir / filename
 
@@ -132,6 +189,6 @@ class IterationLogger:
         try:
             with open(filepath, "w", encoding="utf-8") as f:
                 json.dump(summary_data, f, indent=2, ensure_ascii=False)
-            self.logger.info(f"Logged session summary: {filename}")
+            self.logger.info(f"Logged session summary to file: {filename}")
         except Exception as e:
-            self.logger.error(f"Failed to log session summary: {e}")
+            self.logger.error(f"Failed to log session summary to file: {e}")
