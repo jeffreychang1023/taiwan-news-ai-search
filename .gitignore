@@ -13,6 +13,7 @@ myenv
 venv
 .env
 data/
+*.tsv
 
 
 # User-specific files (MonoDevelop/Xamarin Studio)
