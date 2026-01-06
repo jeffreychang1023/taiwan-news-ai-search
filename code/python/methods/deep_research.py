@@ -477,6 +477,7 @@ class DeepResearchHandler(NLWebHandler):
 - `query_modifier`: 用於組合自然語言查詢的修飾詞（空字串表示全面性選項）
 - `is_comprehensive`: 標記為全面性選項（選此項時會提高搜尋多元性）
 - `required`: 所有問題都必須設為 true
+- **注意**：你不需要提供 `question_id` 和 `option.id`，系統會自動生成
 
 如果沒有歧義，返回：
 {{
