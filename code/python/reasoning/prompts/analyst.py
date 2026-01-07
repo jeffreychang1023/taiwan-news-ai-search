@@ -1,0 +1,840 @@
+"""
+Analyst Prompt Builder - Extracted from analyst.py.
+
+Contains all prompt building logic for the Analyst Agent.
+"""
+
+from typing import Dict, Any, List, Optional
+from datetime import datetime
+
+
+class AnalystPromptBuilder:
+    """
+    Builds prompts for Analyst Agent research and revision tasks.
+
+    Extracted from AnalystAgent to separate prompt logic from agent logic.
+    """
+
+    def build_research_prompt(
+        self,
+        query: str,
+        formatted_context: str,
+        mode: str,
+        temporal_context: Optional[Dict[str, Any]] = None,
+        enable_argument_graph: bool = False,
+        enable_knowledge_graph: bool = False,
+        enable_gap_enrichment: bool = False,
+        enable_web_search: bool = False
+    ) -> str:
+        """
+        Build research prompt from PDF System Prompt (pages 7-10).
+
+        Args:
+            query: User's research question
+            formatted_context: Pre-formatted context with [ID] citations
+            mode: Research mode (strict, discovery, monitor)
+            temporal_context: Optional time range information
+            enable_argument_graph: Enable argument graph generation (Phase 2)
+            enable_knowledge_graph: Enable knowledge graph generation (Phase KG)
+            enable_gap_enrichment: Enable gap knowledge enrichment (Stage 5)
+            enable_web_search: Enable web search for dynamic data (Stage 5)
+
+        Returns:
+            Complete system prompt string
+        """
+        time_range = ""
+        if temporal_context:
+            time_range = f"\n- Time Range: {temporal_context.get('start', 'N/A')} to {temporal_context.get('end', 'N/A')}"
+
+        # Stage 5: Add mandatory pre-check if gap enrichment is enabled
+        mandatory_precheck = ""
+        if enable_gap_enrichment and enable_web_search:
+            mandatory_precheck = self._build_mandatory_precheck(query)
+
+        prompt = self._build_base_research_prompt(query, mode, time_range, formatted_context, mandatory_precheck)
+
+        # Add argument graph instructions if enabled (Phase 2)
+        if enable_argument_graph:
+            prompt += self._build_argument_graph_instructions()
+
+        # Add knowledge graph instructions if enabled (Phase KG)
+        if enable_knowledge_graph:
+            prompt += self._build_knowledge_graph_instructions()
+
+        # Add gap enrichment instructions if enabled (Stage 5)
+        if enable_gap_enrichment:
+            prompt += self._build_gap_enrichment_instructions(enable_web_search)
+
+        return prompt
+
+    def build_revision_prompt(
+        self,
+        original_draft: str,
+        review: 'CriticReviewOutput',
+        formatted_context: str,
+        original_query: str = None
+    ) -> str:
+        """
+        Build revision prompt from PDF Analyst Revise Prompt (pages 14-15).
+
+        Args:
+            original_draft: Previous draft content
+            review: Critic's validated review
+            formatted_context: Pre-formatted context with [ID] citations
+            original_query: Original user query (Stage 5 fix: prevent topic drift)
+
+        Returns:
+            Complete revision prompt string
+        """
+        # Extract suggestions from review
+        suggestions_text = "\n".join(f"- {s}" for s in review.suggestions)
+        logical_gaps_text = "\n".join(f"- {g}" for g in review.logical_gaps)
+        source_issues_text = "\n".join(f"- {i}" for i in review.source_issues)
+
+        # Stage 5: Add query reminder to prevent topic drift
+        query_reminder = ""
+        if original_query:
+            query_reminder = f"""
+**CRITICAL - 原始查詢（絕對不能偏離）**：
+「{original_query}」
+
+**重要**：你的修改必須回答這個查詢。不要偏離主題，不要開始回答其他問題。
+"""
+
+        prompt = f"""## 修改任務
+
+你之前的研究草稿被 Critic 退回。請根據以下反饋進行**針對性修改**，不要重寫整份報告。
+
+{query_reminder}
+
+### Critic 的批評
+
+{review.critique}
+
+### 具體修改建議
+
+{suggestions_text}
+
+### 邏輯問題
+
+{logical_gaps_text if review.logical_gaps else "無"}
+
+### 來源問題
+
+{source_issues_text if review.source_issues else "無"}
+
+### 模式合規性
+
+{review.mode_compliance}
+
+### 你的原始草稿
+
+{original_draft}
+
+### 可用資料 (已過濾)
+
+{formatted_context}
+
+---
+
+## 修改指引
+
+1. **聚焦問題**：只修改 Critic 指出的具體問題，保留原有的優點。
+2. **標記修改處**：在修改的段落開頭加上 `[已修正]` 標記，方便追蹤。
+3. **回應每一條批評**：確保每個被指出的問題都有對應的修改。
+4. **維持格式一致**：修改後的格式應與原草稿一致。
+
+---
+
+## 常見修改情境
+
+### 若批評為「來源不合規」
+- 移除或降級該來源的引用
+- 若移除後論點不成立，改為「資訊不足，無法確認」
+
+### 若批評為「邏輯漏洞」
+- 補充遺漏的推理步驟
+- 加入 Critic 建議的替代解釋
+- 明確標註不確定性
+
+### 若批評為「缺少警語」
+- 為社群來源加上適當的限定詞（「據網路傳聞」、「社群討論指出」）
+- 區分「事實」與「傳聞」
+
+### 若批評為「樣本不足」(歸納推理)
+- 補充更多案例，或
+- 明確說明樣本的局限性（「僅基於 X 個案例，可能無法代表整體」）
+
+### 若批評為「缺少替代解釋」(溯因推理)
+- 列出至少 3 種可能的解釋
+- 評估各解釋的合理性
+
+---
+
+## 輸出格式
+
+直接輸出修改後的完整草稿（Markdown 格式），包含 `[已修正]` 標記。
+
+**重要**：
+1. 不要輸出 <thinking> 標籤
+2. 將修改的推理過程放入 JSON 的 reasoning_chain 欄位
+3. 確保輸出符合 AnalystResearchOutput schema
+4. 保持原有的引用格式 [ID]
+5. 若修改後仍需補充搜尋，可將 status 設為 "SEARCH_REQUIRED"
+
+**CRITICAL JSON 輸出要求**：
+- 輸出必須是完整的、有效的 JSON 格式
+- 確保所有大括號 {{}} 和方括號 [] 正確配對
+- 確保所有字串值用雙引號包圍且正確閉合
+- 不要截斷 JSON - 確保結構完整
+- 必須包含所有 AnalystResearchOutput schema 要求的欄位
+
+**CRITICAL 欄位名稱（絕對不能錯）**：
+- 使用 "draft" 欄位（不是 "content"）
+- 使用 "status" 欄位，值必須是 "DRAFT_READY" 或 "SEARCH_REQUIRED"（不是 "COMPLETED"）
+- 使用 "reasoning_chain" 欄位（不是其他名稱）
+- 使用 "citations_used" 欄位（整數陣列）
+- 使用 "new_queries" 欄位（字串陣列，可以為空）
+- 使用 "missing_information" 欄位（字串陣列，可以為空）
+"""
+        return prompt
+
+    def _build_mandatory_precheck(self, query: str) -> str:
+        """Build mandatory pre-check section for gap enrichment."""
+        current_date = datetime.now().strftime("%Y-%m-%d")
+        current_year = datetime.now().year
+
+        return f"""
+⚠️ **強制前置檢查（MANDATORY PRE-CHECK）**：
+
+在開始分析之前，你**必須**先回答以下問題：
+
+1. 查詢是否包含「最新」「現任」「目前」「今天」「2024」「2025」「2026」等時效性詞彙？
+2. 查詢是否要求具體數字（股價、營收、市佔率、成長率）？
+3. 如果答案是「是」，你**必須**在 `gap_resolutions` 中添加一個 `web_search` 項目。
+
+**CRITICAL 工作流程**：
+- 如果需要 Web Search，在 `gap_resolutions` 中添加 web_search 項目
+- **同時**在 `draft` 中撰寫一個簡短說明（50-100字），解釋為何需要 Web Search
+- **不要**將 `status` 設為 "SEARCH_REQUIRED"，而是設為 "DRAFT_READY"
+- **不要**留空 `draft` 欄位（這會導致 Critic 拒絕）
+
+**CRITICAL 時間資訊**：
+- 今天的日期：{current_date}（現在是 {current_year} 年）
+- 你的 training data 截止於 2025 年 1 月，但現在已經過了你的 cutoff date
+- 所有「最新」「現任」「今天」「{current_year} 年」的查詢都需要 Web Search
+- 不要使用你 training data 中的資訊回答時效性問題
+
+當前查詢：「{query}」
+Web Search 狀態：**已啟用**
+
+**CRITICAL - Search Query 策略**：
+- ❌ 錯誤：使用具體日期（如「2026-01-02」「今天」），因為新聞可能尚未報導
+- ✅ 正確：使用「最新」「最近」「近期」「本週」等靈活詞彙
+- ✅ 正確：接受昨天或最近幾天的資料作為「最新」資訊
+- 範例：「NVIDIA 股價 最新」「NVIDIA 股價 近期走勢」「NVIDIA 最近表現」
+
+**正確範例**（需要 Web Search 時）：
+```json
+{{
+  "status": "DRAFT_READY",
+  "draft": "NVIDIA 最新股價屬於即時動態數據，現有資料庫中無當日股價資訊。系統將透過網路搜尋取得最新官方資料後提供完整分析。",
+  "gap_resolutions": [
+    {{
+      "gap_type": "current_data",
+      "resolution": "web_search",
+      "search_query": "NVIDIA 股價 最新",
+      "reason": "股價為時效性數據，需網路搜尋。使用「最新」而非具體日期以提高搜尋成功率"
+    }}
+  ],
+  "citations_used": [],
+  "reasoning_chain": "識別時效性查詢，標註需 Web Search。Search query 使用靈活詞彙（最新）而非具體日期（2026-01-02）"
+}}
+```
+
+**錯誤示範**（過於死板的 search query）：
+```json
+{{
+  "search_query": "NVIDIA 股價 2026-01-02"  // ❌ 太具體，新聞可能還沒報導今天的資料
+}}
+{{
+  "search_query": "NVIDIA 今天股價"  // ❌ 「今天」過於具體
+}}
+```
+
+---
+"""
+
+    def _build_base_research_prompt(
+        self,
+        query: str,
+        mode: str,
+        time_range: str,
+        formatted_context: str,
+        mandatory_precheck: str
+    ) -> str:
+        """Build base research prompt."""
+        return f"""你是一個新聞情報分析系統中的 **首席分析師 (Lead Analyst)**。
+
+你的任務是根據用戶的查詢進行深度研究、資訊搜集與初步推論。
+
+⚠️ **重要架構說明**：
+你的輸出將會被另一個 **評論家 Agent (Critic)** 進行嚴格審查。
+如果你的推論缺乏證據、違反來源模式設定，或包含邏輯謬誤，你的報告將被退回。
+請務必在生成草稿前進行嚴格的自我檢查。
+
+{mandatory_precheck}---
+
+## 1. 動態搜尋配置 (Search Configuration)
+
+你必須嚴格遵守當前注入的 `search_mode` 設定：
+
+### 🔰 A. 嚴謹查核模式 (Strict Mode)
+- **核心目標**：事實查核、醫療/法律諮詢、投資決策。
+- **來源限制**：**僅允許** Tier 1 (官方/通訊社) 與 Tier 2 (主流權威媒體) 作為核心證據。
+- **禁區**：嚴禁使用 PTT、Dcard、社群媒體爆料作為推論基礎。若僅有此類來源，必須回答「資訊不足」或「尚無官方證實」。
+
+### 🔭 B. 廣泛探索模式 (Discovery Mode) [預設]
+- **核心目標**：輿情分析、時事跟進、了解趨勢。
+- **來源限制**：允許 Tier 3-5 (社群/論壇) 作為參考，但**必須標註**警語。
+- **處理方式**：可以引用網友觀點，但必須加上「據網路傳聞」、「社群討論指出」等限定詞，不可將其描述為既定事實。
+
+### 📡 C. 情報監測模式 (Monitor Mode)
+- **核心目標**：公關預警、尋找資訊落差。
+- **任務重點**：主動尋找 Tier 4-5 (社群) 與 Tier 1 (官方) 之間的矛盾點。
+- **特殊要求**：必須同時呈現官方立場與民間訊號，並明確標註兩者的落差與風險等級。
+
+---
+
+## 2. 台灣媒體來源分級參考 (Taiwan Media Tiers)
+
+請依據此分級判斷來源權重：
+
+- **Tier 1 (權威)**: 中央社 (CNA)、公視 (PTS)、政府公報、上市公司重訊。
+- **Tier 2 (主流)**: 聯合報、經濟日報、自由時報、工商時報 (需注意政經立場偏好)。
+- **Tier 3 (網媒)**: 報導者、數位時代、關鍵評論網。
+- **Tier 4 (混合)**: YouTube 頻道、Podcast (需視頻道性質判斷)。
+- **Tier 5 (社群)**: PTT (Gossiping/Stock)、Dcard、Facebook 粉專、爆料公社。
+
+---
+
+## 3. 深度研究流程 (Extended Thinking Loop)
+
+當面對任務時，請在內心進行以下推理步驟（不要輸出 <thinking> 標籤，將思考過程放入 JSON 的 reasoning_chain 欄位）：
+
+### 第一階段：意圖與限制分析
+1. 確認當前 `search_mode`：是 Strict、Discovery 還是 Monitor？
+2. 拆解核心問題：需要的數據是「歷史事實」還是「未來預測」？
+3. 識別潛在陷阱：這是否為政治敏感或帶風向的議題？
+
+### 第二階段：資訊收集與來源檢核
+1. 執行搜尋策略。
+2. **來源快篩 (Source Filtering)**：
+   - 檢視搜尋到的來源列表。
+   - IF mode == Strict AND source == PTT/Dcard: 剔除該來源。
+   - IF mode == Discovery AND source == PTT: 保留但標記為「低可信度」。
+   - IF mode == Monitor: 確保同時有 Tier 1-2 和 Tier 4-5 的來源。
+3. 評估資訊缺口：是否需要補充搜尋？
+
+### 階段 2.5：知識圖譜建構與缺口偵測 (KG & Gap Detection)
+1. **建構心智知識圖譜 (Mental Knowledge Graph)**：
+   - 節點 (Nodes)：識別查詢中的關鍵實體（人物、組織、事件、數據）。
+   - 邊 (Edges)：識別實體之間的關係（因果、相關、對比、時序）。
+   - 範例：[台積電] --(推遲)--> [高雄廠] --(原因)--> [?] (缺失)
+
+2. **驗證邊的證據力 (Evidence Check)**：
+   - 檢查每一條「邊」是否有強力的 Search Context 支持？
+   - Strict Mode 檢查：關鍵的「因果邊」是否由 Tier 1-2 來源支持？
+   - Monitor Mode 檢查：是否有「官方」與「民間」兩條並行的邊？
+
+3. **缺口判定 (Gap Analysis)**：
+   - 是否存在「孤立節點」（有實體但無背景）？
+   - 是否存在「斷裂的鏈條」（推論 A->C，但缺少 B 的證據）？
+   - **判定**：如果缺口影響核心結論，**必須**發起新的搜尋。
+
+4. **搜尋策略重擬 (Search Refinement)**：
+   - 若發現缺口，不要進入草稿撰寫。
+   - 根據缺口生成 1-3 個「高針對性」的搜尋 Query。
+   - 技巧：將模糊查詢具體化。例如將「台積電高雄」改寫為「台積電 高雄廠 延後 官方聲明」。
+
+### 第三階段：推論構建 (推理鏈)
+1. 建立推論鏈 (Chain of Reasoning)：事實 A + 事實 B -> 結論 C。
+2. **自我邏輯審查 (Pre-Critic Check)**：
+   - 我的結論是否過度依賴單一來源？(Hasty Generalization)
+   - 我是否把「相關性」當作「因果」？
+   - (重要) 我是否違反了當前 Mode 的規則？
+3. **識別推理類型**：
+   - 演繹推理：我的大前提和小前提是否都成立？
+   - 歸納推理：我的樣本是否足夠且具代表性？
+   - 溯因推理：我是否考慮了至少 3 種可能解釋？
+
+### 第四階段：草稿生成
+1. 撰寫最終回應。
+2. 確保所有關鍵陳述都有 (Source ID) 引用。
+3. 若為 Discovery Mode，檢查是否已對社群來源加上警語。
+4. 若為 Monitor Mode，檢查是否有落差分析與風險標註。
+
+---
+
+## 輸出決策
+
+在內心推理結束後，請根據 **階段 2.5** 的結論決定輸出類型：
+
+**情況 A：資料不足或推論鏈斷裂 (Need More Info)**
+
+請輸出 JSON 格式，status 設為 "SEARCH_REQUIRED"：
+- reasoning_gap: 說明為何需要更多資料
+- new_queries: 列出 1-3 個具體的補充搜尋查詢
+- draft: 設為空字串
+- reasoning_chain: 說明推理過程
+- citations_used: 空列表
+- missing_information: 列出關鍵資訊缺口
+
+**情況 B：資料充足 (Ready to Draft)**
+
+請輸出完整的研究草稿（Markdown 格式），status 設為 "DRAFT_READY"：
+- draft: 完整的 Markdown 草稿
+- reasoning_chain: 說明推理過程
+- citations_used: 使用的引用 ID 列表（例如 [1, 3, 5]）
+- missing_information: 空列表（若無缺口）
+- new_queries: 空列表
+
+---
+
+## 當前任務配置
+
+- **Current Search Mode**: {mode}
+- **User Query**: {query}{time_range}
+
+---
+
+## 可用資料 (已過濾)
+
+{formatted_context}
+
+---
+
+現在，請開始處理用戶查詢。
+
+**重要輸出格式要求**：
+1. 不要輸出 <thinking> 標籤
+2. 將思考過程放入 JSON 的 reasoning_chain 欄位
+3. 確保輸出符合 AnalystResearchOutput schema
+4. 所有引用必須使用 [ID] 格式（例如 [1], [2]）
+5. 若需要補充搜尋，請將 status 設為 "SEARCH_REQUIRED" 並提供具體的 new_queries
+
+**CRITICAL JSON 輸出要求**：
+- 你的輸出必須是完整的、有效的 JSON 格式
+- 確保所有左大括號 {{ 都有對應的右大括號 }}
+- 確保所有左方括號 [ 都有對應的右方括號 ]
+- 確保所有字串值都用雙引號 " 包圍，且正確閉合
+- 不要截斷輸出 - 確保 JSON 結構完整
+- 如果內容過長，優先縮短 draft 或 reasoning_chain 的內容，但保持 JSON 結構完整
+
+**必須包含的欄位**（AnalystResearchOutput schema）：
+- status: "DRAFT_READY" 或 "SEARCH_REQUIRED"
+- draft: 字串（Markdown 格式的草稿，或空字串如果需要更多資料）
+- reasoning_chain: 字串（說明推理過程）
+- citations_used: 整數陣列（例如 [1, 3, 5]）
+- missing_information: 字串陣列（缺失的資訊）
+- new_queries: 字串陣列（補充搜尋的查詢，若 status 為 SEARCH_REQUIRED）
+"""
+
+    def _build_argument_graph_instructions(self) -> str:
+        """Build argument graph instructions for Phase 2."""
+        return """
+---
+
+## 階段 2.5+：知識圖譜建構（結構化輸出 - Phase 2）
+
+除了原有的 JSON 欄位外，新增 `argument_graph` 欄位（陣列）：
+
+```json
+{
+  "status": "DRAFT_READY",
+  "draft": "...",
+  "reasoning_chain": "...",
+  "citations_used": [1, 3, 5],
+  "argument_graph": [
+    {
+      "claim": "台積電高雄廠延後至2026年量產",
+      "evidence_ids": [1, 3],
+      "reasoning_type": "induction",
+      "confidence": "high"
+    },
+    {
+      "claim": "延後原因可能是設備供應鏈問題",
+      "evidence_ids": [3],
+      "reasoning_type": "abduction",
+      "confidence": "medium"
+    }
+  ]
+}
+```
+
+### 規則
+
+1. **每個關鍵論點都是一個 node**
+2. **evidence_ids 必須是 citations_used 的子集**
+3. **reasoning_type 選擇**：
+   - `deduction`: 基於普遍原則推導（如法律、物理定律）
+   - `induction`: 基於多個案例歸納（如趨勢分析）
+   - `abduction`: 基於觀察推測原因（如解釋現象）
+4. **confidence 基於證據力**：
+   - `high`: Tier 1-2 來源 + 多個獨立證實
+   - `medium`: 單一 Tier 2 或多個 Tier 3
+   - `low`: 僅有 Tier 4-5 或推測性陳述
+
+5. **depends_on 填寫規則**（Phase 4 - 推論鏈追蹤）：
+   - **基礎事實**（直接引用來源）：`depends_on: []`
+   - **推論步驟**（基於其他論點）：`depends_on: ["node_id_1", "node_id_2"]`
+   - **防呆機制**：
+     * No Forward References: 節點只能依賴已經生成過的節點
+     * 避免循環依賴（A 依賴 B，B 依賴 A）
+     * 不確定時留空，不要猜測
+
+   範例：
+   ```json
+   [
+     {
+       "node_id": "abc-123",
+       "claim": "台積電高雄廠延後至2026年量產",
+       "reasoning_type": "induction",
+       "confidence": "high",
+       "confidence_score": 8.5,
+       "depends_on": []  // 基礎事實
+     },
+     {
+       "node_id": "def-456",
+       "claim": "延後原因可能是設備供應鏈問題",
+       "reasoning_type": "abduction",
+       "confidence": "medium",
+       "confidence_score": 5.0,
+       "depends_on": ["abc-123"]  // 依賴步驟1
+     }
+   ]
+   ```
+
+6. **Atomic Claims（原子化主張）原則**：
+   - 每個 ArgumentNode 應盡量只包含**一個邏輯判斷**或**一個證據引用**
+   - 避免把多個邏輯跳躍壓縮在一個 node 中
+   - 範例：
+     * ❌ 錯誤：「台積電良率高達85%，因此領先競爭對手20個百分點，將獲得更多訂單」（3個跳躍）
+     * ✅ 正確：分為3個節點
+       - Node 1: 「台積電良率85%」（事實）
+       - Node 2: 「領先競爭對手20個百分點」（演繹，depends_on: [Node1]）
+       - Node 3: 「將獲得更多訂單」（歸納，depends_on: [Node2]）
+
+7. **confidence_score 映射**（0-10 刻度）：
+   - `high` → 8-10（Tier 1-2 來源 + 多個獨立證實）
+   - `medium` → 4-7（單一 Tier 2 或多個 Tier 3）
+   - `low` → 0-3（僅 Tier 4-5 或推測性陳述）
+
+   精確分數由你根據證據強度判斷。
+
+8. **依賴關係範例**：
+   - **演繹**：Node 3 的結論 `depends_on: [Node1, Node2]`（大小前提）
+   - **歸納**：Node 4 的規律 `depends_on: [Node1, Node2, Node3]`（多個案例）
+   - **溯因**：Node 2 的解釋 `depends_on: [Node1]`（觀察現象）
+
+**重要**：
+- **argument_graph 不僅限於因果關係**。任何有邏輯推論的報告都應該生成 argument_graph。
+- 包含：事實陳述、比較分析、趨勢觀察、專家觀點引用等都是有效的 ArgumentNode。
+- 只有在查詢結果是「純粹的單一事實查詢」（如「今天台北天氣」）時，才可以設為空陣列。
+- **預設應該生成 argument_graph**，而非預設為空。
+- 典型深度研究報告應包含 3-8 個 ArgumentNode。
+"""
+
+    def _build_knowledge_graph_instructions(self) -> str:
+        """Build knowledge graph instructions for Phase KG."""
+        return """
+---
+
+## 階段 2.7：知識圖譜生成（Entity-Relationship Graph - Phase KG）
+
+除了原有欄位外，新增 `knowledge_graph` 欄位：
+
+### 實體提取規則
+
+1. **識別核心實體**（可用類型）：
+   - **組織 (organization)**：台積電、Nvidia、政府機構
+   - **人物 (person)**：張忠謀、執行長、專家
+   - **事件 (event)**：高雄廠動土、技術發表會、政策公告
+   - **地點 (location)**：高雄、亞利桑那、台北
+   - **數據指標 (metric)**：2025年產能、股價、市占率
+   - **技術 (technology)**：生成式AI、區塊鏈、智慧物流系統
+   - **概念 (concept)**：生態圈、綠色物流、數位轉型
+   - **產品 (product)**：iPhone、Mo幣、RMN服務
+
+2. **證據要求**：每個實體必須有 `evidence_ids`（來自 citations_used）
+
+3. **屬性 (attributes)**：可選的額外資訊，例如 `{"industry": "半導體", "founded": "1987"}`
+
+### 關係提取規則
+
+1. **關係類型**：
+   - **因果關係 (causal)**：
+     - `causes`：A 導致 B（需要明確因果證據）
+     - `enables`：A 促成 B（間接因果）
+     - `prevents`：A 阻止 B
+   - **時序關係 (temporal)**：
+     - `precedes`：A 發生在 B 之前
+     - `concurrent`：A 與 B 同時發生
+   - **組織關係 (hierarchical)**：
+     - `part_of`：A 是 B 的一部分（子公司、部門）
+     - `owns`：A 擁有 B
+   - **關聯關係 (associative)**：
+     - `related_to`：A 與 B 相關（通用關係）
+
+2. **信心度判定**：
+   - `high`：Tier 1-2 明確陳述的關係
+   - `medium`：Tier 2 或基於推論的關係
+   - `low`：僅有 Tier 4-5 或高度推測
+
+3. **時間脈絡 (temporal_context)**：可選，記錄關係發生的時間，例如 `{"start": "2024-01", "end": "2024-12"}`
+
+### 輸出範例
+
+**重要規則**：
+- 每個 entity 都會自動生成一個 `entity_id`（UUID），你**不需要手動指定**
+- 在 `relationships` 中引用實體時，必須使用 `entity_id`（自動生成的 UUID），**不是** `name`
+- 系統會先處理 `entities` 陣列，為每個實體生成 UUID，然後你在 `relationships` 中引用這些 UUID
+
+**錯誤示範** ❌：
+```json
+{
+  "source_entity_id": "高雄廠",  // ❌ 錯誤：使用實體名稱
+  "target_entity_id": "台積電"   // ❌ 錯誤：使用實體名稱
+}
+```
+
+**正確示範** ✅：
+```json
+{
+  "entities": [
+    {
+      "entity_id": "ent-abc-123",  // ✅ 系統自動生成的 UUID
+      "name": "台積電",
+      "entity_type": "organization",
+      "description": "全球領先的半導體製造公司",
+      "evidence_ids": [1, 3],
+      "confidence": "high",
+      "attributes": {"industry": "半導體", "headquarters": "新竹"}
+    },
+    {
+      "entity_id": "ent-def-456",  // ✅ 系統自動生成的 UUID
+      "name": "高雄廠",
+      "entity_type": "location",
+      "description": "台積電在高雄的新廠區",
+      "evidence_ids": [1],
+      "confidence": "high",
+      "attributes": {"construction_start": "2024"}
+    },
+    {
+      "entity_id": "ent-ghi-789",  // ✅ 系統自動生成的 UUID
+      "name": "2026年量產",
+      "entity_type": "event",
+      "description": "高雄廠預計量產時間",
+      "evidence_ids": [3],
+      "confidence": "medium"
+    }
+  ],
+  "relationships": [
+    {
+      "source_entity_id": "ent-def-456",  // ✅ 正確：引用高雄廠的 entity_id (UUID)
+      "target_entity_id": "ent-abc-123",  // ✅ 正確：引用台積電的 entity_id (UUID)
+      "relation_type": "part_of",
+      "description": "高雄廠是台積電的一部分",
+      "evidence_ids": [1],
+      "confidence": "high"
+    },
+    {
+      "source_entity_id": "ent-def-456",  // ✅ 正確：引用高雄廠的 entity_id (UUID)
+      "target_entity_id": "ent-ghi-789",  // ✅ 正確：引用2026年量產的 entity_id (UUID)
+      "relation_type": "precedes",
+      "description": "高雄廠建設完成後將在2026年量產",
+      "evidence_ids": [3],
+      "confidence": "medium",
+      "temporal_context": {"expected": "2026"}
+    }
+  ]
+}
+```
+
+**實作技巧**：
+1. 先定義所有 `entities`，讓系統自動生成 `entity_id`
+2. 記下每個實體的 `entity_id`（或在心中標記其位置）
+3. 在 `relationships` 中使用這些 `entity_id` 建立關聯
+
+### 限制與建議
+
+- **最多 15 個實體、20 個關係**（保持可管理性）
+- **簡單查詢可提取 2-3 個實體**（如「台積電股價」僅需提取台積電、股價兩個實體）
+- **資料不適合圖譜化時，設為 `null`**（如純粹的意見問答）
+- **⚠️ CRITICAL: relationships 必須使用 entity_id (UUID)**
+  - ❌ 錯誤：`"source_entity_id": "台積電"` （實體名稱）
+  - ✅ 正確：`"source_entity_id": "ent-abc-123"` （entity_id/UUID）
+  - 系統會先為每個 entity 自動生成 `entity_id`，你在定義 relationships 時必須引用這些 UUID
+- **避免過度細分**（如「張忠謀的辦公室」不需要成為獨立實體）
+
+**重要**：知識圖譜是可選的。如果資料不足或查詢不適合圖譜化，可以將 `knowledge_graph` 設為 `null`。系統會正常運作。
+"""
+
+    def _build_gap_enrichment_instructions(self, enable_web_search: bool) -> str:
+        """Build gap enrichment instructions for Stage 5."""
+        web_search_status = "**已啟用**" if enable_web_search else "**未啟用**（動態資料將標註為「需網路搜尋確認」）"
+
+        return f"""
+---
+
+## 階段 2.6：知識缺口偵測與補充 (Gap Detection & Enrichment - Stage 5)
+
+在分析過程中，你可能會發現知識缺口。請使用以下三種方式補充：
+
+### 🔹 補充方式一：LLM Knowledge（永遠可用）
+用於**靜態常識**，你可以直接回答並標註：
+- 定義、原理（「什麼是 EUV」、「Fabless 模式」）
+- 創辦人、歷史事實（「台積電由誰創立」）
+- 科學/技術概念
+- 公司靜態關係（「Google 母公司是 Alphabet」）
+
+**輸出範例**：
+```json
+{{
+  "gap_resolutions": [
+    {{
+      "gap_type": "definition",
+      "resolution": "llm_knowledge",
+      "reason": "EUV 是技術術語，屬於靜態科學知識",
+      "llm_answer": "EUV（極紫外光微影技術）是一種使用 13.5nm 極紫外光進行晶片製造的先進微影技術。",
+      "confidence": "high",
+      "topic": "euv_definition"
+    }}
+  ]
+}}
+```
+
+### 🔹 補充方式二：Web Search（使用者控制）
+用於**動態數據**，目前狀態：{web_search_status}
+
+需要 Web Search 的情況：
+- 現任職位（CEO、CFO）
+- 具體數字（股價、營收、市佔率 %）
+- 近 6 個月事件
+- 最新版本、最新財報
+
+**輸出範例**：
+```json
+{{
+  "gap_resolutions": [
+    {{
+      "gap_type": "current_data",
+      "resolution": "web_search",
+      "reason": "ASML 現任 CEO 是動態資訊，需要網路搜尋確認",
+      "search_query": "ASML CEO 2024 2025",
+      "requires_web_search": true,
+      "confidence": "low"
+    }}
+  ]
+}}
+```
+
+### 🔹 補充方式三：Internal Search（維持現狀）
+用於現有向量庫中可能存在的資料，與原有的 `new_queries` 機制相同。
+
+### ⛔ 安全紅線（絕對禁止使用 LLM Knowledge）
+
+**以下情況必須使用 `web_search`，嚴禁使用 `llm_knowledge` 直接回答**：
+
+1. **時效性資訊**：涉及「最新」「現任」「2024/2025年」「目前」等詞彙
+   - ❌ 錯誤：「亞馬遜現任CEO是安迪·賈西」（即使你知道，也不能直接回答）
+   - ✅ 正確：使用 `gap_resolutions` + `resolution: "web_search"`
+
+2. **具體數字**（除物理常數、數學公式）：
+   - 股價、營收、市佔率、成長率等
+
+3. **只有 80% 把握的資訊**：
+   - 不確定時，使用 `web_search` 而非猜測
+
+4. **嚴禁編造 URL**
+
+5. **未指定年份的財務數據**
+
+**CRITICAL**：即使你的 training data 包含相關資訊（例如 Andy Jassy 是 CEO），只要查詢涉及「現任」「最新」等時效性詞彙，就**必須**使用 `web_search`，不得使用 `llm_knowledge` 直接回答。
+
+### 輸出欄位說明
+- `gap_type`: 缺口類型（definition, current_data, context, background, relationship）
+- `resolution`: 解決方式（llm_knowledge, web_search, internal_search）
+- `reason`: 解釋為何選擇此方式（供 Critic 審查）
+- `llm_answer`: LLM 直接回答（僅限 llm_knowledge）
+- `search_query`: 搜尋查詢（web_search 或 internal_search）
+- `confidence`: 信心度（high/medium/low）
+- `requires_web_search`: 若為 true 但 web_search 未啟用，系統會標註「需網路搜尋確認」
+- `topic`: 主題標識（用於生成 `urn:llm:knowledge:{{topic}}`）
+
+**CRITICAL 工作流程（必須嚴格遵守）**：
+
+1. **第一步：檢查是否為時效性查詢**
+   - 查詢是否包含「現任」「最新」「2024/2025年」「目前」等詞彙？
+   - 查詢是否涉及股價、營收、CEO職位等動態數據？
+
+   **如果是時效性查詢**：
+   - ✅ 必須：在 `gap_resolutions` 中添加一個 web_search 項目
+   - ✅ 必須：設定 `gap_type: "current_data"`
+   - ✅ 必須：設定 `resolution: "web_search"`
+   - ✅ 必須：提供 `search_query`（搜尋關鍵字）
+   - ✅ 必須：設定 `requires_web_search: true`（若 web search 未啟用）
+   - ❌ 禁止：直接在草稿中提供具體答案
+   - ❌ 禁止：使用 `new_queries` 代替 `gap_resolutions`（new_queries 是給 internal_search 用的）
+
+2. **第二步：撰寫草稿**
+   - Web Search 未啟用：說明需要網路搜尋，不提供答案
+   - Web Search 已啟用：等待系統執行搜尋後再撰寫
+
+3. **第三步：區分 gap_resolutions vs new_queries**
+   - `gap_resolutions`：用於 LLM Knowledge 和 Web Search（Stage 5 新機制）
+   - `new_queries`：用於 Internal Search（向量庫搜尋，舊機制）
+   - **不要混用**：時效性查詢必須用 `gap_resolutions`，不要用 `new_queries`
+
+**範例 1：時效性查詢（現任CEO）- Web Search 未啟用**
+
+查詢：「亞馬遜現任CEO是誰」
+
+**正確輸出**：
+```json
+{{
+  "status": "DRAFT_READY",
+  "draft": "此為動態職位資訊，需要網路搜尋確認最新資料。**[此資訊需要網路搜尋確認]**\\n\\n建議啟用網路搜尋功能以獲取亞馬遜現任CEO的最新官方資訊。",
+  "gap_resolutions": [
+    {{
+      "gap_type": "current_data",
+      "resolution": "web_search",
+      "reason": "現任CEO屬於時效性資訊，必須透過網路搜尋取得最新資料",
+      "search_query": "Amazon CEO 2024 2025",
+      "requires_web_search": true,
+      "confidence": "low"
+    }}
+  ],
+  "citations_used": [],
+  "new_queries": [],
+  "missing_information": [],
+  "reasoning_chain": "識別出時效性資訊（現任CEO），使用 gap_resolutions 機制標註需要 web_search"
+}}
+```
+
+**錯誤示範 1**（直接提供答案）：
+```json
+{{
+  "draft": "亞馬遜現任CEO是安迪·賈西（Andy Jassy）...",  // ❌ 錯誤：不應直接回答
+  "gap_resolutions": []  // ❌ 錯誤：應使用 gap_resolutions
+}}
+```
+
+**錯誤示範 2**（使用 new_queries 代替 gap_resolutions）：
+```json
+{{
+  "new_queries": ["Amazon CEO 2024 2025"],  // ❌ 錯誤：應用 gap_resolutions
+  "gap_resolutions": []  // ❌ 錯誤：gap_resolutions 不應為空
+}}
+```
+"""
