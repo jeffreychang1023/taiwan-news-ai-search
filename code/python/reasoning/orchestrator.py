@@ -231,6 +231,260 @@ class DeepResearchOrchestrator:
             # Progress messages are non-critical - log but don't crash
             self.logger.warning(f"Progress message send failed (non-critical): {e}")
 
+
+    def _setup_research_session(
+        self,
+        query_id: str,
+        query: str,
+        mode: str,
+        items: List[Dict[str, Any]],
+        enable_web_search: bool = False,
+    ):
+        """
+        Initialize logging and tracing for research session.
+
+        Returns:
+            Tuple of (iteration_logger, tracer)
+        """
+        # Initialize iteration logger
+        iteration_logger = IterationLogger(query_id)
+
+        # Initialize console tracer
+        tracer = None
+        tracing_config = CONFIG.reasoning_params.get("tracing", {})
+        if tracing_config.get("console", {}).get("enabled", True):
+            import os
+            verbosity = os.getenv("REASONING_TRACE_LEVEL") or \
+                        tracing_config.get("console", {}).get("level", "DEBUG")
+            from reasoning.utils.console_tracer import ConsoleTracer
+            tracer = ConsoleTracer(query_id=query_id, verbosity=verbosity)
+
+        self.logger.info(
+            f"Starting deep research: query='{query}', mode={mode}, "
+            f"items={len(items)}, enable_web_search={enable_web_search}"
+        )
+
+        # Tracing: Research start
+        if tracer:
+            tracer.start_research(query=query, mode=mode, items=items)
+
+        return iteration_logger, tracer
+
+    async def _filter_and_prepare_sources(
+        self,
+        items: List[Dict[str, Any]],
+        mode: str,
+        tracer,
+    ) -> List[Dict[str, Any]]:
+        """
+        Apply source tier filtering based on research mode.
+
+        Returns:
+            Filtered items list
+
+        Raises:
+            ValueError: If no sources remain after filtering
+        """
+        # Phase 1: Filter and enrich context by source tier
+        current_context = self.source_filter.filter_and_enrich(items, mode)
+        self.logger.info(f"Filtered context: {len(current_context)} sources (from {len(items)})")
+
+        # Tracing: Source filtering
+        if tracer:
+            tracer.source_filtering(
+                original_items=items,
+                filtered_items=current_context,
+                mode=mode
+            )
+
+        # Check if we have any sources to work with
+        if not current_context or len(current_context) == 0:
+            self.logger.error(f"No sources available for research! Original items: {len(items)}")
+            raise ValueError(
+                f"No sources available after filtering. "
+                f"Original: {len(items)}, Filtered: 0, Mode: {mode}"
+            )
+
+        return current_context
+
+    async def _format_research_context(
+        self,
+        items: List[Dict[str, Any]],
+        tracer,
+    ) -> tuple[str, Dict[int, Dict[str, Any]]]:
+        """
+        Format items into citation context.
+
+        Returns:
+            Tuple of (formatted_context_string, source_id_map)
+        """
+        # Unified context formatting (Single Source of Truth)
+        formatted_context, source_map = self._format_context_shared(items)
+
+        # Tracing: Context formatted
+        if tracer:
+            tracer.context_formatted(
+                source_map=source_map,
+                formatted_context=formatted_context
+            )
+
+        return formatted_context, source_map
+
+    def _create_no_sources_error_response(
+        self,
+        items_count: int,
+        filtered_count: int,
+        mode: str,
+    ) -> List[Dict[str, Any]]:
+        """Create error response for no sources case."""
+        return [{
+            "@type": "Item",
+            "url": "internal://error",
+            "name": "Deep Research 無法執行",
+            "site": "系統訊息",
+            "siteUrl": "internal",
+            "score": 0,
+            "description": (
+                f"**錯誤：無法執行 Deep Research**\n\n"
+                f"原因：檢索階段未找到任何相關資料來源。\n\n"
+                f"- 檢索到的項目數：{items_count}\n"
+                f"- 經過濾後的項目數：{filtered_count}\n"
+                f"- 研究模式：{mode}\n\n"
+                f"請嘗試：\n"
+                f"1. 使用不同的關鍵詞重新搜尋\n"
+                f"2. 擴大搜尋範圍（使用 'site=all'）\n"
+                f"3. 確認資料庫中有相關內容"
+            )
+        }]
+
+
+
+    def _setup_research_session(
+        self,
+        query_id: str,
+        query: str,
+        mode: str,
+        items: List[Dict[str, Any]],
+        enable_web_search: bool = False,
+    ):
+        """
+        Initialize logging and tracing for research session.
+
+        Returns:
+            Tuple of (iteration_logger, tracer)
+        """
+        # Initialize iteration logger
+        iteration_logger = IterationLogger(query_id)
+
+        # Initialize console tracer
+        tracer = None
+        tracing_config = CONFIG.reasoning_params.get("tracing", {})
+        if tracing_config.get("console", {}).get("enabled", True):
+            import os
+            verbosity = os.getenv("REASONING_TRACE_LEVEL") or \
+                        tracing_config.get("console", {}).get("level", "DEBUG")
+            from reasoning.utils.console_tracer import ConsoleTracer
+            tracer = ConsoleTracer(query_id=query_id, verbosity=verbosity)
+
+        self.logger.info(
+            f"Starting deep research: query='{query}', mode={mode}, "
+            f"items={len(items)}, enable_web_search={enable_web_search}"
+        )
+
+        # Tracing: Research start
+        if tracer:
+            tracer.start_research(query=query, mode=mode, items=items)
+
+        return iteration_logger, tracer
+
+    async def _filter_and_prepare_sources(
+        self,
+        items: List[Dict[str, Any]],
+        mode: str,
+        tracer,
+    ) -> List[Dict[str, Any]]:
+        """
+        Apply source tier filtering based on research mode.
+
+        Returns:
+            Filtered items list
+
+        Raises:
+            ValueError: If no sources remain after filtering
+        """
+        # Phase 1: Filter and enrich context by source tier
+        current_context = self.source_filter.filter_and_enrich(items, mode)
+        self.logger.info(f"Filtered context: {len(current_context)} sources (from {len(items)})")
+
+        # Tracing: Source filtering
+        if tracer:
+            tracer.source_filtering(
+                original_items=items,
+                filtered_items=current_context,
+                mode=mode
+            )
+
+        # Check if we have any sources to work with
+        if not current_context or len(current_context) == 0:
+            self.logger.error(f"No sources available for research! Original items: {len(items)}")
+            raise ValueError(
+                f"No sources available after filtering. "
+                f"Original: {len(items)}, Filtered: 0, Mode: {mode}"
+            )
+
+        return current_context
+
+    async def _format_research_context(
+        self,
+        items: List[Dict[str, Any]],
+        tracer,
+    ) -> tuple[str, Dict[int, Dict[str, Any]]]:
+        """
+        Format items into citation context.
+
+        Returns:
+            Tuple of (formatted_context_string, source_id_map)
+        """
+        # Unified context formatting (Single Source of Truth)
+        formatted_context, source_map = self._format_context_shared(items)
+
+        # Tracing: Context formatted
+        if tracer:
+            tracer.context_formatted(
+                source_map=source_map,
+                formatted_context=formatted_context
+            )
+
+        return formatted_context, source_map
+
+    def _create_no_sources_error_response(
+        self,
+        items_count: int,
+        filtered_count: int,
+        mode: str,
+    ) -> List[Dict[str, Any]]:
+        """Create error response for no sources case."""
+        return [{
+            "@type": "Item",
+            "url": "internal://error",
+            "name": "Deep Research 無法執行",
+            "site": "系統訊息",
+            "siteUrl": "internal",
+            "score": 0,
+            "description": (
+                f"**錯誤：無法執行 Deep Research**\n\n"
+                f"原因：檢索階段未找到任何相關資料來源。\n\n"
+                f"- 檢索到的項目數：{items_count}\n"
+                f"- 經過濾後的項目數：{filtered_count}\n"
+                f"- 研究模式：{mode}\n\n"
+                f"請嘗試：\n"
+                f"1. 使用不同的關鍵詞重新搜尋\n"
+                f"2. 擴大搜尋範圍（使用 'site=all'）\n"
+                f"3. 確認資料庫中有相關內容"
+            )
+        }]
+
+
     async def run_research(
         self,
         query: str,
@@ -258,72 +512,37 @@ class DeepResearchOrchestrator:
         Raises:
             NoValidSourcesError: If strict mode filters out all sources
         """
-        # Initialize iteration logger
+        # Setup: Initialize logging and tracing
         query_id = getattr(self.handler, 'query_id', f'reasoning_{hash(query)}')
-        iteration_logger = IterationLogger(query_id)
-
-        # Initialize console tracer
-        tracer = None
-        tracing_config = CONFIG.reasoning_params.get("tracing", {})
-        if tracing_config.get("console", {}).get("enabled", True):
-            import os
-            verbosity = os.getenv("REASONING_TRACE_LEVEL") or \
-                        tracing_config.get("console", {}).get("level", "DEBUG")
-            from reasoning.utils.console_tracer import ConsoleTracer
-            tracer = ConsoleTracer(query_id=query_id, verbosity=verbosity)
-
-        self.logger.info(f"Starting deep research: query='{query}', mode={mode}, items={len(items)}, enable_web_search={enable_web_search}")
-
-        # Tracing: Research start
-        if tracer:
-            tracer.start_research(query=query, mode=mode, items=items)
+        iteration_logger, tracer = self._setup_research_session(
+            query_id=query_id,
+            query=query,
+            mode=mode,
+            items=items,
+            enable_web_search=enable_web_search,
+        )
 
         try:
-            # Phase 1: Filter and enrich context by source tier
-            current_context = self.source_filter.filter_and_enrich(items, mode)
-            self.logger.info(f"Filtered context: {len(current_context)} sources (from {len(items)})")
-
-            # Tracing: Source filtering
-            if tracer:
-                tracer.source_filtering(
-                    original_items=items,
-                    filtered_items=current_context,
-                    mode=mode
+            # Phase 1: Filter and prepare sources
+            try:
+                current_context = await self._filter_and_prepare_sources(
+                    items=items,
+                    mode=mode,
+                    tracer=tracer,
+                )
+            except ValueError:
+                # No sources available after filtering
+                return self._create_no_sources_error_response(
+                    items_count=len(items),
+                    filtered_count=0,
+                    mode=mode,
                 )
 
-            # Check if we have any sources to work with
-            if not current_context or len(current_context) == 0:
-                self.logger.error(f"No sources available for research! Original items: {len(items)}")
-                # Return mock result with error explanation
-                return [{
-                    "@type": "Item",
-                    "url": "internal://error",
-                    "name": "Deep Research 無法執行",
-                    "site": "系統訊息",
-                    "siteUrl": "internal",
-                    "score": 0,
-                    "description": (
-                        f"**錯誤：無法執行 Deep Research**\n\n"
-                        f"原因：檢索階段未找到任何相關資料來源。\n\n"
-                        f"- 檢索到的項目數：{len(items)}\n"
-                        f"- 經過濾後的項目數：{len(current_context)}\n"
-                        f"- 研究模式：{mode}\n\n"
-                        f"請嘗試：\n"
-                        f"1. 使用不同的關鍵詞重新搜尋\n"
-                        f"2. 擴大搜尋範圍（使用 'site=all'）\n"
-                        f"3. 確認資料庫中有相關內容"
-                    )
-                }]
-
-            # NEW: Unified context formatting (Single Source of Truth)
-            self.formatted_context, self.source_map = self._format_context_shared(current_context)
-
-            # Tracing: Context formatted
-            if tracer:
-                tracer.context_formatted(
-                    source_map=self.source_map,
-                    formatted_context=self.formatted_context
-                )
+            # Phase 1.5: Format context with citations
+            self.formatted_context, self.source_map = await self._format_research_context(
+                items=current_context,
+                tracer=tracer,
+            )
 
             # Phase 2: Actor-Critic Loop
             max_iterations = CONFIG.reasoning_params.get("max_iterations", 3)
