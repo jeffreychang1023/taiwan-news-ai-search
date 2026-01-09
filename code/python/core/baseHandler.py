@@ -13,7 +13,7 @@ import asyncio
 import importlib
 import time
 import uuid
-from typing import List
+from typing import Any, Dict, List
 from core.schemas import Message
 from datetime import datetime, timezone, timedelta
 import json
@@ -47,115 +47,94 @@ API_VERSION = "0.1"
 
 class NLWebHandler:
 
-    def __init__(self, query_params, http_handler):
+    def __init__(self, query_params: Dict[str, Any], http_handler):
+        """
+        Initialize NLWebHandler with query parameters.
 
+        Args:
+            query_params: Dictionary of query parameters from request
+            http_handler: HTTP handler for sending responses
+        """
         self.http_handler = http_handler
         self.query_params = query_params
-        
-        # Track initialization time for time-to-first-result
+
+        # Delegate initialization to focused methods
+        self._init_core_params()
+        self._init_query_context()
+        self._init_conversation()
+        self._init_state()
+        self._init_synchronization()
+        self._init_messaging()
+
+    def _init_core_params(self) -> None:
+        """Initialize core query parameters."""
         self.init_time = time.time()
         self.first_result_sent = False
 
-        # the site that is being queried
-        self.site = get_param(query_params, "site", str, "all")
-        
-        # Parse comma-separated sites
+        self.site = get_param(self.query_params, "site", str, "all")
         if self.site and isinstance(self.site, str) and "," in self.site:
             self.site = [s.strip() for s in self.site.split(",") if s.strip()]
 
-        # the query that the user entered
-        self.query = get_param(query_params, "query", str, "")
+        self.query = get_param(self.query_params, "query", str, "")
+        self.prev_queries = get_param(self.query_params, "prev", list, [])
+        self.last_answers = get_param(self.query_params, "last_ans", list, [])
+        self.model = get_param(self.query_params, "model", str, "gpt-4.1-mini")
 
-        # the previous queries that the user has entered
-        self.prev_queries = get_param(query_params, "prev", list, [])
+    def _init_query_context(self) -> None:
+        """Initialize query-specific context."""
+        self.decontextualized_query = get_param(self.query_params, "decontextualized_query", str, "")
+        self.context_url = get_param(self.query_params, "context_url", str, "")
+        self.context_description = get_param(self.query_params, "context_description", str, "")
 
-        # the last answers (title and url) from previous queries
-        self.last_answers = get_param(query_params, "last_ans", list, [])
-
-        # the model that is being used
-        self.model = get_param(query_params, "model", str, "gpt-4.1-mini")
-
-        # the request may provide a fully decontextualized query, in which case 
-        # we don't need to decontextualize the latest query.
-        self.decontextualized_query = get_param(query_params, "decontextualized_query", str, "")
-
-        # the url of the page on which the query was entered, in case that needs to be 
-        # used to decontextualize the query. Typically left empty
-        self.context_url = get_param(query_params, "context_url", str, "")
-
-        # this allows for the request to specify an arbitrary string as background/context
-        self.context_description = get_param(query_params, "context_description", str, "")
-
-        # Conversation ID for tracking messages within a conversation
-        self.conversation_id = get_param(query_params, "conversation_id", str, "")
-
-        # OAuth user ID for conversation storage
-        self.oauth_id = get_param(query_params, "oauth_id", str, "")
-        
-        # Thread ID for conversation grouping
-        self.thread_id = get_param(query_params, "thread_id", str, "")
-
-        # Parent query ID (for generate requests that follow summarize)
-        self.parent_query_id = get_param(query_params, "parent_query_id", str, None)
-
-        streaming = get_param(query_params, "streaming", str, "True")
+        streaming = get_param(self.query_params, "streaming", str, "True")
         self.streaming = streaming not in ["False", "false", "0"]
-        
-        # Debug mode for verbose messages
-        debug = get_param(query_params, "debug", str, "False")
+
+        debug = get_param(self.query_params, "debug", str, "False")
         self.debug_mode = debug not in ["False", "false", "0", None]
 
-        # should we just list the results or try to summarize the results or use the results to generate an answer
-        # Valid values are "none","summarize" and "generate"
-        self.generate_mode = get_param(query_params, "generate_mode", str, "none")
+        self.generate_mode = get_param(self.query_params, "generate_mode", str, "none")
 
-        # Free conversation mode - skip vector search and use conversation context only
-        free_conversation = get_param(query_params, "free_conversation", str, "false")
+        free_conversation = get_param(self.query_params, "free_conversation", str, "false")
         self.free_conversation = free_conversation not in ["False", "false", "0", None]
 
-        # Include private sources (user-uploaded files) in search
-        include_private_sources = get_param(query_params, "include_private_sources", str, "false")
+        include_private_sources = get_param(self.query_params, "include_private_sources", str, "false")
         self.include_private_sources = include_private_sources not in ["False", "false", "0", None]
 
-        # User ID for private sources (temporary until OAuth)
-        self.user_id = get_param(query_params, "user_id", str, None)
+        self.user_id = get_param(self.query_params, "user_id", str, None)
 
-        # the items that have been retrieved from the vector database, could be before decontextualization.
-        # See below notes on fasttrack
+        self.item_type = siteToItemType(self.site)
+        self.required_item_type = get_param(self.query_params, "required_item_type", str, None)
+
+    def _init_conversation(self) -> None:
+        """Initialize conversation tracking."""
+        self.conversation_id = get_param(self.query_params, "conversation_id", str, "")
+        self.oauth_id = get_param(self.query_params, "oauth_id", str, "")
+        self.thread_id = get_param(self.query_params, "thread_id", str, "")
+        self.parent_query_id = get_param(self.query_params, "parent_query_id", str, None)
+
+    def _init_state(self) -> None:
+        """Initialize state variables."""
         self.retrieved_items = []
-
-        # the final set of items retrieved from vector database, after decontextualization, etc.
-        # items from these will be returned. If there is no decontextualization required, this will
-        # be the same as retrieved_items
         self.final_retrieved_items = []
-
-        # the final ranked answers that will be returned to the user (or have already been streamed)
         self.final_ranked_answers = []
 
-        # whether the query has been done. Can happen if it is determined that we don't have enough
-        # information to answer the query, or if the query is irrelevant.
         self.query_done = False
-
-        # whether the query is irrelevant. e.g., how many angels on a pinhead asked of seriouseats.com
         self.query_is_irrelevant = False
-
-        # whether the query requires decontextualization
         self.requires_decontextualization = False
 
-        # the type of item that is being sought. e.g., recipe, movie, etc.
-        self.item_type = siteToItemType(self.site)
-
-        # required item type from request parameter
-        self.required_item_type = get_param(query_params, "required_item_type", str, None)
-
-        # tool routing results
-
         self.tool_routing_results = []
-
-        # the state of the handler. This is a singleton that holds the state of the handler.
         self.state = NLWebHandlerState(self)
 
-        # Synchronization primitives - replace flags with proper async primitives
+        self.fastTrackRanker = None
+        self.fastTrackWorked = False
+        self.sites_in_embeddings_sent = False
+
+        self.return_value = {}
+        self.versionNumberSent = False
+        self.headersSent = False
+
+    def _init_synchronization(self) -> None:
+        """Initialize async synchronization primitives."""
         self.pre_checks_done_event = asyncio.Event()
         self.retrieval_done_event = asyncio.Event()
         self.connection_alive_event = asyncio.Event()
@@ -163,30 +142,14 @@ class NLWebHandler:
         self.abort_fast_track_event = asyncio.Event()
         self._state_lock = asyncio.Lock()
         self._send_lock = asyncio.Lock()
-        
-        self.fastTrackRanker = None
-        self.headersSent = False  # Track if headers have been sent
-        self.fastTrackWorked = False
-        self.sites_in_embeddings_sent = False
 
-        # this is the value that will be returned to the user. 
-        # it will be a dictionary with the message type as the key and the value being
-        # the value of the message.
-        self.return_value = {}
-
-        self.versionNumberSent = False
-        self.headersSent = False
-        # Replace raw_messages with proper Message objects
-        self.messages: List['Message'] = []  # List of Message objects
-        
-        # Generate a base message_id and counter for unique message IDs
+    def _init_messaging(self) -> None:
+        """Initialize messaging and response tracking."""
+        self.messages: List['Message'] = []
         self.handler_message_id = f"msg_{int(time.time() * 1000)}_{uuid.uuid4().hex[:9]}"
-        self.message_counter = 0  # Counter for unique message IDs
-        
-        # Create MessageSender helper (after handler_message_id is set)
+        self.message_counter = 0
         self.message_sender = MessageSender(self)
-        
-        # Add the initial user query message to messages list
+
         initial_user_message = self.message_sender.create_initial_user_message()
         self.messages.append(initial_user_message)
     
