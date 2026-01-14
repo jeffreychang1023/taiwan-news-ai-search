@@ -188,6 +188,12 @@ class DeepResearchOrchestrator:
             formatted_parts.append(f"[{idx}] {source} - {title}\n{snippet}\n")
 
         formatted_string = "\n".join(formatted_parts)
+
+        # Add current datetime header for temporal query accuracy
+        current_time_header = self._get_current_time_header()
+        if current_time_header:
+            formatted_string = current_time_header + formatted_string
+
         self.logger.info(
             f"Formatted context: {len(source_map)} sources, "
             f"{len(formatted_string)} chars"
@@ -201,6 +207,43 @@ class DeepResearchOrchestrator:
             )
 
         return formatted_string, source_map
+
+    def _get_current_time_header(self) -> str:
+        """
+        Generate current datetime header for temporal query accuracy.
+
+        Returns:
+            Formatted datetime header string or empty string if disabled.
+        """
+        try:
+            # Get timezone from config (default: Asia/Taipei)
+            timezone_str = CONFIG.reasoning_params.get("timezone", "Asia/Taipei")
+
+            try:
+                import pytz
+                tz = pytz.timezone(timezone_str)
+                current_time = datetime.now(tz)
+            except ImportError:
+                # Fallback if pytz not available
+                current_time = datetime.now()
+                self.logger.debug("pytz not available, using local time")
+
+            # Format: 2026-01-13 14:30:00 星期一 (台北時間)
+            weekday_names = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"]
+            weekday = weekday_names[current_time.weekday()]
+
+            header = f"""## 當前時間
+{current_time.strftime('%Y-%m-%d %H:%M:%S')} {weekday} ({timezone_str})
+
+當用戶詢問「今天」、「最近」、「現在」等時間相關詞彙時，請參考上述當前時間。
+
+## 可用資料來源
+"""
+            return header
+
+        except Exception as e:
+            self.logger.warning(f"Failed to generate current time header: {e}")
+            return ""
 
     async def _send_progress(self, message: Dict[str, Any]) -> None:
         """
@@ -633,7 +676,8 @@ class DeepResearchOrchestrator:
                         mode=mode,
                         current_context=current_context,
                         enable_web_search=enable_web_search,
-                        tracer=tracer
+                        tracer=tracer,
+                        query_id=query_id
                     )
                     context_after = len(current_context)
                     gap_resolution_added_data = context_after > context_before
@@ -1235,15 +1279,18 @@ class DeepResearchOrchestrator:
         mode: str,
         current_context: List[Dict[str, Any]],
         enable_web_search: bool,
-        tracer: Any = None
+        tracer: Any = None,
+        query_id: str = None
     ) -> None:
         """
         Process gap_resolutions from Analyst output (Stage 5).
 
-        Handles three types of gap resolution:
+        Handles multiple types of gap resolution:
         1. LLM Knowledge: Creates virtual documents with URN
-        2. Web Search: Executes Bing search if enabled
+        2. Web Search: Executes Google search if enabled
         3. Internal Search: Uses existing vector DB (handled by main loop)
+        4. Stock APIs: STOCK_TW (TWSE/TPEX), STOCK_GLOBAL (yfinance)
+        5. Wikipedia: Direct Wikipedia API call
 
         Args:
             response: Analyst output with gap_resolutions
@@ -1251,11 +1298,19 @@ class DeepResearchOrchestrator:
             current_context: Current context list (modified in place)
             enable_web_search: Whether web search is enabled
             tracer: Optional console tracer
+            query_id: Query ID for analytics logging
         """
         from reasoning.schemas_enhanced import GapResolutionType
 
         web_search_gaps = []
         llm_knowledge_items = []
+        stock_tw_gaps = []
+        stock_global_gaps = []
+        wikipedia_gaps = []
+        weather_tw_gaps = []
+        weather_global_gaps = []
+        company_tw_gaps = []
+        company_global_gaps = []
 
         for gap in response.gap_resolutions:
             if gap.resolution == GapResolutionType.LLM_KNOWLEDGE:
@@ -1286,6 +1341,27 @@ class DeepResearchOrchestrator:
                     # Mark as needing web search but not enabled
                     self.logger.info(f"Web search required but not enabled for: {gap.search_query}")
 
+            elif gap.resolution == GapResolutionType.STOCK_TW:
+                stock_tw_gaps.append(gap)
+
+            elif gap.resolution == GapResolutionType.STOCK_GLOBAL:
+                stock_global_gaps.append(gap)
+
+            elif gap.resolution == GapResolutionType.WIKIPEDIA:
+                wikipedia_gaps.append(gap)
+
+            elif gap.resolution == GapResolutionType.WEATHER_TW:
+                weather_tw_gaps.append(gap)
+
+            elif gap.resolution == GapResolutionType.WEATHER_GLOBAL:
+                weather_global_gaps.append(gap)
+
+            elif gap.resolution == GapResolutionType.COMPANY_TW:
+                company_tw_gaps.append(gap)
+
+            elif gap.resolution == GapResolutionType.COMPANY_GLOBAL:
+                company_global_gaps.append(gap)
+
         # Add LLM knowledge items to context
         if llm_knowledge_items:
             current_context.extend(llm_knowledge_items)
@@ -1295,34 +1371,63 @@ class DeepResearchOrchestrator:
                 self.source_map[start_idx + i] = item
             self.logger.info(f"Added {len(llm_knowledge_items)} LLM knowledge items to context")
 
+        # Execute stock API calls
+        if stock_tw_gaps:
+            await self._execute_stock_tw_searches(stock_tw_gaps, current_context, tracer, query_id)
+
+        if stock_global_gaps:
+            await self._execute_stock_global_searches(stock_global_gaps, current_context, tracer, query_id)
+
+        # Execute weather API calls
+        if weather_tw_gaps:
+            await self._execute_weather_tw_searches(weather_tw_gaps, current_context, tracer, query_id)
+
+        if weather_global_gaps:
+            await self._execute_weather_global_searches(weather_global_gaps, current_context, tracer, query_id)
+
+        # Execute company API calls
+        if company_tw_gaps:
+            await self._execute_company_tw_searches(company_tw_gaps, current_context, tracer, query_id)
+
+        if company_global_gaps:
+            await self._execute_company_global_searches(company_global_gaps, current_context, tracer, query_id)
+
+        # Execute Wikipedia searches
+        if wikipedia_gaps:
+            await self._execute_wikipedia_searches(wikipedia_gaps, current_context, tracer, query_id)
+
         # Execute web searches in parallel if enabled
         if web_search_gaps and enable_web_search:
-            await self._execute_web_searches(web_search_gaps, mode, current_context, tracer)
+            await self._execute_web_searches(web_search_gaps, mode, current_context, tracer, query_id)
 
     async def _execute_web_searches(
         self,
         gaps: List[Any],
         mode: str,
         current_context: List[Dict[str, Any]],
-        tracer: Any = None
+        tracer: Any = None,
+        query_id: str = None
     ) -> None:
         """
-        Execute web searches for gap resolutions in parallel.
+        Execute web searches for gap resolutions using multiple Tier 6 sources.
 
         Args:
             gaps: List of GapResolution objects requiring web search
             mode: Research mode
             current_context: Current context list (modified in place)
             tracer: Optional console tracer
+            query_id: Query ID for analytics logging
         """
         import asyncio
 
-        # Get Bing search configuration
+        # Get configuration
         tier_6_config = CONFIG.reasoning_params.get("tier_6", {})
         web_config = tier_6_config.get("web_search", {})
+        wiki_config = tier_6_config.get("wikipedia", {})
         max_results = web_config.get("max_results", 5)
+        enrichment_strategy = tier_6_config.get("enrichment_strategy", "parallel")
 
-        self.logger.info(f"Executing {len(gaps)} web searches for gap resolution")
+        self.logger.info(f"Executing {len(gaps)} web searches (strategy={enrichment_strategy})")
 
         # Send progress
         await self._send_progress({
@@ -1332,53 +1437,128 @@ class DeepResearchOrchestrator:
         })
 
         try:
-            # Stage 5: Use Google Search (Bing is deprecated)
+            # Initialize Google Search client
             from retrieval_providers.google_search_client import GoogleSearchClient
+            google_client = GoogleSearchClient()
 
-            search_client = GoogleSearchClient()
+            # Initialize Wikipedia client if enabled
+            wiki_client = None
+            if wiki_config.get("enabled", False):
+                try:
+                    from retrieval_providers.wikipedia_client import WikipediaClient
+                    wiki_client = WikipediaClient()
+                    if not wiki_client.is_available():
+                        wiki_client = None
+                        self.logger.debug("Wikipedia client disabled or library not installed")
+                except ImportError:
+                    self.logger.debug("Wikipedia library not installed")
 
-            # Execute searches in parallel
+            # Build search tasks
             search_tasks = []
             for gap in gaps:
                 if gap.search_query:
-                    task = search_client.search_all_sites(
+                    # Google Search task
+                    google_task = google_client.search_all_sites(
                         query=gap.search_query,
-                        num_results=max_results
+                        num_results=max_results,
+                        query_id=query_id
                     )
-                    search_tasks.append((gap, task))
+                    search_tasks.append(("google", gap, google_task))
+
+                    # Wikipedia task (parallel strategy)
+                    if wiki_client and enrichment_strategy == "parallel":
+                        wiki_task = wiki_client.search(
+                            query=gap.search_query,
+                            query_id=query_id
+                        )
+                        search_tasks.append(("wikipedia", gap, wiki_task))
 
             # Gather results
             all_results = []
-            for gap, task in search_tasks:
+            google_count = 0
+            wiki_count = 0
+
+            for source_type, gap, task in search_tasks:
                 try:
                     results = await task
-                    for result in results:
-                        # Convert to dict format and add tier 6 metadata
-                        if isinstance(result, (list, tuple)) and len(result) >= 4:
-                            schema_json = result[1] if len(result) > 1 else "{}"
-                            try:
-                                schema_obj = json.loads(schema_json) if isinstance(schema_json, str) else schema_json
-                            except json.JSONDecodeError:
-                                schema_obj = {}
 
-                            web_doc = {
-                                "url": result[0],
-                                "title": result[2] if len(result) > 2 else "Web Result",
-                                "site": result[3] if len(result) > 3 else "Web",
-                                "description": f"[Tier 6 | web_reference] {schema_obj.get('description', '')}",
-                                "_reasoning_metadata": {
-                                    "tier": 6,
-                                    "type": "web_reference",
-                                    "original_source": result[3] if len(result) > 3 else "Web",
-                                    "gap_query": gap.search_query
+                    if source_type == "google":
+                        # Process Google results (tuple format)
+                        for result in results:
+                            if isinstance(result, (list, tuple)) and len(result) >= 4:
+                                schema_json = result[1] if len(result) > 1 else "{}"
+                                try:
+                                    schema_obj = json.loads(schema_json) if isinstance(schema_json, str) else schema_json
+                                except json.JSONDecodeError:
+                                    schema_obj = {}
+
+                                web_doc = {
+                                    "url": result[0],
+                                    "title": result[2] if len(result) > 2 else "Web Result",
+                                    "site": result[3] if len(result) > 3 else "Web",
+                                    "description": f"[Tier 6 | web_reference] {schema_obj.get('description', '')}",
+                                    "_reasoning_metadata": {
+                                        "tier": 6,
+                                        "type": "web_reference",
+                                        "original_source": result[3] if len(result) > 3 else "Web",
+                                        "gap_query": gap.search_query
+                                    }
                                 }
-                            }
-                            all_results.append(web_doc)
+                                all_results.append(web_doc)
+                                google_count += 1
 
-                    self.logger.info(f"Web search for '{gap.search_query}': {len(results)} results")
+                    elif source_type == "wikipedia":
+                        # Process Wikipedia results (dict format)
+                        for result in results:
+                            if isinstance(result, dict):
+                                wiki_doc = {
+                                    "url": result.get("link", ""),
+                                    "title": result.get("title", "Wikipedia"),
+                                    "site": "Wikipedia",
+                                    "description": f"[Tier 6 | encyclopedia] {result.get('snippet', '')}",
+                                    "_reasoning_metadata": {
+                                        "tier": 6,
+                                        "type": "encyclopedia",
+                                        "original_source": "Wikipedia",
+                                        "gap_query": gap.search_query
+                                    }
+                                }
+                                all_results.append(wiki_doc)
+                                wiki_count += 1
+
+                    self.logger.info(f"{source_type} search for '{gap.search_query}': {len(results)} results")
 
                 except Exception as e:
-                    self.logger.error(f"Web search failed for '{gap.search_query}': {e}")
+                    self.logger.error(f"{source_type} search failed for '{gap.search_query}': {e}")
+
+            # Sequential fallback: Try Wikipedia if Google returned few results
+            if wiki_client and enrichment_strategy == "sequential" and google_count < 3:
+                self.logger.info("Sequential fallback: trying Wikipedia for additional context")
+                for gap in gaps:
+                    if gap.search_query:
+                        try:
+                            wiki_results = await wiki_client.search(
+                                query=gap.search_query,
+                                query_id=query_id
+                            )
+                            for result in wiki_results:
+                                if isinstance(result, dict):
+                                    wiki_doc = {
+                                        "url": result.get("link", ""),
+                                        "title": result.get("title", "Wikipedia"),
+                                        "site": "Wikipedia",
+                                        "description": f"[Tier 6 | encyclopedia] {result.get('snippet', '')}",
+                                        "_reasoning_metadata": {
+                                            "tier": 6,
+                                            "type": "encyclopedia",
+                                            "original_source": "Wikipedia",
+                                            "gap_query": gap.search_query
+                                        }
+                                    }
+                                    all_results.append(wiki_doc)
+                                    wiki_count += 1
+                        except Exception as e:
+                            self.logger.error(f"Wikipedia fallback failed: {e}")
 
             # Add to context
             if all_results:
@@ -1387,7 +1567,7 @@ class DeepResearchOrchestrator:
                 start_idx = len(self.source_map) + 1
                 for i, item in enumerate(all_results):
                     self.source_map[start_idx + i] = item
-                self.logger.info(f"Added {len(all_results)} web search results to context")
+                self.logger.info(f"Added {len(all_results)} Tier 6 results (Google: {google_count}, Wikipedia: {wiki_count})")
 
                 # Tracing
                 if tracer:
@@ -1395,11 +1575,475 @@ class DeepResearchOrchestrator:
                         "WEB_SEARCH",
                         {
                             "queries_executed": [g.search_query for g in gaps],
+                            "results_found": len(all_results),
+                            "google_count": google_count,
+                            "wikipedia_count": wiki_count
+                        }
+                    )
+
+        except ImportError:
+            self.logger.warning("Google Search client not available, skipping web search")
+        except Exception as e:
+            self.logger.error(f"Web search execution failed: {e}")
+
+    async def _execute_stock_tw_searches(
+        self,
+        gaps: List[Any],
+        current_context: List[Dict[str, Any]],
+        tracer: Any = None,
+        query_id: str = None
+    ) -> None:
+        """
+        Execute Taiwan stock API calls for gap resolutions.
+
+        Args:
+            gaps: List of GapResolution objects requiring STOCK_TW
+            current_context: Current context list (modified in place)
+            tracer: Optional console tracer
+            query_id: Query ID for analytics logging
+        """
+        try:
+            from retrieval_providers.twse_client import TwseClient
+            client = TwseClient()
+
+            if not client.is_available():
+                self.logger.debug("TWSE client not enabled")
+                return
+
+            all_results = []
+            for gap in gaps:
+                # Extract symbol from api_params
+                symbol = None
+                if gap.api_params:
+                    symbol = gap.api_params.get("symbol")
+                if not symbol and gap.search_query:
+                    # Try to extract symbol from search_query (e.g., "2330 股價")
+                    import re
+                    match = re.search(r'\b(\d{4,5})\b', gap.search_query)
+                    if match:
+                        symbol = match.group(1)
+
+                if symbol:
+                    try:
+                        results = await client.search(symbol, query_id=query_id)
+                        all_results.extend(results)
+                        self.logger.info(f"TWSE search for '{symbol}': {len(results)} results")
+                    except Exception as e:
+                        self.logger.error(f"TWSE search failed for '{symbol}': {e}")
+
+            # Add to context
+            if all_results:
+                current_context.extend(all_results)
+                start_idx = len(self.source_map) + 1
+                for i, item in enumerate(all_results):
+                    self.source_map[start_idx + i] = item
+                self.logger.info(f"Added {len(all_results)} Taiwan stock results")
+
+                if tracer:
+                    tracer.context_update(
+                        "STOCK_TW",
+                        {
+                            "symbols_queried": [g.api_params.get("symbol") if g.api_params else None for g in gaps],
                             "results_found": len(all_results)
                         }
                     )
 
         except ImportError:
-            self.logger.warning("BingSearchClient not available, skipping web search")
+            self.logger.debug("TWSE client not available")
         except Exception as e:
-            self.logger.error(f"Web search execution failed: {e}")
+            self.logger.error(f"Taiwan stock search failed: {e}")
+
+    async def _execute_stock_global_searches(
+        self,
+        gaps: List[Any],
+        current_context: List[Dict[str, Any]],
+        tracer: Any = None,
+        query_id: str = None
+    ) -> None:
+        """
+        Execute global stock API calls via yfinance for gap resolutions.
+
+        Args:
+            gaps: List of GapResolution objects requiring STOCK_GLOBAL
+            current_context: Current context list (modified in place)
+            tracer: Optional console tracer
+            query_id: Query ID for analytics logging
+        """
+        try:
+            from retrieval_providers.yfinance_client import YfinanceClient
+            client = YfinanceClient()
+
+            if not client.is_available():
+                self.logger.debug("yFinance client not enabled or library not available")
+                return
+
+            all_results = []
+            for gap in gaps:
+                # Extract symbol from api_params
+                symbol = None
+                if gap.api_params:
+                    symbol = gap.api_params.get("symbol")
+                if not symbol and gap.search_query:
+                    # Try to extract symbol from search_query (e.g., "NVDA stock price")
+                    import re
+                    match = re.search(r'\b([A-Z]{1,5})\b', gap.search_query.upper())
+                    if match:
+                        symbol = match.group(1)
+
+                if symbol:
+                    try:
+                        results = await client.search(symbol, query_id=query_id)
+                        all_results.extend(results)
+                        self.logger.info(f"yFinance search for '{symbol}': {len(results)} results")
+                    except Exception as e:
+                        self.logger.error(f"yFinance search failed for '{symbol}': {e}")
+
+            # Add to context
+            if all_results:
+                current_context.extend(all_results)
+                start_idx = len(self.source_map) + 1
+                for i, item in enumerate(all_results):
+                    self.source_map[start_idx + i] = item
+                self.logger.info(f"Added {len(all_results)} global stock results")
+
+                if tracer:
+                    tracer.context_update(
+                        "STOCK_GLOBAL",
+                        {
+                            "symbols_queried": [g.api_params.get("symbol") if g.api_params else None for g in gaps],
+                            "results_found": len(all_results)
+                        }
+                    )
+
+        except ImportError:
+            self.logger.debug("yFinance client not available")
+        except Exception as e:
+            self.logger.error(f"Global stock search failed: {e}")
+
+    async def _execute_wikipedia_searches(
+        self,
+        gaps: List[Any],
+        current_context: List[Dict[str, Any]],
+        tracer: Any = None,
+        query_id: str = None
+    ) -> None:
+        """
+        Execute Wikipedia API calls for gap resolutions.
+
+        Args:
+            gaps: List of GapResolution objects requiring WIKIPEDIA
+            current_context: Current context list (modified in place)
+            tracer: Optional console tracer
+            query_id: Query ID for analytics logging
+        """
+        try:
+            from retrieval_providers.wikipedia_client import WikipediaClient
+            client = WikipediaClient()
+
+            if not client.is_available():
+                self.logger.debug("Wikipedia client not enabled or library not available")
+                return
+
+            all_results = []
+            for gap in gaps:
+                query = gap.search_query or (gap.api_params.get("query") if gap.api_params else None)
+                if query:
+                    try:
+                        results = await client.search(query, query_id=query_id)
+                        # Convert to standard format
+                        for result in results:
+                            if isinstance(result, dict):
+                                wiki_doc = {
+                                    "url": result.get("link", ""),
+                                    "title": result.get("title", "Wikipedia"),
+                                    "site": "Wikipedia",
+                                    "description": f"[Tier 6 | encyclopedia] {result.get('snippet', '')}",
+                                    "_reasoning_metadata": {
+                                        "tier": 6,
+                                        "type": "encyclopedia",
+                                        "original_source": "Wikipedia",
+                                        "gap_query": query
+                                    }
+                                }
+                                all_results.append(wiki_doc)
+                        self.logger.info(f"Wikipedia search for '{query}': {len(results)} results")
+                    except Exception as e:
+                        self.logger.error(f"Wikipedia search failed for '{query}': {e}")
+
+            # Add to context
+            if all_results:
+                current_context.extend(all_results)
+                start_idx = len(self.source_map) + 1
+                for i, item in enumerate(all_results):
+                    self.source_map[start_idx + i] = item
+                self.logger.info(f"Added {len(all_results)} Wikipedia results")
+
+                if tracer:
+                    tracer.context_update(
+                        "WIKIPEDIA",
+                        {
+                            "queries_executed": [g.search_query for g in gaps if g.search_query],
+                            "results_found": len(all_results)
+                        }
+                    )
+
+        except ImportError:
+            self.logger.debug("Wikipedia client not available")
+        except Exception as e:
+            self.logger.error(f"Wikipedia search failed: {e}")
+
+    async def _execute_weather_tw_searches(
+        self,
+        gaps: List[Any],
+        current_context: List[Dict[str, Any]],
+        tracer: Any = None,
+        query_id: str = None
+    ) -> None:
+        """
+        Execute Taiwan weather API calls for gap resolutions.
+
+        Args:
+            gaps: List of GapResolution objects requiring WEATHER_TW
+            current_context: Current context list (modified in place)
+            tracer: Optional console tracer
+            query_id: Query ID for analytics logging
+        """
+        try:
+            from retrieval_providers.cwb_weather_client import CwbWeatherClient
+            client = CwbWeatherClient()
+
+            if not client.is_available():
+                self.logger.debug("CWB Weather client not enabled or API key not configured")
+                return
+
+            all_results = []
+            for gap in gaps:
+                # Extract location from api_params
+                location = None
+                if gap.api_params:
+                    location = gap.api_params.get("location")
+                if not location and gap.search_query:
+                    # Use search_query as location
+                    location = gap.search_query
+
+                if location:
+                    try:
+                        results = await client.search(location, query_id=query_id)
+                        all_results.extend(results)
+                        self.logger.info(f"CWB Weather search for '{location}': {len(results)} results")
+                    except Exception as e:
+                        self.logger.error(f"CWB Weather search failed for '{location}': {e}")
+
+            # Add to context
+            if all_results:
+                current_context.extend(all_results)
+                start_idx = len(self.source_map) + 1
+                for i, item in enumerate(all_results):
+                    self.source_map[start_idx + i] = item
+                self.logger.info(f"Added {len(all_results)} Taiwan weather results")
+
+                if tracer:
+                    tracer.context_update(
+                        "WEATHER_TW",
+                        {
+                            "locations_queried": [g.api_params.get("location") if g.api_params else g.search_query for g in gaps],
+                            "results_found": len(all_results)
+                        }
+                    )
+
+        except ImportError:
+            self.logger.debug("CWB Weather client not available")
+        except Exception as e:
+            self.logger.error(f"Taiwan weather search failed: {e}")
+
+    async def _execute_weather_global_searches(
+        self,
+        gaps: List[Any],
+        current_context: List[Dict[str, Any]],
+        tracer: Any = None,
+        query_id: str = None
+    ) -> None:
+        """
+        Execute global weather API calls via OpenWeatherMap for gap resolutions.
+
+        Args:
+            gaps: List of GapResolution objects requiring WEATHER_GLOBAL
+            current_context: Current context list (modified in place)
+            tracer: Optional console tracer
+            query_id: Query ID for analytics logging
+        """
+        try:
+            from retrieval_providers.global_weather_client import GlobalWeatherClient
+            client = GlobalWeatherClient()
+
+            if not client.is_available():
+                self.logger.debug("Global Weather client not enabled or API key not configured")
+                return
+
+            all_results = []
+            for gap in gaps:
+                # Extract city from api_params
+                city = None
+                if gap.api_params:
+                    city = gap.api_params.get("city")
+                if not city and gap.search_query:
+                    # Use search_query as city
+                    city = gap.search_query
+
+                if city:
+                    try:
+                        results = await client.search(city, query_id=query_id)
+                        all_results.extend(results)
+                        self.logger.info(f"Global Weather search for '{city}': {len(results)} results")
+                    except Exception as e:
+                        self.logger.error(f"Global Weather search failed for '{city}': {e}")
+
+            # Add to context
+            if all_results:
+                current_context.extend(all_results)
+                start_idx = len(self.source_map) + 1
+                for i, item in enumerate(all_results):
+                    self.source_map[start_idx + i] = item
+                self.logger.info(f"Added {len(all_results)} global weather results")
+
+                if tracer:
+                    tracer.context_update(
+                        "WEATHER_GLOBAL",
+                        {
+                            "cities_queried": [g.api_params.get("city") if g.api_params else g.search_query for g in gaps],
+                            "results_found": len(all_results)
+                        }
+                    )
+
+        except ImportError:
+            self.logger.debug("Global Weather client not available")
+        except Exception as e:
+            self.logger.error(f"Global weather search failed: {e}")
+
+    async def _execute_company_tw_searches(
+        self,
+        gaps: List[Any],
+        current_context: List[Dict[str, Any]],
+        tracer: Any = None,
+        query_id: str = None
+    ) -> None:
+        """
+        Execute Taiwan company registration API calls for gap resolutions.
+
+        Args:
+            gaps: List of GapResolution objects requiring COMPANY_TW
+            current_context: Current context list (modified in place)
+            tracer: Optional console tracer
+            query_id: Query ID for analytics logging
+        """
+        try:
+            from retrieval_providers.tw_company_client import TwCompanyClient
+            client = TwCompanyClient()
+
+            if not client.is_available():
+                self.logger.debug("TW Company client not enabled")
+                return
+
+            all_results = []
+            for gap in gaps:
+                # Extract company name from api_params
+                query = None
+                if gap.api_params:
+                    query = gap.api_params.get("name") or gap.api_params.get("ubn")
+                if not query and gap.search_query:
+                    query = gap.search_query
+
+                if query:
+                    try:
+                        results = await client.search(query, query_id=query_id)
+                        all_results.extend(results)
+                        self.logger.info(f"TW Company search for '{query}': {len(results)} results")
+                    except Exception as e:
+                        self.logger.error(f"TW Company search failed for '{query}': {e}")
+
+            # Add to context
+            if all_results:
+                current_context.extend(all_results)
+                start_idx = len(self.source_map) + 1
+                for i, item in enumerate(all_results):
+                    self.source_map[start_idx + i] = item
+                self.logger.info(f"Added {len(all_results)} Taiwan company results")
+
+                if tracer:
+                    tracer.context_update(
+                        "COMPANY_TW",
+                        {
+                            "queries_executed": [g.api_params.get("name") if g.api_params else g.search_query for g in gaps],
+                            "results_found": len(all_results)
+                        }
+                    )
+
+        except ImportError:
+            self.logger.debug("TW Company client not available")
+        except Exception as e:
+            self.logger.error(f"Taiwan company search failed: {e}")
+
+    async def _execute_company_global_searches(
+        self,
+        gaps: List[Any],
+        current_context: List[Dict[str, Any]],
+        tracer: Any = None,
+        query_id: str = None
+    ) -> None:
+        """
+        Execute global company/entity API calls via Wikidata for gap resolutions.
+
+        Args:
+            gaps: List of GapResolution objects requiring COMPANY_GLOBAL
+            current_context: Current context list (modified in place)
+            tracer: Optional console tracer
+            query_id: Query ID for analytics logging
+        """
+        try:
+            from retrieval_providers.wikidata_client import WikidataClient
+            client = WikidataClient()
+
+            if not client.is_available():
+                self.logger.debug("Wikidata client not enabled")
+                return
+
+            all_results = []
+            for gap in gaps:
+                # Extract name from api_params
+                name = None
+                entity_type = "company"
+                if gap.api_params:
+                    name = gap.api_params.get("name")
+                    entity_type = gap.api_params.get("type", "company")
+                if not name and gap.search_query:
+                    name = gap.search_query
+
+                if name:
+                    try:
+                        results = await client.search(name, entity_type=entity_type, query_id=query_id)
+                        all_results.extend(results)
+                        self.logger.info(f"Wikidata search for '{name}': {len(results)} results")
+                    except Exception as e:
+                        self.logger.error(f"Wikidata search failed for '{name}': {e}")
+
+            # Add to context
+            if all_results:
+                current_context.extend(all_results)
+                start_idx = len(self.source_map) + 1
+                for i, item in enumerate(all_results):
+                    self.source_map[start_idx + i] = item
+                self.logger.info(f"Added {len(all_results)} global company results")
+
+                if tracer:
+                    tracer.context_update(
+                        "COMPANY_GLOBAL",
+                        {
+                            "queries_executed": [g.api_params.get("name") if g.api_params else g.search_query for g in gaps],
+                            "results_found": len(all_results)
+                        }
+                    )
+
+        except ImportError:
+            self.logger.debug("Wikidata client not available")
+        except Exception as e:
+            self.logger.error(f"Global company search failed: {e}")

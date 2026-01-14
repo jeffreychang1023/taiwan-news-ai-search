@@ -994,6 +994,42 @@ class QueryLogger:
 
         self.log_queue.put({"table": "user_interactions", "data": data})
 
+    def log_tier_6_enrichment(
+        self,
+        query_id: str,
+        source_type: str,
+        cache_hit: bool = False,
+        latency_ms: int = 0,
+        timeout_occurred: bool = False,
+        result_count: int = 0,
+        metadata: Dict[str, Any] = None
+    ) -> None:
+        """
+        Log Tier 6 knowledge enrichment activity.
+
+        Args:
+            query_id: Query identifier
+            source_type: Type of enrichment source ('google_search', 'wikipedia', 'llm_knowledge')
+            cache_hit: Whether result came from cache
+            latency_ms: Latency in milliseconds
+            timeout_occurred: Whether timeout occurred
+            result_count: Number of results returned
+            metadata: Additional metadata (stored as JSON)
+        """
+        data = {
+            "query_id": query_id,
+            "source_type": source_type,
+            "cache_hit": 1 if cache_hit else 0,
+            "latency_ms": latency_ms,
+            "timeout_occurred": 1 if timeout_occurred else 0,
+            "result_count": result_count,
+            "timestamp": time.time(),
+            "metadata": json.dumps(metadata) if metadata else None,
+            "schema_version": 2
+        }
+
+        self.log_queue.put({"table": "tier_6_enrichment", "data": data})
+
     def get_query_stats(self, days: int = 7) -> Dict[str, Any]:
         """
         Get query statistics for the past N days.

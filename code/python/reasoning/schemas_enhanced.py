@@ -23,9 +23,23 @@ import uuid
 
 class GapResolutionType(str, Enum):
     """Types of gap resolution for knowledge enrichment."""
+    # Core types
     LLM_KNOWLEDGE = "llm_knowledge"      # Static facts (definitions, principles, history)
     WEB_SEARCH = "web_search"            # Dynamic data (current positions, prices, recent events)
     INTERNAL_SEARCH = "internal_search"  # Existing vector DB search
+
+    # Tier 6 API types - Phase 1: 股價
+    STOCK_TW = "stock_tw"                # 台股 (TWSE/TPEX)
+    STOCK_GLOBAL = "stock_global"        # 全球股價 (yfinance)
+
+    # Tier 6 API types - Phase 2: 天氣/公司 (placeholder)
+    WEATHER_TW = "weather_tw"            # 台灣天氣 (CWB)
+    WEATHER_GLOBAL = "weather_global"    # 全球天氣 (OpenWeatherMap)
+    COMPANY_TW = "company_tw"            # 台灣公司登記
+    COMPANY_GLOBAL = "company_global"    # Wikidata
+
+    # Wikipedia (already implemented)
+    WIKIPEDIA = "wikipedia"              # Wikipedia API
 
 
 class GapResolution(BaseModel):
@@ -38,6 +52,10 @@ class GapResolution(BaseModel):
     confidence: Literal["high", "medium", "low"] = Field(default="medium", description="Confidence level")
     requires_web_search: bool = Field(default=False, description="True if web search needed but toggle is off")
     topic: Optional[str] = Field(default=None, description="Topic for URN generation: urn:llm:knowledge:{topic}")
+    api_params: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="API-specific parameters (e.g., {'symbol': '2330'} for STOCK_TW)"
+    )
 
 # Import base schemas
 from reasoning.agents.analyst import AnalystResearchOutput

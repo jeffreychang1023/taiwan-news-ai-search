@@ -14,16 +14,97 @@ reasoning:
     knowledge_graph_generation: true  # Phase KG: Entity-Relationship Knowledge Graph
     gap_knowledge_enrichment: true    # Stage 5: Gap Detection with LLM Knowledge & Web Search
 
+  # Timezone for current time context (used in temporal queries)
+  timezone: "Asia/Taipei"
+
   # Stage 5: Tier 6 Knowledge Enrichment Configuration
   tier_6:
     llm_knowledge:
       enabled: true
       confidence_cap: "medium"   # Max confidence for LLM-generated knowledge
       max_answer_length: 300     # Max chars for inline LLM answers
+
     web_search:
       enabled: true
       provider: "google"         # Stage 5: Google Custom Search (Bing deprecated)
       max_results: 5             # Free tier: 100 queries/day, max 10 per request
+      timeout: 3.0               # Timeout in seconds (prevents slow API blocking)
+      fallback_to_local: true    # Continue with local sources on timeout
+      max_snippet_length: 200    # Token optimization: truncate snippets
+      cache:
+        enabled: true
+        ttl_hours: 1             # Cache validity period
+        max_size: 100            # Max cached queries
+
+    wikipedia:
+      enabled: true              # Enable Wikipedia as Tier 6 source
+      language: "zh"             # zh for Traditional Chinese, en for English
+      max_results: 3             # Max Wikipedia articles per query
+      max_summary_length: 500    # Max chars per summary
+      timeout: 5.0               # Timeout in seconds
+      cache:
+        enabled: true
+        ttl_hours: 24            # Wikipedia content changes less often
+        max_size: 200            # Max cached queries
+
+    # Phase 1 - 股價 API
+    yfinance:
+      enabled: true
+      timeout: 5.0
+      include_fundamentals: true
+      cache:
+        enabled: true
+        ttl_hours: 0.25    # 15 分鐘
+        max_size: 100
+
+    twse:
+      enabled: true
+      timeout: 3.0
+      cache:
+        enabled: true
+        ttl_hours: 0.083   # 5 分鐘
+        max_size: 200
+
+    # Phase 2 - 天氣 API
+    cwb_weather:
+      enabled: true
+      api_key: ${CWB_API_KEY}   # 中央氣象署 API Key
+      timeout: 5.0
+      cache:
+        enabled: true
+        ttl_hours: 1
+        max_size: 100
+
+    # Phase 2 - 公司資料 API
+    wikidata:
+      enabled: true
+      timeout: 8.0
+      cache:
+        enabled: true
+        ttl_hours: 24
+        max_size: 200
+
+    tw_company:
+      enabled: true
+      timeout: 5.0
+      cache:
+        enabled: true
+        ttl_hours: 168     # 7 天
+        max_size: 200
+
+    # Phase 3 - 全球天氣 API
+    openweathermap:
+      enabled: false       # 需要 API Key 才能啟用
+      api_key: ${OPENWEATHERMAP_API_KEY}
+      language: "zh_tw"
+      timeout: 5.0
+      cache:
+        enabled: true
+        ttl_hours: 1
+        max_size: 100
+
+    # Enrichment strategy: how to use multiple Tier 6 sources
+    enrichment_strategy: "parallel"  # parallel (faster) or sequential (fallback)
 
   # Auto-REJECT thresholds for Phase 2 structured critique
   critique_thresholds:

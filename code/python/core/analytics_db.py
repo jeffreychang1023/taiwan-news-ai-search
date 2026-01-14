@@ -169,6 +169,21 @@ class AnalyticsDB:
                     interaction_metadata TEXT,
                     FOREIGN KEY (query_id) REFERENCES queries(query_id) ON DELETE CASCADE
                 )
+            """,
+            'tier_6_enrichment': """
+                CREATE TABLE IF NOT EXISTS tier_6_enrichment (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    query_id TEXT NOT NULL,
+                    source_type TEXT NOT NULL,
+                    cache_hit INTEGER DEFAULT 0,
+                    latency_ms INTEGER,
+                    timeout_occurred INTEGER DEFAULT 0,
+                    result_count INTEGER,
+                    timestamp REAL NOT NULL,
+                    metadata TEXT,
+                    schema_version INTEGER DEFAULT 2,
+                    FOREIGN KEY (query_id) REFERENCES queries(query_id) ON DELETE CASCADE
+                )
             """
         }
 
@@ -245,6 +260,21 @@ class AnalyticsDB:
                     interaction_metadata TEXT,
                     FOREIGN KEY (query_id) REFERENCES queries(query_id) ON DELETE CASCADE
                 )
+            """,
+            'tier_6_enrichment': """
+                CREATE TABLE IF NOT EXISTS tier_6_enrichment (
+                    id SERIAL PRIMARY KEY,
+                    query_id VARCHAR(255) NOT NULL,
+                    source_type VARCHAR(50) NOT NULL,
+                    cache_hit INTEGER DEFAULT 0,
+                    latency_ms INTEGER,
+                    timeout_occurred INTEGER DEFAULT 0,
+                    result_count INTEGER,
+                    timestamp DOUBLE PRECISION NOT NULL,
+                    metadata TEXT,
+                    schema_version INTEGER DEFAULT 2,
+                    FOREIGN KEY (query_id) REFERENCES queries(query_id) ON DELETE CASCADE
+                )
             """
         }
 
@@ -257,7 +287,9 @@ class AnalyticsDB:
                 "CREATE INDEX IF NOT EXISTS idx_queries_mode ON queries(mode)",
                 "CREATE INDEX IF NOT EXISTS idx_retrieved_documents_query_id ON retrieved_documents(query_id)",
                 "CREATE INDEX IF NOT EXISTS idx_ranking_scores_query_id ON ranking_scores(query_id)",
-                "CREATE INDEX IF NOT EXISTS idx_user_interactions_query_id ON user_interactions(query_id)"
+                "CREATE INDEX IF NOT EXISTS idx_user_interactions_query_id ON user_interactions(query_id)",
+                "CREATE INDEX IF NOT EXISTS idx_tier_6_query ON tier_6_enrichment(query_id)",
+                "CREATE INDEX IF NOT EXISTS idx_tier_6_source_type ON tier_6_enrichment(source_type)"
             ]
         else:
             return [
@@ -266,7 +298,9 @@ class AnalyticsDB:
                 "CREATE INDEX IF NOT EXISTS idx_queries_mode ON queries(mode)",
                 "CREATE INDEX IF NOT EXISTS idx_retrieved_documents_query_id ON retrieved_documents(query_id)",
                 "CREATE INDEX IF NOT EXISTS idx_ranking_scores_query_id ON ranking_scores(query_id)",
-                "CREATE INDEX IF NOT EXISTS idx_user_interactions_query_id ON user_interactions(query_id)"
+                "CREATE INDEX IF NOT EXISTS idx_user_interactions_query_id ON user_interactions(query_id)",
+                "CREATE INDEX IF NOT EXISTS idx_tier_6_query ON tier_6_enrichment(query_id)",
+                "CREATE INDEX IF NOT EXISTS idx_tier_6_source_type ON tier_6_enrichment(source_type)"
             ]
 
     def adapt_query(self, query: str) -> str:
