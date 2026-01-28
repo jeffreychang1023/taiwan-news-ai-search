@@ -17,7 +17,7 @@ from core.retriever import search
 from core.prompts import find_prompt, fill_prompt
 from core.utils.json_utils import trim_json, trim_json_hard
 from misc.logger.logging_config_helper import get_configured_logger
-from core.utils.utils import log
+from core.utils.utils import log, get_param
 import core.query_analysis.analyze_query as analyze_query
 import core.query_analysis.relevance_detection as relevance_detection
 import core.query_analysis.memory as memory
@@ -190,6 +190,7 @@ class GenerateAnswer(NLWebHandler):
                 site=str(self.site) if isinstance(self.site, list) else self.site,
                 mode=self.generate_mode or "generate",
                 decontextualized_query=self.decontextualized_query,
+                session_id=self.session_id,
                 conversation_id=self.conversation_id,
                 model=self.model,
                 parent_query_id=self.parent_query_id
@@ -535,6 +536,26 @@ class GenerateAnswer(NLWebHandler):
             return
 
         try:
+            # Check for research report passed from frontend (new simplified approach)
+            research_report = get_param(self.query_params, "research_report", str, "")
+            if research_report:
+                report_len = len(research_report)
+                logger.info(f"[FREE_CONVERSATION] Received research report from frontend ({report_len} chars)")
+                print(f"[FREE_CONVERSATION] Received research report from frontend ({report_len} chars)")
+
+                # Warn if report is very large (may exceed LLM context window)
+                if report_len > 50000:  # ~12k tokens
+                    logger.warning(f"[FREE_CONVERSATION] Research report is very large ({report_len} chars), may exceed context window")
+                    print(f"[FREE_CONVERSATION] WARNING: Research report is very large ({report_len} chars)")
+
+                self.injected_research_report = research_report
+                self.injected_source_urls = []  # Sources are embedded in the report as [n] citations
+            else:
+                logger.info(f"[FREE_CONVERSATION] No research report in request")
+                print(f"[FREE_CONVERSATION] No research report in request")
+                self.injected_research_report = None
+                self.injected_source_urls = None
+
             has_cached_articles = len(self.final_ranked_answers) > 0
             logger.info(f"Starting free conversation synthesis (cached articles: {len(self.final_ranked_answers)})")
             print(f"[FREE_CONVERSATION] Synthesizing answer using conversation context and {len(self.final_ranked_answers)} cached articles")
@@ -620,6 +641,7 @@ class GenerateAnswer(NLWebHandler):
 3. **直接且具體** - 使用報告中的具體數據、公司名稱、技術名稱
 4. **結構清晰** - 用 1-2 段組織回答，直接回應用戶的追問
 5. **承認不確定性** - 如果報告中沒有相關資訊，明確說明
+6. **長度限制** - 回答必須控制在 800 字以內，簡潔有力，不要過度展開
 
 請用繁體中文回答，保持專業且資訊豐富。"""
             elif has_cached_articles:
@@ -644,6 +666,8 @@ class GenerateAnswer(NLWebHandler):
 範例（避免的回答）：
 「許多零售商使用 AI 來提升效率。」（太籠統）
 
+6. **長度限制** - 回答必須控制在 800 字以內，簡潔有力，不要過度展開
+
 請用繁體中文回答，保持專業且資訊豐富。"""
             else:
                 # No cached articles - provide general conversational response
@@ -657,6 +681,7 @@ class GenerateAnswer(NLWebHandler):
 1. 如果問題參考了之前的對話或提供的文件，請確認理解用戶的意圖
 2. 提供有建設性的回應或建議
 3. 如果需要更多資訊，可以建議用戶進行新的搜尋
+4. **長度限制** - 回答必須控制在 800 字以內，簡潔有力，不要過度展開
 
 請用繁體中文回答，保持專業且有幫助。"""
 

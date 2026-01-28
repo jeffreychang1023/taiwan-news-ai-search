@@ -173,4 +173,23 @@
 
 ---
 
-*更新：2026-01-19*
+## ✅ Track H：Reasoning 系統強化（2026-01-28）
+
+**目標**：強化 Reasoning 系統的多輪對話與事實查核能力
+
+**已建置**：
+
+1. **Free Conversation Mode**（`methods/generate_answer.py`）
+   - 注入之前的 Deep Research 報告進行後續 Q&A
+   - 支援多輪對話延續研究上下文
+   - 自動偵測並載入相關報告
+
+2. **Phase 2 CoV（Chain of Verification）**
+   - 事實查核機制整合於 Critic Agent
+   - 驗證 Analyst 輸出的事實準確性
+   - 實作於 `reasoning/agents/critic.py`
+   - Prompt 定義於 `reasoning/prompts/cov.py`
+
+---
+
+*更新：2026-01-28*

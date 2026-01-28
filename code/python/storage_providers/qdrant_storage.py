@@ -103,18 +103,25 @@ class QdrantStorageProvider(StorageProvider):
             logger.error(f"Failed to initialize Qdrant storage: {e}")
             raise
     
-    async def add_conversation(self, user_id: str, site: str, message_id: Optional[str], 
+    async def add_conversation(self, user_id: str, site: str, message_id: Optional[str],
                              user_prompt: str, response: str, conversation_id: str,
                              embedding: Optional[List[float]] = None,
                              summary: Optional[str] = None, main_topics: Optional[List[str]] = None,
                              participants: Optional[List[Dict[str, Any]]] = None) -> ConversationEntry:
         """
         Add a conversation to storage.
-        
+
         conversation_id is required (from frontend).
         If message_id is None, creates a new message_id.
         """
         try:
+            # Ensure client is initialized
+            if self.client is None:
+                logger.warning("Qdrant client not initialized, attempting to initialize...")
+                await self.initialize()
+                if self.client is None:
+                    raise RuntimeError("Failed to initialize Qdrant client")
+
             # conversation_id is required
             if not conversation_id:
                 raise ValueError("conversation_id is required")
@@ -241,19 +248,27 @@ class QdrantStorageProvider(StorageProvider):
     async def get_conversation_by_id(self, conversation_id: str, limit: Optional[int] = None) -> Dict[str, Any]:
         """
         Retrieve all conversations with the given conversation_id.
-        
+
         Args:
             conversation_id: The conversation ID to retrieve
             limit: Optional limit to return only the N most recent exchanges
-            
+
         Returns:
             Dict containing all conversation exchanges as events
         """
         try:
+            # Ensure client is initialized
+            if self.client is None:
+                logger.warning("Qdrant client not initialized, attempting to initialize...")
+                await self.initialize()
+                if self.client is None:
+                    logger.error("Failed to initialize Qdrant client")
+                    return []
+
             # Search for all conversations with this ID
             # Use a high default limit if none specified
             scroll_limit = limit if limit else 1000
-            
+
             results = await self.client.scroll(
                 collection_name=self.collection_name,
                 scroll_filter=models.Filter(

@@ -338,6 +338,15 @@ async def deep_research_handler(request: web.Request) -> web.Response:
         from methods.deep_research import DeepResearchHandler
         handler = DeepResearchHandler(query_params, wrapper)
 
+        # Send begin-nlweb-response so frontend can capture conversation_id
+        begin_message = {
+            "message_type": "begin-nlweb-response",
+            "query": query,
+            "conversation_id": handler.conversation_id
+        }
+        await wrapper.write_stream(begin_message)
+        logger.info(f"[Deep Research] Sent begin-nlweb-response with conversation_id={handler.conversation_id}")
+
         # Run Deep Research query (will stream progress via SSE)
         result = await handler.runQuery()
 
@@ -364,6 +373,9 @@ async def deep_research_handler(request: web.Request) -> web.Response:
                     final_message['knowledge_graph'] = schema_obj['knowledge_graph']
 
             await wrapper.write_stream(final_message)
+
+            # Note: Research report is now passed directly from frontend to backend
+            # via query_params in free conversation mode, no DB storage needed
 
         # Close the stream
         await wrapper.write_stream({"message_type": "complete"})

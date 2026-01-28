@@ -63,8 +63,10 @@ NLWeb 是自然語言搜尋系統，提供智慧查詢處理、多源檢索與 A
 | Clarification Agent | ✅ | `reasoning/agents/clarification.py` | 歧義解析，選項生成 |
 | Time Range Extractor | ✅ | `core/query_analysis/time_range_extractor.py` | 時間範圍解析 |
 | Analyst Agent | ✅ | `reasoning/agents/analyst.py` | 知識圖譜、Gap Detection |
-| Critic Agent | ✅ | `reasoning/agents/critic.py` | 品質守門員 |
+| Critic Agent | ✅ | `reasoning/agents/critic.py` | 品質守門員 + CoV 事實查核 |
 | Writer Agent | ✅ | `reasoning/agents/writer.py` | 格式化輸出、引用標註 |
+| CoV Prompts | ✅ | `reasoning/prompts/cov.py` | Chain of Verification 提示 |
+| Free Conversation | ✅ | `methods/generate_answer.py` | Deep Research 後續 Q&A |
 | KG & Gap Detection | 🟡 | `reasoning/agents/analyst.py` | 整合在 Analyst 內 |
 
 ### M5: Output（輸出與介面）🟡 部分完成

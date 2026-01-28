@@ -175,6 +175,14 @@
 - Phase A/B/C 完整部署
 - Shadow mode → Rollout
 
+### ✅ Track G：Tier 6 API 整合
+- Stock, Weather, Wikipedia APIs
+- 知識增強 Gap Resolution
+
+### ✅ Track H：Reasoning 系統強化
+- Free Conversation Mode（Deep Research 後續 Q&A）
+- Phase 2 CoV（Chain of Verification 事實查核）
+
 ---
 
-*更新：2026-01-19*
+*更新：2026-01-28*

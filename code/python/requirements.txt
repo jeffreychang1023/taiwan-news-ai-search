@@ -105,3 +105,7 @@ yfinance>=0.2.0
 
 # TypeAgent: Structured LLM output with automatic retry and validation
 instructor>=1.4.0
+
+# Indexing Module (M0) - Semantic Chunking POC
+sentence-transformers>=2.2.0  # Local embedding for semantic chunking (free, ~420MB model)
+jieba>=0.42.1                 # Chinese text segmentation

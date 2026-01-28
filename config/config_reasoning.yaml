@@ -120,7 +120,7 @@ reasoning:
 
   tracing:
     console:
-      enabled: true
+      enabled: false
       level: DEBUG  # ERROR, WARN, INFO, DEBUG, TRACE (local dev default: DEBUG)
       colors: true
     file:

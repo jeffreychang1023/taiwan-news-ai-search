@@ -108,6 +108,10 @@ class NLWebHandler:
     def _init_conversation(self) -> None:
         """Initialize conversation tracking."""
         self.conversation_id = get_param(self.query_params, "conversation_id", str, "")
+        # Auto-generate conversation_id if not provided
+        if not self.conversation_id:
+            self.conversation_id = f"conv_{uuid.uuid4().hex[:12]}"
+        self.session_id = get_param(self.query_params, "session_id", str, "")
         self.oauth_id = get_param(self.query_params, "oauth_id", str, "")
         self.thread_id = get_param(self.query_params, "thread_id", str, "")
         self.parent_query_id = get_param(self.query_params, "parent_query_id", str, None)
@@ -132,10 +136,6 @@ class NLWebHandler:
         self.return_value = {}
         self.versionNumberSent = False
         self.headersSent = False
-
-        # Deep Research report context for free conversation mode
-        self.injected_research_report = None
-        self.injected_source_urls = None
 
     def _init_synchronization(self) -> None:
         """Initialize async synchronization primitives."""
@@ -250,6 +250,7 @@ class NLWebHandler:
                 site=str(self.site) if isinstance(self.site, list) else self.site,
                 mode=self.generate_mode or "list",
                 decontextualized_query=self.decontextualized_query,
+                session_id=self.session_id,
                 conversation_id=self.conversation_id,
                 model=self.model,
                 parent_query_id=self.parent_query_id
@@ -392,16 +393,8 @@ class NLWebHandler:
                 logger.info("[FREE_CONVERSATION] Skipping public vector search - using conversation context")
                 print("[FREE_CONVERSATION] Skipping public vector search - using conversation context")
 
-                # Check and inject previous Deep Research report
-                research_context = await self._get_previous_research_report()
-                if research_context:
-                    logger.info(f"[FREE_CONVERSATION] Found previous research report, injecting context")
-                    print(f"[FREE_CONVERSATION] Injecting previous Deep Research report ({len(research_context.get('report', ''))} chars)")
-                    self.injected_research_report = research_context["report"]
-                    self.injected_source_urls = research_context["source_urls"]
-                else:
-                    self.injected_research_report = None
-                    self.injected_source_urls = None
+                # Note: Research report is now passed directly from frontend via query_params
+                # in Free Conversation mode, handled by generate_answer.py
 
                 # Check for private sources even in free conversation mode
                 logger.info(f"[FREE_CONVERSATION] include_private_sources={self.include_private_sources}, user_id={self.user_id}")
@@ -653,65 +646,3 @@ class NLWebHandler:
                 # Tool has no handler class, using get_ranked_answers
                 await self.get_ranked_answers()
 
-    async def _get_previous_research_report(self) -> Dict[str, Any] | None:
-        """
-        從 conversation_history 取得前次 Deep Research 報告。
-
-        Returns:
-            Dict with 'report', 'source_urls', 'query', 'confidence', 'mode', or None if not found
-        """
-        if not self.conversation_id:
-            return None
-
-        try:
-            from core.conversation_history import get_conversation_by_id
-
-            # 取得最近 5 筆對話
-            prev_exchanges = await get_conversation_by_id(self.conversation_id, limit=5)
-
-            if not prev_exchanges:
-                return None
-
-            # 反向搜尋（從最新開始），找到最近的 Deep Research 報告
-            for exchange in reversed(prev_exchanges):
-                try:
-                    response_str = exchange.get("response", "")
-                    if not response_str:
-                        continue
-
-                    # response 是 JSON 字串，包含 Message 物件陣列
-                    messages = json.loads(response_str)
-
-                    # 搜尋 messages 中的 Deep Research 結果
-                    for msg in messages:
-                        content = msg.get("content", {})
-                        # content 可能是 dict 或其他類型
-                        if not isinstance(content, dict):
-                            continue
-
-                        items = content.get("content", [])
-                        if not isinstance(items, list):
-                            continue
-
-                        for item in items:
-                            if not isinstance(item, dict):
-                                continue
-                            schema_obj = item.get("schema_object", {})
-                            if schema_obj.get("@type") == "ResearchReport":
-                                logger.info(f"[FREE_CONVERSATION] Found ResearchReport in conversation history")
-                                return {
-                                    "report": item.get("description", ""),
-                                    "source_urls": schema_obj.get("sources_used", []),
-                                    "query": exchange.get("user_prompt", ""),
-                                    "confidence": schema_obj.get("confidence", ""),
-                                    "mode": schema_obj.get("mode", "unknown")
-                                }
-                except (json.JSONDecodeError, KeyError, TypeError) as e:
-                    logger.debug(f"[FREE_CONVERSATION] Error parsing exchange: {e}")
-                    continue
-
-            return None
-
-        except Exception as e:
-            logger.error(f"[FREE_CONVERSATION] Error getting previous research report: {e}")
-            return None

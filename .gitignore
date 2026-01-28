@@ -524,4 +524,6 @@ tests/architecture_dev/*~
 *.backup
 *.tmp
 
-
+# Project indexer database
+tools/project_index.db
+project_index.db

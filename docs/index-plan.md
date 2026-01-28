@@ -692,20 +692,29 @@ quality_gate:
   max_html_ratio: 0.3          # HTML 標籤比例上限
 
 chunking:
-  default_threshold: 0.80      # 預設（將由 POC 驗證後調整）
-  max_chunk_sentences: 10
+  # POC 驗證結果（2026-01-28）：
+  # - 語義分塊對中文新聞效果有限（相鄰句子相似度普遍 < 0.5）
+  # - 改用長度優先策略，區別度約 0.56，在理想範圍 0.4-0.6 內
+  strategy: "length_based"       # 使用長度優先策略（非語義分塊）
+  target_length: 170             # 目標 chunk 長度（字元）
+  min_length: 100                # 最小 chunk 長度（太短會合併到前一塊）
+  short_article_threshold: 200   # 短文閾值：< 200 字整篇作為 1 chunk
+  merge_threshold: 0.80          # 動態合併：相鄰 chunks 相似度 > 0.8 時合併
   summary_max_length: 400
   extractive_summary_sentences: 3  # Extractive summary 選取句數
 
+# Source Tiers 簡化：不再用於分塊閾值，僅用於品質標記
 source_tiers:
-  tier_1_threshold: 0.90       # 高閾值 = 更細碎分塊（適合需要精確引用的來源）
-  tier_2_threshold: 0.85
-  tier_3_threshold: 0.80       # 預設（將由 POC 驗證後調整）
-  tier_4_threshold: 0.75       # 低閾值 = 更大塊分塊（適合內容農場/聚合站）
+  tier_1: "authoritative"   # 官方、通訊社
+  tier_2: "verified"        # 主流媒體
+  tier_3: "standard"        # 一般新聞（預設）
+  tier_4: "aggregator"      # 聚合站
 
 source_mappings:
-  reuters.com: 2
-  udn.com: 3
+  reuters.com: 1
+  cna.com.tw: 1
+  udn.com: 2
+  ltn.com.tw: 2
   ithome.com.tw: 3
 
 vault:
@@ -1200,3 +1209,73 @@ source_mappings:
 | 整合現有爬蟲 | 在 `pipeline.py` 加入 Indexing hooks |
 | 撰寫測試 | 單元測試、整合測試 |
 | 更新文件 | 更新 `algo/` 演算法文件 |
+
+---
+
+## Implementation Findings（實作前調查結果）
+
+> 此區塊由 Claude 於 2026-01-27 調查後新增
+
+### 1. 現有 Embedding 函數確認
+
+**位置**：`code/python/core/embedding.py`
+
+已確認存在以下可用函數：
+- `get_embedding(text: str) -> List[float]` - 單一文本
+- `batch_get_embeddings(texts: List[str]) -> List[List[float]]` - 批次處理
+
+可直接使用，無需重新實作。
+
+### 2. TSV 測試檔案
+
+**可用測試資料位置**：`crawled/` 目錄
+
+| 檔案 | 用途建議 |
+|------|----------|
+| `crawled/已上傳/test_5_articles.tsv` | 小型測試（5 篇） |
+| `crawled/已上傳/cna_2025_12.tsv` | 中型測試（CNA） |
+| `crawled/udn_2025_12.tsv` | 中型測試（UDN） |
+
+**TSV 格式確認**：
+```
+url<TAB>json_data
+```
+
+JSON 結構包含：`@type`, `headline`, `articleBody`, `author`, `datePublished`, `publisher`, `inLanguage`, `url`, `keywords`
+
+與計畫中的 CDM 完全相容。
+
+### 3. 中文分句方案
+
+**決定**：使用 `jieba` 進行中文分句
+
+需新增依賴：
+```bash
+pip install jieba
+```
+
+### 4. 資料庫目錄
+
+以下目錄需在執行時自動建立：
+- `data/vault/` - Vault SQLite 資料庫
+- `data/indexing/` - Buffer 和遷移記錄
+
+### 5. migrations.db 用途說明
+
+**目的**：支援回滾機制（30 天內可回滾到舊格式）
+
+**儲存內容**：
+1. `migration_records` 表：遷移狀態、時間、新舊 point IDs
+2. `qdrant_backup` 表：舊格式 points 的 payload 備份（不含 vector，節省空間）
+
+**如果不需要回滾功能**：可跳過 `rollback_manager.py` 和此資料庫。
+
+### 6. 建議執行順序
+
+| 順序 | Phase | 說明 |
+|------|-------|------|
+| 1 | Phase 0 | POC 閾值驗證（先確定最佳閾值） |
+| 2 | Phase 1 | 核心基礎設施 |
+| 3 | Phase 2 | 資料流模組 |
+| 4 | Phase 3 | 儲存與安全 |
+| 5 | Phase 4 | 整合與測試 |

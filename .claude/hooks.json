@@ -1,0 +1,54 @@
+{
+  "hooks": [
+    {
+      "matcher": {
+        "type": "event",
+        "event": "Stop"
+      },
+      "hooks": [
+        {
+          "type": "prompt",
+          "message": "Session 即將結束。如果這次對話有解決非平凡的問題（bug 修復、效能優化、踩坑經驗），請執行 /learn 記錄到 lessons-learned.md。"
+        }
+      ]
+    },
+    {
+      "matcher": {
+        "type": "tool",
+        "tool": "Grep"
+      },
+      "hooks": [
+        {
+          "type": "prompt",
+          "message": "STOP: 請使用 `python tools/indexer.py --search \"關鍵字\"` 而非 Grep。索引系統使用 SQLite FTS5，回傳更精準的結果且節省 Token。"
+        }
+      ]
+    },
+    {
+      "matcher": {
+        "type": "tool",
+        "tool": "Edit",
+        "path": "**/*.py"
+      },
+      "hooks": [
+        {
+          "type": "command",
+          "command": "python -m py_compile \"$CLAUDE_FILE_PATH\" 2>&1 || echo '[Hook] Python 語法錯誤，請修正'"
+        }
+      ]
+    },
+    {
+      "matcher": {
+        "type": "tool",
+        "tool": "Write",
+        "path": "**/*.py"
+      },
+      "hooks": [
+        {
+          "type": "command",
+          "command": "python -m py_compile \"$CLAUDE_FILE_PATH\" 2>&1 || echo '[Hook] Python 語法錯誤，請修正'"
+        }
+      ]
+    }
+  ]
+}

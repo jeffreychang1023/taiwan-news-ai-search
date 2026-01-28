@@ -2,6 +2,22 @@
 
 ## 最近里程碑
 
+### 2026-01-28：Free Conversation Mode + CoV ✅
+
+**Reasoning 系統重大強化**
+
+1. **Free Conversation Mode**
+   - 注入之前的 Deep Research 報告進行後續 Q&A
+   - 支援多輪對話延續研究上下文
+   - 實作於 `methods/generate_answer.py`
+
+2. **Phase 2 CoV（Chain of Verification）**
+   - 事實查核機制整合於 Critic Agent
+   - 驗證 Analyst 輸出的事實準確性
+   - 實作於 `reasoning/agents/critic.py`、`reasoning/prompts/cov.py`
+
+---
+
 ### 2026-01：Tier 6 API 整合 ✅
 
 **知識增強 API 已部署**
@@ -126,9 +142,11 @@
 
 ## 目前重點
 
-### 2026-01：Production 優化
+### 2026-01：Reasoning 系統強化 + Production 優化
 
-所有主要 tracks（A-F）完成。目前工作：
+所有主要 tracks（A-F）完成，新增 Reasoning 強化功能：
+- ✅ **Free Conversation Mode**：Deep Research 報告後續 Q&A
+- ✅ **Phase 2 CoV**：Chain of Verification 事實查核
 - **Production 監控**：追蹤 reasoning 系統效能指標
 - **UX 迭代**：根據使用者回饋精煉澄清流程
 - **引用品質**：改善來源連結與格式
@@ -162,4 +180,4 @@
 
 ---
 
-*更新：2026-01-19*
+*更新：2026-01-28*
