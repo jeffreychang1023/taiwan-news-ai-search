@@ -9,36 +9,8 @@
     <script src="https://d3js.org/d3.v7.min.js"></script>
 </head>
 <body>
-    <!-- Sidebar for User Knowledge Base -->
-    <div class="sidebar" id="userKnowledgeSidebar">
-        <div class="sidebar-title">
-            <span>📚</span>
-            <span>我的知識庫</span>
-        </div>
-
-        <div class="sidebar-toggle" onclick="togglePrivateSources()">
-            <input type="checkbox" id="includePrivateSourcesCheckbox" checked>
-            <span class="sidebar-toggle-text">包含我的文件</span>
-        </div>
-
-        <div class="sidebar-divider"></div>
-
-        <div class="file-list">
-            <div class="file-list-title">已上傳文件</div>
-            <div id="fileListContainer">
-                <div style="color: #9ca3af; font-size: 13px; text-align: center; padding: 20px 0;">
-                    尚未上傳文件
-                </div>
-            </div>
-        </div>
-
-        <button class="upload-button" onclick="triggerFileUpload()">
-            <span>+</span>
-            <span>上傳文件</span>
-        </button>
-
-        <input type="file" id="fileInput" style="display: none;" accept=".pdf,.docx,.txt,.md" onchange="handleFileSelect(event)">
-    </div>
+    <!-- Hidden file input for upload (used by right tab panel) -->
+    <input type="file" id="fileInput" style="display: none;" accept=".pdf,.docx,.txt,.md" onchange="handleFileSelect(event)">
 
     <!-- Upload Progress Modal -->
     <div class="upload-modal" id="uploadModal">
@@ -49,26 +21,6 @@
                     <div class="progress-bar-fill" id="progressBarFill" style="width: 0%"></div>
                 </div>
                 <div class="progress-text" id="progressText">準備上傳...</div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Right Sidebar for Site Filter -->
-    <div class="sidebar-right" id="siteFilterSidebar">
-        <div class="site-filter-title">
-            <span>🔍</span>
-            <span>來源篩選</span>
-        </div>
-
-        <div class="site-filter-actions">
-            <button class="site-filter-btn" onclick="selectAllSites()">全選</button>
-            <button class="site-filter-btn" onclick="deselectAllSites()">全不選</button>
-        </div>
-
-        <div class="site-filter-list" id="siteFilterList">
-            <!-- Sites will be loaded dynamically -->
-            <div style="color: #9ca3af; font-size: 13px; text-align: center; padding: 20px 0;">
-                載入中...
             </div>
         </div>
     </div>
@@ -475,14 +427,6 @@
                     </div>
                 </div>
 
-                <!-- Conversation History -->
-                <div class="conversation-history" id="conversationHistory" style="display: none;">
-                    <div class="conversation-history-header">對話記錄</div>
-                    <div class="conversation-history-list" id="conversationHistoryList">
-                        <!-- History items will be populated dynamically -->
-                    </div>
-                </div>
-
                 <!-- AI Summary -->
                 <div class="ai-summary" id="aiSummarySection" style="display: none;">
                     <div class="ai-summary-header">
@@ -570,27 +514,6 @@
 
     <script src="/static/news-search.js"></script>
 
-    <!-- Phase 4: Clarification Modal -->
-    <div id="clarificationModal" class="modal-overlay">
-        <div class="modal" style="max-width: 600px;">
-            <h2 style="margin: 0 0 16px 0; font-size: 20px; color: #111827;">需要澄清查詢內容</h2>
-            <p id="clarificationHint" style="margin: 0 0 24px 0; color: #64748b; font-size: 14px;"></p>
-
-            <div id="clarificationOptions" style="display: flex; flex-direction: column; gap: 12px; margin-bottom: 24px;">
-                <!-- Options will be dynamically inserted here -->
-            </div>
-
-            <div id="clarificationFallback" style="margin-top: 16px; padding: 12px; background: #f8fafc; border-radius: 8px; font-size: 13px; color: #64748b; display: none;">
-                <!-- Fallback suggestion will be inserted here -->
-            </div>
-
-            <div style="display: flex; gap: 12px; justify-content: flex-end; margin-top: 24px;">
-                <button onclick="closeClarificationModal()" style="padding: 8px 16px; border: 1px solid #e2e8f0; border-radius: 6px; background: white; color: #64748b; cursor: pointer; font-size: 14px;">
-                    取消
-                </button>
-            </div>
-        </div>
-    </div>
 
 </body>
 </html>

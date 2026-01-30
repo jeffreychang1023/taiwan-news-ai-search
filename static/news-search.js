@@ -249,6 +249,8 @@
                     btnSearch.textContent = '發送';
                     searchInput.placeholder = '繼續對話...';
 
+                    // 必須無條件顯示 resultsSection，因為 chatContainer 是它的子元素
+                    // B1（空結果）已由 resetToHome() 清空 listView/timelineView 處理
                     resultsSection.classList.add('active');
                     chatContainer.classList.add('active');
                     chatInputContainer.appendChild(searchContainer);
@@ -260,8 +262,6 @@
                 // 更新上傳按鈕可見性
                 updateUploadButtonVisibility();
 
-                // Update sidebar visibility based on new mode
-                updateSidebarVisibility();
             });
         });
 
@@ -474,38 +474,21 @@
                     createdAt: Date.now()
                 };
                 savedSessions.push(newSession);
+                currentLoadedSessionId = newSession.id;
             }
 
             // 儲存到 localStorage
             localStorage.setItem('taiwanNewsSavedSessions', JSON.stringify(savedSessions));
             console.log('Session saved');
+
+            document.dispatchEvent(new CustomEvent('session-saved'));
         }
 
         // 重置對話
-        function resetConversation() {
-            cancelActiveSearch();
-            conversationHistory = [];
-            sessionHistory = [];
-            chatHistory = [];
-            accumulatedArticles = [];
-            pinnedMessages = [];  // Clear pinned messages
-            pinnedNewsCards = [];  // Clear pinned news cards
-            currentLoadedSessionId = null;
-            currentResearchReport = null;  // Clear Deep Research report
-            currentConversationId = null;  // Clear conversation ID
-
-            // 重置 UI
-            searchInput.value = '';
-            listView.innerHTML = '';
-            timelineView.innerHTML = '';
-            initialState.style.display = 'block';
-            resultsSection.classList.remove('active');
-            resultsSection.style.display = '';
-            // Hide folder page if open (discard snapshot since we're fully resetting)
-            const folderPageEl = document.getElementById('folderPage');
-            if (folderPageEl) folderPageEl.style.display = 'none';
-            _preFolderState = null;
-            // Move searchContainer back to main container if it was inside chatInputContainer
+        // ===== 共用 UI 重置函式 =====
+        // 將搜尋框歸位、隱藏聊天/資料夾、重置模式按鈕、清空結果區
+        function resetToHome() {
+            // 搬回 searchContainer
             if (searchContainer.parentElement === chatInputContainer) {
                 const mainContainer = document.querySelector('main .container');
                 const loadingStateEl = document.getElementById('loadingState');
@@ -513,10 +496,18 @@
             }
             searchContainer.style.display = 'block';
             chatInputContainer.style.display = 'none';
-            chatContainer.style.display = 'none';
+            // 清除 inline style，讓 CSS .chat-container { display: none } 生效
+            // 不能用 style.display = 'none'，否則之後 .active class 無法覆蓋 inline style
+            chatContainer.style.display = '';
             chatContainer.classList.remove('active');
             chatMessagesEl.innerHTML = '';
-            // Reset to search mode
+
+            // 關閉資料夾頁
+            const folderPageEl = document.getElementById('folderPage');
+            if (folderPageEl) folderPageEl.style.display = 'none';
+            _preFolderState = null;
+
+            // 重置模式為 search（兩套按鈕同步）
             currentMode = 'search';
             btnSearch.textContent = '搜尋';
             searchInput.placeholder = '問我任何新聞相關問題，例如：最近台灣資安政策有什麼進展？';
@@ -526,21 +517,46 @@
             const searchInlineBtn = document.querySelector('.mode-btn-inline[data-mode="search"]');
             if (searchInlineBtn) searchInlineBtn.classList.add('active');
 
-            // Hide pinned banner
+            // 重置結果區
+            resultsSection.classList.remove('active');
+            resultsSection.style.display = '';
+            listView.innerHTML = '';
+            timelineView.innerHTML = '';
+
+            // 隱藏釘選 banner
             const pinnedBanner = document.getElementById('pinnedBanner');
             if (pinnedBanner) pinnedBanner.style.display = 'none';
 
-            // Reset pinned news list
+            // 重置釘選新聞列表
             const pinnedNewsList = document.getElementById('pinnedNewsList');
             if (pinnedNewsList) {
                 pinnedNewsList.innerHTML = '<div class="pinned-news-empty">尚未釘選任何新聞</div>';
             }
+        }
 
-            // 清空對話記錄顯示
-            const convHistoryEl = document.getElementById('conversationHistory');
-            if (convHistoryEl) {
-                convHistoryEl.innerHTML = '<div class="conversation-history-header">對話記錄</div>';
-            }
+        function resetConversation() {
+            cancelActiveSearch();
+
+            // 清空所有資料
+            conversationHistory = [];
+            sessionHistory = [];
+            chatHistory = [];
+            accumulatedArticles = [];
+            pinnedMessages = [];
+            pinnedNewsCards = [];
+            currentLoadedSessionId = null;
+            currentResearchReport = null;
+            currentConversationId = null;
+
+            // 共用 UI 重置
+            resetToHome();
+
+            // resetConversation 專有的重置
+            searchInput.value = '';
+            initialState.style.display = 'block';
+
+            // 清空右側 Tab「問答紀錄」（conversationHistory 已被清空）
+            renderConversationHistory();
 
             // 重置 AI 摘要
             const summaryContent = document.getElementById('summaryContent');
@@ -591,9 +607,9 @@
                 panel.classList.add('visible');
                 currentOpenTab = tabName;
 
-                // 如果是問答紀錄 Tab，重新載入列表
+                // 如果是問答紀錄 Tab，重新載入當前 session 的查詢列表
                 if (tabName === 'history') {
-                    renderSavedSessions();
+                    renderConversationHistory();
                 }
             }
         }
@@ -618,34 +634,32 @@
         });
 
         // Function to render conversation history
+        // 渲染當前 session 的查詢歷史到右側 Tab「問答紀錄」
         function renderConversationHistory() {
-            const historyContainer = document.getElementById('conversationHistory');
-            const historyList = document.getElementById('conversationHistoryList');
+            const container = document.getElementById('savedSessionsListNew');
+            if (!container) return;
 
             if (conversationHistory.length === 0) {
-                // Hide if no history
-                historyContainer.style.display = 'none';
+                container.innerHTML = '<div class="empty-sessions">尚無查詢紀錄</div>';
                 return;
             }
 
-            // Show and populate history
-            historyContainer.style.display = 'block';
-            historyList.innerHTML = '';
+            container.innerHTML = '';
 
             conversationHistory.forEach((query, index) => {
-                const historyItem = document.createElement('div');
-                historyItem.className = 'conversation-history-item';
-                historyItem.innerHTML = `
-                    <span class="conversation-number">${index + 1}.</span>
-                    <span class="conversation-text">${escapeHTML(query)}</span>
+                const item = document.createElement('div');
+                item.className = 'saved-session-item';
+                item.innerHTML = `
+                    <div class="saved-session-item-title">${index + 1}. ${escapeHTML(query)}</div>
                 `;
 
-                // Add click handler to restore this session
-                historyItem.addEventListener('click', () => {
+                // 點擊回溯到該次查詢的結果
+                item.addEventListener('click', () => {
                     restoreSession(index);
+                    closeAllTabs();
                 });
 
-                historyList.appendChild(historyItem);
+                container.appendChild(item);
             });
         }
 
@@ -708,9 +722,8 @@
                                 break;
 
                             case 'clarification_required':
-                                // Phase 4: Clarification needed before proceeding
-                                console.log('[Clarification] Request received:', data.clarification);
-                                showClarificationModal(data.clarification, data.query, eventSource);
+                                // Clarification for regular search (not yet implemented in-chat)
+                                console.warn('[Clarification] Received clarification_required in regular search — not handled');
                                 break;
 
                             case 'complete':
@@ -1015,7 +1028,9 @@
             const aiSummarySection = document.getElementById('aiSummarySection');
             const aiSummaryContent = document.getElementById('aiSummaryContent');
 
-            if (data.summary && data.summary.message) {
+            if (!aiSummarySection || !aiSummaryContent) {
+                console.warn('[populateResultsFromAPI] aiSummarySection or aiSummaryContent not found in DOM');
+            } else if (data.summary && data.summary.message) {
                 // We have a summary (from summarize mode)
                 aiSummaryContent.innerHTML = `
                     <div class="summary-section">
@@ -1048,7 +1063,7 @@
                 `;
                 aiSummarySection.style.display = 'block';
             } else {
-                aiSummarySection.style.display = 'none';
+                if (aiSummarySection) aiSummarySection.style.display = 'none';
             }
 
             // Clear existing list view content
@@ -1386,6 +1401,9 @@
                 // Update conversation history display
                 renderConversationHistory();
 
+                // 自動建立/更新 session（第一則訊息發出時建立，後續查詢更新）
+                saveCurrentSession();
+
                 loadingState.classList.remove('active');
                 resultsSection.classList.add('active');
 
@@ -1546,6 +1564,9 @@
 
                             // Display results
                             displayDeepResearchResults(fullReport, data, savedQuery);
+
+                            // 自動建立/更新 session
+                            saveCurrentSession();
                         } else if (data.message_type === 'complete') {
                             // Stream complete - close connection
                             eventSource.close();
@@ -2473,6 +2494,9 @@
 
                 chatLoading.classList.remove('active');
                 chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+
+                // 自動建立/更新 session
+                saveCurrentSession();
             } catch (error) {
                 console.error('Chat failed:', error);
                 chatLoading.classList.remove('active');
@@ -2562,8 +2586,10 @@
             // Render the banner
             renderPinnedBanner();
 
-            // Auto-save session
-            saveCurrentSession();
+            // 只在 session 已存在時才存檔（釘選不應建立新 session）
+            if (currentLoadedSessionId !== null) {
+                saveCurrentSession();
+            }
         }
 
         // Update the visual state of a pin button
@@ -2765,8 +2791,10 @@
             // Render the pinned news list
             renderPinnedNewsList();
 
-            // Auto-save session
-            saveCurrentSession();
+            // 只在 session 已存在時才存檔（釘選不應建立新 session）
+            if (currentLoadedSessionId !== null) {
+                saveCurrentSession();
+            }
         }
 
         // Update the visual state of pin buttons for a specific URL
@@ -3253,123 +3281,19 @@
                 sessionHistory = [];
                 chatHistory = [];
                 accumulatedArticles = [];
-                pinnedMessages = [];  // Clear pinned messages
-                pinnedNewsCards = [];  // Clear pinned news cards
-                currentResearchReport = null;  // Clear Deep Research report
-                currentConversationId = null;  // Clear conversation ID
+                pinnedMessages = [];
+                pinnedNewsCards = [];
+                currentResearchReport = null;
+                currentConversationId = null;
 
-                // Clear UI — match resetConversation() pattern
+                resetToHome();
                 searchInput.value = '';
-                listView.innerHTML = '';
-                timelineView.innerHTML = '';
                 initialState.style.display = 'block';
-                resultsSection.classList.remove('active');
-                resultsSection.style.display = '';
 
-                // Close folder page if open
-                const folderPageEl = document.getElementById('folderPage');
-                if (folderPageEl) folderPageEl.style.display = 'none';
-                if (typeof _preFolderState !== 'undefined') _preFolderState = null;
-
-                // Move searchContainer back to main container if it was inside chatInputContainer
-                if (searchContainer.parentElement === chatInputContainer) {
-                    const mainContainer = document.querySelector('main .container');
-                    const loadingStateEl = document.getElementById('loadingState');
-                    mainContainer.insertBefore(searchContainer, loadingStateEl);
-                }
-                searchContainer.style.display = 'block';
-                chatInputContainer.style.display = 'none';
-                chatContainer.style.display = 'none';
-                chatContainer.classList.remove('active');
-                chatMessagesEl.innerHTML = '';
-
-                // Clear conversation history display
-                const convHistoryEl = document.getElementById('conversationHistory');
-                if (convHistoryEl) convHistoryEl.style.display = 'none';
-
-                // Hide pinned banner
-                const pinnedBanner = document.getElementById('pinnedBanner');
-                if (pinnedBanner) pinnedBanner.style.display = 'none';
-
-                // Reset pinned news list
-                const pinnedNewsList = document.getElementById('pinnedNewsList');
-                if (pinnedNewsList) {
-                    pinnedNewsList.innerHTML = '<div class="pinned-news-empty">尚未釘選任何新聞</div>';
-                }
-
-                // Reset to search mode
-                currentMode = 'search';
-                btnSearch.textContent = '搜尋';
-                searchInput.placeholder = '問我任何新聞相關問題，例如：最近台灣資安政策有什麼進展？';
-                modeButtons.forEach(btn => btn.classList.remove('active'));
-                if (modeButtons[0]) modeButtons[0].classList.add('active');
-                modeButtonsInline.forEach(btn => btn.classList.remove('active'));
-                const searchInlineBtn = document.querySelector('.mode-btn-inline[data-mode="search"]');
-                if (searchInlineBtn) searchInlineBtn.classList.add('active');
+                renderConversationHistory();
             }
 
-            // Re-render the sessions list
-            renderSavedSessions();
-        }
-
-        // Function to render saved sessions (用於右側 Tab 面板)
-        function renderSavedSessions() {
-            const containerNew = document.getElementById('savedSessionsListNew');
-
-            const emptyHtml = '<div class="empty-sessions" style="color: #9ca3af; font-size: 13px; text-align: center; padding: 20px 0;">尚無儲存的搜尋記錄</div>';
-
-            if (savedSessions.length === 0) {
-                if (containerNew) containerNew.innerHTML = emptyHtml;
-                return;
-            }
-
-            // 清空容器
-            if (containerNew) containerNew.innerHTML = '';
-
-            // Render sessions in reverse order (newest first)
-            savedSessions.slice().reverse().forEach((session) => {
-                const date = new Date(session.createdAt);
-                const dateStr = date.toLocaleDateString('zh-TW', {
-                    year: 'numeric',
-                    month: 'short',
-                    day: 'numeric',
-                    hour: '2-digit',
-                    minute: '2-digit'
-                });
-
-                // 為 Tab 建立元素
-                if (containerNew) {
-                    const sessionItemNew = document.createElement('div');
-                    sessionItemNew.className = 'saved-session-item';
-                    sessionItemNew.style.cssText = 'padding: 10px; background: #f8f9fa; border-radius: 6px; cursor: pointer; position: relative;';
-                    sessionItemNew.innerHTML = `
-                        <button class="delete-btn" data-session-id="${session.id}" style="position: absolute; top: 6px; right: 6px; background: none; border: none; color: #999; cursor: pointer; font-size: 12px; padding: 2px 6px;">✕</button>
-                        <div style="font-size: 13px; font-weight: 500; color: #1a1a1a; margin-bottom: 4px; padding-right: 20px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHTML(session.title)}</div>
-                        <div style="font-size: 11px; color: #6b7280;">${session.conversationHistory.length} 個查詢 • ${dateStr}</div>
-                    `;
-
-                    const deleteBtnNew = sessionItemNew.querySelector('.delete-btn');
-                    deleteBtnNew.addEventListener('click', (e) => {
-                        e.stopPropagation();
-                        handleDeleteSession(session.id, deleteBtnNew);
-                    });
-
-                    sessionItemNew.addEventListener('click', () => {
-                        loadSavedSession(session);
-                        closeAllTabs(); // 關閉 Tab 面板
-                    });
-
-                    // Hover 效果
-                    sessionItemNew.addEventListener('mouseenter', () => {
-                        sessionItemNew.style.background = '#e5e7eb';
-                    });
-                    sessionItemNew.addEventListener('mouseleave', () => {
-                        sessionItemNew.style.background = '#f8f9fa';
-                    });
-
-                    containerNew.appendChild(sessionItemNew);
-                }
-            });
+            document.dispatchEvent(new CustomEvent('session-deleted'));
         }
 
         // Function to load a saved session
@@ -3396,34 +3320,19 @@
                 console.log('[Session] Restored research report:', currentResearchReport.report?.substring(0, 100) + '...');
             }
 
-            // 先清除舊的搜尋結果 UI
-            listView.innerHTML = '';
-            timelineView.innerHTML = '';
+            // 先重置 UI 到首頁狀態
+            resetToHome();
             const aiSummarySec = document.getElementById('aiSummarySection');
             if (aiSummarySec) aiSummarySec.style.display = 'none';
-            chatMessagesEl.innerHTML = '';
-
-            // Reset to search mode first (ensures searchContainer is in correct position)
-            if (searchContainer.parentElement === chatInputContainer) {
-                const mainContainer = document.querySelector('main .container');
-                const loadingStateEl = document.getElementById('loadingState');
-                mainContainer.insertBefore(searchContainer, loadingStateEl);
-            }
-            chatInputContainer.style.display = 'none';
-            chatContainer.classList.remove('active');
-            currentMode = 'search';
-            btnSearch.textContent = '搜尋';
-            searchInput.placeholder = '問我任何新聞相關問題，例如：最近台灣資安政策有什麼進展？';
-            modeButtons.forEach(btn => btn.classList.remove('active'));
-            if (modeButtons[0]) modeButtons[0].classList.add('active');
-            modeButtonsInline.forEach(btn => btn.classList.remove('active'));
-            const _searchInlineBtn = document.querySelector('.mode-btn-inline[data-mode="search"]');
-            if (_searchInlineBtn) _searchInlineBtn.classList.add('active');
 
             // Render the last query's results
             if (sessionHistory.length > 0) {
                 const lastSession = sessionHistory[sessionHistory.length - 1];
                 populateResultsFromAPI(lastSession.data, lastSession.query);
+
+                // resetToHome() 移除了 .active class，恢復 session 後需要重新加上
+                resultsSection.classList.add('active');
+                initialState.style.display = 'none';
             }
 
             // Update conversation history display
@@ -3481,6 +3390,9 @@
                 // Optionally switch to chat mode
                 currentMode = 'chat';
                 modeButtons.forEach(btn => btn.classList.remove('active')); modeButtons[2].classList.add('active');
+                modeButtonsInline.forEach(btn => btn.classList.remove('active'));
+                const chatInlineBtn = document.querySelector('.mode-btn-inline[data-mode="chat"]');
+                if (chatInlineBtn) chatInlineBtn.classList.add('active');
                 btnSearch.textContent = '發送';
                 searchInput.placeholder = '繼續對話...';
 
@@ -3504,7 +3416,7 @@
             if (_fp) _fp.style.display = 'none';
             _preFolderState = null;
             // 確保搜尋容器可見
-            document.getElementById('searchContainer').style.display = 'block';
+            searchContainer.style.display = 'block';
 
             // Scroll to results
             resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -3818,155 +3730,6 @@
             });
         });
 
-        // Phase 4: Clarification Modal Functions
-        function showClarificationModal(clarificationData, originalQuery, eventSource) {
-            console.log('[Clarification] Showing modal:', clarificationData);
-
-            const modal = document.getElementById('clarificationModal');
-            const hint = document.getElementById('clarificationHint');
-            const optionsContainer = document.getElementById('clarificationOptions');
-            const fallback = document.getElementById('clarificationFallback');
-
-            // Set hint text
-            hint.textContent = clarificationData.context_hint || '請選擇一個選項：';
-
-            // Clear previous options
-            optionsContainer.innerHTML = '';
-
-            // Create option buttons
-            clarificationData.options.forEach((option, index) => {
-                const button = document.createElement('button');
-                button.className = 'clarification-option';
-                button.textContent = option.label;
-                button.style.cssText = 'padding: 12px 16px; border: 2px solid #e2e8f0; border-radius: 8px; background: white; color: #111827; cursor: pointer; font-size: 14px; text-align: left; transition: all 0.2s;';
-
-                button.onmouseover = () => {
-                    button.style.borderColor = '#3b82f6';
-                    button.style.background = '#eff6ff';
-                };
-                button.onmouseout = () => {
-                    button.style.borderColor = '#e2e8f0';
-                    button.style.background = 'white';
-                };
-
-                button.onclick = () => {
-                    handleClarificationChoice(option, originalQuery, eventSource);
-                };
-
-                optionsContainer.appendChild(button);
-            });
-
-            // Show fallback suggestion
-            if (clarificationData.fallback_suggestion) {
-                fallback.textContent = clarificationData.fallback_suggestion;
-                fallback.style.display = 'block';
-            } else {
-                fallback.style.display = 'none';
-            }
-
-            // Show modal
-            modal.classList.add('active');
-
-            // Hide loading state
-            loadingState.classList.remove('active');
-        }
-
-        function closeClarificationModal() {
-            const modal = document.getElementById('clarificationModal');
-            modal.classList.remove('active');
-        }
-
-        async function handleClarificationChoice(option, originalQuery, eventSource) {
-            console.log('[Clarification] User selected:', option);
-
-            // Close modal
-            closeClarificationModal();
-
-            // Close the original event source
-            if (eventSource) {
-                eventSource.close();
-            }
-
-            // Show loading again
-            loadingState.classList.add('active');
-
-            // Extract time_range if available
-            const timeRange = option.time_range;
-
-            // Reconstruct query with clarification
-            // Option A: Modify query string to include selected option
-            let clarifiedQuery = originalQuery;
-            if (timeRange && timeRange.start) {
-                // Add time info to query
-                clarifiedQuery = `${originalQuery} (${option.label})`;
-            }
-
-            // Re-submit the search with clarified parameters
-            // For Deep Research mode
-            if (currentMode === 'deep_research') {
-                console.log('[Clarification] Re-submitting Deep Research with:', clarifiedQuery);
-
-                // Store the time_range in query_params for backend
-                // This will be picked up by the handler
-                const base = window.location.origin;
-                const deepResearchUrl = new URL('/api/deep_research', base);  // Corrected endpoint
-                deepResearchUrl.searchParams.append('query', clarifiedQuery);
-                deepResearchUrl.searchParams.append('site', getSelectedSitesParam());
-                deepResearchUrl.searchParams.append('research_mode', currentResearchMode);
-                deepResearchUrl.searchParams.append('max_iterations', '3');
-                deepResearchUrl.searchParams.append('skip_clarification', 'true');  // Skip clarification check
-
-                // Add time_range as JSON if available (only if both start and end exist)
-                if (timeRange && timeRange.start && timeRange.end) {
-                    deepResearchUrl.searchParams.append('time_range_start', timeRange.start);
-                    deepResearchUrl.searchParams.append('time_range_end', timeRange.end);
-                }
-
-                // Add session_id for analytics
-                deepResearchUrl.searchParams.append('session_id', currentSessionId);
-
-                if (currentConversationId) {
-                    deepResearchUrl.searchParams.append('conversation_id', currentConversationId);
-                }
-
-                // Restart Deep Research with clarified query
-                const newEventSource = new EventSource(deepResearchUrl.toString());
-
-                newEventSource.onmessage = (event) => {
-                    try {
-                        const data = JSON.parse(event.data);
-                        console.log('Deep Research SSE (clarified):', data);
-
-                        // Handle messages same as normal Deep Research
-                        if (data.message_type === 'intermediate_result') {
-                            updateReasoningProgress(data);
-                        } else if (data.message_type === 'final_result') {
-                            newEventSource.close();
-                            loadingState.classList.remove('active');
-                            displayDeepResearchResults(data.final_report || '', data, clarifiedQuery);
-                        }
-                    } catch (e) {
-                        console.error('Error parsing SSE message:', e);
-                    }
-                };
-
-                newEventSource.onerror = (error) => {
-                    console.error('SSE error:', error);
-                    newEventSource.close();
-                    loadingState.classList.remove('active');
-                };
-            }
-        }
-
-        // ==================== USER KNOWLEDGE BASE FUNCTIONS ====================
-
-        // 舊版 sidebar 可見性控制（已移除，保留空函數以相容舊程式碼）
-        function updateSidebarVisibility() {
-            // 不再使用舊版自動顯示/隱藏邏輯
-            // 左側邊欄現在由漢堡按鈕控制
-            // 右側 Tab 面板由使用者手動切換
-        }
-
         // ==================== SITE FILTER FUNCTIONS ====================
 
         // Load available sites from backend
@@ -3983,23 +3746,21 @@
                 }
             } catch (error) {
                 console.error('Failed to load site filters:', error);
-                document.getElementById('siteFilterList').innerHTML =
-                    '<div style="color: #dc2626; font-size: 13px; text-align: center; padding: 20px 0;">載入失敗</div>';
+                const filterEl = document.getElementById('siteFilterListNew') || document.getElementById('siteFilterList');
+                if (filterEl) {
+                    filterEl.innerHTML = '<div style="color: #dc2626; font-size: 13px; text-align: center; padding: 20px 0;">載入失敗</div>';
+                }
             }
         }
 
         // Render site filter checkboxes
         function renderSiteFilters() {
-            // 更新新版 Tab 面板中的容器
-            const containerNew = document.getElementById('siteFilterListNew');
-            // 也更新舊版容器（如有）
-            const containerOld = document.getElementById('siteFilterList');
+            const container = document.getElementById('siteFilterListNew');
 
             const emptyHtml = '<div style="color: #9ca3af; font-size: 13px; text-align: center; padding: 20px 0;">沒有可用的來源</div>';
 
             if (availableSites.length === 0) {
-                if (containerNew) containerNew.innerHTML = emptyHtml;
-                if (containerOld) containerOld.innerHTML = emptyHtml;
+                if (container) container.innerHTML = emptyHtml;
                 return;
             }
 
@@ -4016,8 +3777,7 @@
                 </label>
             `).join('');
 
-            if (containerNew) containerNew.innerHTML = html;
-            if (containerOld) containerOld.innerHTML = html;
+            if (container) container.innerHTML = html;
         }
 
         // Toggle individual site filter
@@ -4053,7 +3813,7 @@
 
         // Toggle private sources checkbox
         function togglePrivateSources() {
-            const checkbox = document.getElementById('includePrivateSourcesCheckbox');
+            const checkbox = document.getElementById('includePrivateSourcesCheckboxNew');
             includePrivateSources = checkbox.checked;
             console.log('Include private sources:', includePrivateSources);
         }
@@ -4163,7 +3923,7 @@
 
         // Render file list
         function renderFileList() {
-            const container = document.getElementById('fileListContainer');
+            const container = document.getElementById('fileListContainerNew');
 
             if (userFiles.length === 0) {
                 container.innerHTML = '<div style="color: #9ca3af; font-size: 13px; text-align: center; padding: 20px 0;">尚未上傳文件</div>';
@@ -4316,8 +4076,6 @@
                     session.title = newName;
                     session.updatedAt = Date.now();
                     localStorage.setItem('taiwanNewsSavedSessions', JSON.stringify(savedSessions));
-                    // Also refresh history panel if open
-                    if (typeof renderSavedSessions === 'function') renderSavedSessions();
                 }
                 renderLeftSidebarSessions();
             }
@@ -4332,19 +4090,9 @@
             });
         }
 
-        // Patch saveCurrentSession to also refresh sidebar list
-        const _origSaveCurrentSession = saveCurrentSession;
-        saveCurrentSession = function() {
-            _origSaveCurrentSession();
-            renderLeftSidebarSessions();
-        };
-
-        // Patch deleteSavedSession to also refresh sidebar list
-        const _origDeleteSavedSession = deleteSavedSession;
-        deleteSavedSession = function(sessionId) {
-            _origDeleteSavedSession(sessionId);
-            renderLeftSidebarSessions();
-        };
+        // 監聽 session 變更事件，同步更新左側邊欄
+        document.addEventListener('session-saved', renderLeftSidebarSessions);
+        document.addEventListener('session-deleted', renderLeftSidebarSessions);
 
         // Initial render
         renderLeftSidebarSessions();
@@ -4429,26 +4177,26 @@
 
         function showFolderPage() {
             const ids = ['initialState', 'searchContainer', 'resultsSection', 'loadingState'];
-            // 快照目前每個元素的 display 值
+            // 快照目前每個元素的 display 值（含 chat 相關元素）
             _preFolderState = {};
             ids.forEach(id => {
                 const el = document.getElementById(id);
                 _preFolderState[id] = el ? el.style.display : '';
             });
+            _preFolderState._chatContainerActive = chatContainer.classList.contains('active');
+            _preFolderState._chatInputDisplay = chatInputContainer.style.display;
 
             // 隱藏主要內容，顯示資料夾頁
             ids.forEach(id => {
                 const el = document.getElementById(id);
                 if (el) el.style.display = 'none';
             });
+            chatContainer.classList.remove('active');
+            chatInputContainer.style.display = 'none';
             document.getElementById('folderPage').style.display = 'block';
 
             showFolderMain();
             renderFolderGrid();
-
-            // Collapse left sidebar
-            leftSidebar.classList.remove('visible');
-            btnExpandSidebar.classList.remove('hidden');
         }
 
         function hideFolderPage() {
@@ -4458,9 +4206,15 @@
             // 還原進入前的 UI 狀態
             if (_preFolderState) {
                 Object.keys(_preFolderState).forEach(id => {
+                    if (id.startsWith('_')) return; // skip special keys
                     const el = document.getElementById(id);
                     if (el) el.style.display = _preFolderState[id];
                 });
+                // 還原 chat 相關元素
+                if (_preFolderState._chatContainerActive) {
+                    chatContainer.classList.add('active');
+                }
+                chatInputContainer.style.display = _preFolderState._chatInputDisplay || '';
                 _preFolderState = null;
             } else {
                 // fallback：顯示首頁
@@ -4766,20 +4520,12 @@
             });
         }
 
-        // Patch renderSavedSessions to add drag support after rendering
-        const _originalRenderSavedSessions = renderSavedSessions;
-        renderSavedSessions = function() {
-            _originalRenderSavedSessions();
-            makeSidebarSessionsDraggable();
-        };
-
         // ==================== END FOLDER/PROJECT SYSTEM ====================
 
         // Initialize on page load
         document.addEventListener('DOMContentLoaded', () => {
             loadUserFiles();
             loadSiteFilters();
-            updateSidebarVisibility();
             initPinnedBanner();
         });
 

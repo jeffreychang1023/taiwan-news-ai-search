@@ -172,6 +172,10 @@ class QdrantVectorClient(RetrievalClientBase):
             logger.debug(f"Qdrant client params: {params}")
             
             # Create client with the determined parameters
+            # Remote Qdrant Cloud needs longer timeout: 50+ results with 1536-dim vectors
+            # can produce large payloads that exceed httpx's default 5s timeout
+            if "url" in params:
+                params["timeout"] = 60
             client = AsyncQdrantClient(**params)
 
             # Log qdrant-client version for debugging

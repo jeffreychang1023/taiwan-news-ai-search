@@ -71,7 +71,9 @@ NLWeb\.claude\
     ├── search.md           # 🆕 /search 指令
     ├── status.md           # 🆕 /status 指令
     ├── learn.md            # 🆕 /learn 指令
-    └── checkpoint.md       # 🆕 /checkpoint 指令
+    ├── checkpoint.md       # 🆕 /checkpoint 指令
+    └── update-docs\        # 🆕 /update-docs 技能（多檔案指令）
+        └── SKILL.md
 ```
 
 ### 全域配置
@@ -99,32 +101,27 @@ NLWeb\.claude\
 
 | Hook 事件 | 觸發時機 | 功能 |
 |-----------|----------|------|
-| **Stop** | 結束 session | 智慧提醒執行 /learn（透過 Haiku 評估） |
 | **PreCompact** | 系統 compact 前 | 重置 compact 計數器 |
-| **PreToolUse: Grep** | 嘗試使用 Grep 前 | 阻擋並提示使用索引系統 |
+| **PreToolUse: Grep** | 嘗試使用 Grep 前 | 阻擋並強制使用 SQLite 索引搜尋 |
 | **PostToolUse: (all)** | 每次工具呼叫後 | 執行 suggest-compact.js 計數 |
 | **PostToolUse: Edit/Write** | 編輯/寫入檔案後 | .py 檔自動語法檢查 |
 | **PostToolUse: TodoWrite** | 更新任務狀態後 | 追蹤里程碑完成數 |
+
+> **⚠ Stop hook 已移除**：Stop hook 會造成無限迴圈（hook 輸出 → Claude 回應 → 再次觸發 Stop → 循環）。
+> `/learn` 改為手動執行或由 rules 提醒。
 
 ### 實際效果
 
 **嘗試 Grep 時**（PreToolUse，exit code 2 阻擋）：
 ```
-STOP: 請使用 python tools/indexer.py --search 而非 Grep。
-索引系統使用 SQLite FTS5，回傳更精準的結果且節省 Token。
+STOP: Use python tools/indexer.py --search instead of Grep.
+SQLite FTS5 is faster and saves tokens.
 ```
 
 **編輯 Python 後**（PostToolUse，py-compile-check.py 讀取 stdin JSON）：
 ```
 # 如果有語法錯誤會顯示：
 [Hook] Python 語法錯誤，請修正: SyntaxError: ...
-```
-
-**Session 結束時**（Stop，Haiku prompt 評估）：
-```
-# Haiku 檢查 stop_hook_active：
-# - 首次停止：提醒 /learn（如有非平凡工作）
-# - 第二次停止：允許結束（防止無限迴圈）
 ```
 
 **達 50 次工具呼叫時**（PostToolUse wildcard）：
@@ -172,6 +169,13 @@ STOP: 請使用 python tools/indexer.py --search 而非 Grep。
 **hook 類型**：
 - `"command"` — 執行 shell 命令，exit code 2 阻擋並回饋 stderr 給 Claude
 - `"prompt"` — 透過 Haiku LLM 評估，回傳 `{"ok": true/false}` 決策
+
+**Windows 注意事項**：
+- `$CLAUDE_PROJECT_DIR` 在 Windows CMD 不展開 → 使用相對路徑（如 `.claude/scripts/...`）
+- 不可使用 `|| true`（`true` 不是 Windows CMD 指令）
+- 不可使用 `2>/dev/null` → 移除或改用 `2>NUL`
+- `echo` 不需要單引號（CMD 會把引號當作輸出內容）
+- **不可使用 Stop hook** — 任何輸出/error 都會觸發 Claude 回應，形成無限迴圈
 
 > 參考：[Claude Code Hooks 官方文件](https://code.claude.com/docs/en/hooks)
 
@@ -580,6 +584,35 @@ Git Stash：stash@{0} "checkpoint: 實作 M0 - 20260128-1530"
 
 ---
 
+### /update-docs
+
+**用途**：同步專案文件與程式碼的一致性
+
+**語法**：
+```
+/update-docs
+/update-docs all
+/update-docs progress
+/update-docs architecture
+```
+
+**參數**：
+
+| 參數 | 更新範圍 |
+|------|----------|
+| `all` 或無參數 | 全部文件 |
+| `progress` | CONTEXT.md, PROGRESS.md, COMPLETED_WORK.md, NEXT_STEPS.md |
+| `architecture` | systemmap.md, state-machine-diagram.md |
+
+**流程**：
+1. 收集資訊（git diff、git log、程式碼結構掃描）
+2. 分析變更（模組新增/刪除/重命名、API 變更）
+3. 更新對應文件
+4. 提醒手動維護 architecture.html
+5. 詢問是否 commit
+
+---
+
 ## Rules 規則系統
 
 ### Token 優化規則
@@ -656,12 +689,11 @@ Git Stash：stash@{0} "checkpoint: 實作 M0 - 20260128-1530"
 
 | Event 名稱 | Hook 數量 | Matcher | 驗證 |
 |-------------|-----------|---------|------|
-| **Stop** | 1 entry, 2 hooks | （無 matcher） | prompt (Haiku) + command (indexer) |
 | **PreCompact** | 1 entry, 1 hook | （無 matcher） | command (reset counter) |
 | **PreToolUse** | 1 entry, 1 hook | `Grep` | command (exit 2 block) |
 | **PostToolUse** | 3 entries | `""` / `Edit\|Write` / `TodoWrite` | 3 個 command hooks |
 
-所有 event 名稱皆為有效的 Claude Code hook 事件。
+> Stop hook 已移除（見下方「踩過的坑」）。所有路徑改為相對路徑（不使用 `$CLAUDE_PROJECT_DIR`）。
 
 ### Slash Commands
 
@@ -673,6 +705,7 @@ Git Stash：stash@{0} "checkpoint: 實作 M0 - 20260128-1530"
 | `/status` | `commands/status.md` | 存在且格式正確 |
 | `/learn` | `commands/learn.md` | 存在且格式正確 |
 | `/checkpoint` | `commands/checkpoint.md` | 存在且格式正確 |
+| `/update-docs` | `commands/update-docs/SKILL.md` | 存在且格式正確 |
 
 ### 即時觸發行為（hooks 生效後）
 
@@ -681,9 +714,22 @@ Git Stash：stash@{0} "checkpoint: 實作 M0 - 20260128-1530"
 | 任何工具呼叫 | suggest-compact.js 計數 | 達 50 次後顯示建議 |
 | 編輯 .py 檔案 | py-compile-check.py | 語法錯誤時 exit 2 阻擋 |
 | 更新 TodoWrite | suggest-compact.js --milestone | 完成 3 個任務後顯示建議 |
-| 使用 Grep | PreToolUse hook | exit 2 阻擋，提示用 indexer |
-| Session 結束 | Stop hook (Haiku) | 提醒執行 /learn |
+| 使用 Grep | PreToolUse hook | exit 2 阻擋，強制用 SQLite indexer |
 | 系統 compact | PreCompact hook | 重置計數器 |
+
+### 踩過的坑（Windows + Claude Code Hooks）
+
+> 以下為實際部署中發現的問題，記錄供未來參考。
+
+| 問題 | 症狀 | 原因 | 修正 |
+|------|------|------|------|
+| **Stop hook 無限迴圈** | Session 結束後 Claude 不斷回應，無法停止 | Stop hook error → Claude 回應 → 再次觸發 Stop | **移除所有 Stop hooks** |
+| **Rate limit 無限迴圈** | 遇到 rate limit 時 hook 持續觸發 | 同上機制在 rate limit 狀態放大 | 移除 Stop hooks 後解決 |
+| **`$CLAUDE_PROJECT_DIR` 不展開** | hook 找不到腳本，顯示 path error | Windows CMD 不認識 `$VAR` 語法 | 改用相對路徑（`.claude/scripts/...`） |
+| **`\|\| true` 報錯** | `'true' 不是內部或外部命令` | `true` 是 Unix 指令，Windows CMD 無此命令 | 移除，讓腳本自行處理錯誤 |
+| **`2>/dev/null` 無效** | stderr 未被抑制 | Windows CMD 使用 `NUL` 非 `/dev/null` | 移除 stderr 重導向 |
+| **echo 單引號** | 輸出包含引號字元 | CMD 不解析單引號，原樣輸出 | 移除引號 |
+| **prompt hook `ok: false`** | 顯示為 "hook error" | Haiku 回傳 false 時 Claude Code 視為 error | 改用 command hook 或移除 |
 
 ---
 
@@ -732,6 +778,11 @@ Git Stash：stash@{0} "checkpoint: 實作 M0 - 20260128-1530"
 - `hooks.json` 使用陣列格式 → 改為 settings.json object 格式
 - `"type": "event", "event": "PostToolUse"` → PostToolUse 不是 event，是 hook 事件名稱
 - `$CLAUDE_FILE_PATH` → 不存在此環境變數，改用 stdin JSON 的 `tool_input.file_path`
+- `$CLAUDE_PROJECT_DIR` → Windows CMD 不展開 `$VAR`，改用相對路徑
+- `|| true` → `true` 不是 Windows 指令，直接移除
+- `2>/dev/null` → Windows 使用 `2>NUL` 或直接移除
+- `echo 'text'` → CMD 會輸出引號，改用 `echo text`
+- **Stop hook** → 會造成無限迴圈，不可使用（詳見「踩過的坑」）
 
 ---
 
@@ -796,5 +847,5 @@ description: 指令描述
 ---
 
 *建立日期：2026-01-27*
-*最後更新：2026-01-29（新增驗證測試結果章節）*
+*最後更新：2026-01-29（移除 Stop hook、修正 Windows 相容性、新增踩坑記錄、新增 /update-docs 文件、修正硬編碼路徑）*
 *基於 everything-claude-code 最佳實踐*

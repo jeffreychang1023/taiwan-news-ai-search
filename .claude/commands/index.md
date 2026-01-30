@@ -9,7 +9,7 @@ description: 更新程式碼索引
 ## 執行命令
 
 ```bash
-cd C:\users\user\NLWeb && python tools/indexer.py --index
+python tools/indexer.py --index
 ```
 
 ## 使用時機

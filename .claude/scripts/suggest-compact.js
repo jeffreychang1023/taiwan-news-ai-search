@@ -17,7 +17,7 @@ const path = require('path');
 // 設定
 const FIRST_SUGGESTION_THRESHOLD = 50;
 const REMINDER_INTERVAL = 25;
-const MILESTONE_THRESHOLD = 3; // 完成 3 個任務後建議 compact
+const MILESTONE_THRESHOLD = 3; // 每 3 次 TodoWrite 呼叫後建議 compact
 
 // 狀態檔案路徑
 const STATE_FILE = path.join(__dirname, '..', 'memory', 'compact-state.json');
@@ -37,8 +37,8 @@ function loadState() {
   return {
     toolCallCount: 0,
     lastSuggestionAt: 0,
-    milestonesCompleted: 0,
-    lastMilestoneSuggestionAt: 0,
+    todoWriteCount: 0,
+    lastTodoSuggestionAt: 0,
     sessionStart: new Date().toISOString()
   };
 }
@@ -61,8 +61,8 @@ function resetCounter() {
   const state = {
     toolCallCount: 0,
     lastSuggestionAt: 0,
-    milestonesCompleted: 0,
-    lastMilestoneSuggestionAt: 0,
+    todoWriteCount: 0,
+    lastTodoSuggestionAt: 0,
     sessionStart: new Date().toISOString()
   };
   saveState(state);
@@ -86,28 +86,28 @@ function main() {
   if (args.includes('--status')) {
     const state = loadState();
     console.log(`[Compact] 工具呼叫次數: ${state.toolCallCount}`);
-    console.log(`[Compact] 已完成里程碑: ${state.milestonesCompleted || 0}`);
+    console.log(`[Compact] TodoWrite 呼叫次數: ${state.todoWriteCount || 0}`);
     console.log(`[Compact] Session 開始: ${state.sessionStart}`);
     return;
   }
 
-  // 支援 --milestone 參數（TodoWrite 完成任務時呼叫）
+  // 支援 --milestone 參數（每次 TodoWrite 呼叫時觸發）
   if (args.includes('--milestone')) {
     const state = loadState();
-    state.milestonesCompleted = (state.milestonesCompleted || 0) + 1;
+    state.todoWriteCount = (state.todoWriteCount || 0) + 1;
 
     // 檢查是否達到里程碑門檻
-    const milestonesSinceLastSuggestion = state.milestonesCompleted - (state.lastMilestoneSuggestionAt || 0);
+    const todoSinceLastSuggestion = state.todoWriteCount - (state.lastTodoSuggestionAt || 0);
 
-    if (milestonesSinceLastSuggestion >= MILESTONE_THRESHOLD) {
-      state.lastMilestoneSuggestionAt = state.milestonesCompleted;
+    if (todoSinceLastSuggestion >= MILESTONE_THRESHOLD) {
+      state.lastTodoSuggestionAt = state.todoWriteCount;
       saveState(state);
 
       console.log(`
 ╔══════════════════════════════════════════════════════════════╗
 ║  🎯 里程碑完成！COMPACT 建議                                 ║
 ╠══════════════════════════════════════════════════════════════╣
-║  已完成 ${String(state.milestonesCompleted).padEnd(2)} 個任務（本次 session）                      ║
+║  已累計 ${String(state.todoWriteCount).padEnd(2)} 次任務更新（本次 session）                   ║
 ║                                                              ║
 ║  完成里程碑是執行 /compact 的好時機：                        ║
 ║  • 保存目前進度到 CONTEXT.md                                 ║

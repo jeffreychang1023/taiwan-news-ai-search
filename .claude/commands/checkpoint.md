@@ -23,8 +23,11 @@ git status
 如果有未提交的變更：
 
 ```bash
-git stash push -m "checkpoint: [簡短描述] - $(date +%Y%m%d-%H%M)"
+git stash push -m "checkpoint: [簡短描述] - [YYYYMMDD-HHMM]"
 ```
+
+> **注意**：日期部分請根據當前時間填入，例如 `20260129-1530`。
+> 不要使用 `$(date)` 語法（Windows CMD 不支援）。
 
 如果沒有變更，跳過此步驟。
 

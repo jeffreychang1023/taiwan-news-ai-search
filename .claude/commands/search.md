@@ -9,7 +9,7 @@ description: 搜尋程式碼
 ## 執行命令
 
 ```bash
-cd C:\users\user\NLWeb && python tools/indexer.py --search "<關鍵字>"
+python tools/indexer.py --search "<關鍵字>"
 ```
 
 ## 優於 Grep 的原因
