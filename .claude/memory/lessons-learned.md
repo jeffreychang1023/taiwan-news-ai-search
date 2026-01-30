@@ -72,6 +72,20 @@
 **檔案**：`core/utils/message_senders.py`
 **日期**：2025-11
 
+### 雙 Handler Pipeline 需要 API 層控制生命週期
+**問題**：Unified mode 需要串接兩個 handler（NLWebHandler → GenerateAnswer），但 `runQuery()` 結尾自動送 `end-nlweb-response` 和記錄 analytics，導致第二個 handler 開始前 SSE 就結束了。且錯誤路徑也有 `send_end_response(error=True)`，兩處都要處理
+**解決方案**：在第一個 handler 設 `skip_end_response = True`，讓 API 層（api.py）透過 `try/finally` 統一控制 end response 和 analytics。注入狀態時需轉移：`final_ranked_answers`、`items`、`query_id`、`conversation_id`、`connection_alive_event`、`decontextualized_query`。關鍵：baseHandler.py 的正常路徑和錯誤路徑都要檢查 `skip_end_response`
+**信心**：低
+**檔案**：`webserver/routes/api.py`、`core/baseHandler.py`
+**日期**：2026-01
+
+### asyncio.create_task 不保證 SSE 訊息順序
+**問題**：`create_assistant_result()` 和 `asyncio.create_task(handler.send_message())` 是 fire-and-forget，不等待實際送出。在 unified mode 需要嚴格的訊息順序（articles → summary → answer）時，fire-and-forget 不保證前一條訊息在下一個處理階段開始前已送出
+**解決方案**：需要順序保證時改用 `await handler.send_message(message)` 取代 `asyncio.create_task()`。修改了 `ranking.py:sendAnswers()`（unified → await）和 `post_ranking.py:SummarizeResults.do()`（unified → await）
+**信心**：中
+**檔案**：`core/ranking.py`、`core/post_ranking.py`
+**日期**：2026-01
+
 ### DOM 父子元素可見性級聯陷阱
 **問題**：隱藏父元素會連帶隱藏所有子元素，即使子元素本身有 `.active { display: block }`。本專案中 `#chatContainer` 是 `#resultsSection` 的子元素，移除 `resultsSection` 的 `.active` class 後，chatContainer 無論如何設定都不會顯示，且 console 無任何錯誤
 **解決方案**：切換到 chat 模式時，必須無條件 `resultsSection.classList.add('active')`，因為它是 chatContainer 的父容器。修改父元素可見性前，先確認 DOM 樹中是否有需要獨立控制可見性的子元素
@@ -112,6 +126,13 @@
 **解決方案**：(1) 移除 `showFolderPage()` 中任何與左側邊欄相關的操作——資料夾頁不應改變側欄狀態。(2) 快照必須包含所有可能影響佈局的元素狀態（含 `chatContainer.classList.active`、`chatInputContainer.style.display`），離開時完整還原。通用規則：頁面切換函式只應影響自己的頁面元素，不可有側面效應修改其他區域的 UI
 **信心**：高
 **檔案**：`static/news-search.js`（`showFolderPage()`、`hideFolderPage()`）
+**日期**：2026-01
+
+### JavaScript `let` 跨區段 TDZ 陷阱
+**問題**：在大型 JS 檔案中，將 `let _folderModeActive` 宣告在 FOLDER section（檔案後段），但 `renderLeftSidebarSessions()` 函式（定義在前段）內部引用它，且該函式在宣告行之前就被呼叫（初始化呼叫）。結果：`ReferenceError: Cannot access '_folderModeActive' before initialization`。此錯誤終止整個腳本執行，導致所有後續事件綁定失效——所有按鈕看似「沒反應」，但實際是 handler 從未註冊。更隱蔽的是，第一個 TDZ 錯誤會級聯：腳本停止後，後段的其他 `let` 變數（如 `_preFolderState`）也永遠留在 TDZ，使用者操作觸發時產生第二個 ReferenceError
+**解決方案**：新增 `let` 變數時，必須檢查所有引用它的函式是否在宣告前被呼叫（包括初始化呼叫、事件監聽 callback）。安全做法：將跨區段共享的 `let` 變數集中宣告在最早的引用點之前。偵錯時：「所有按鈕無反應」→ 先查 console 是否有 ReferenceError 終止了腳本
+**信心**：高
+**檔案**：`static/news-search.js`（`_folderModeActive`、`_preFolderState`）
 **日期**：2026-01
 
 ---
@@ -168,4 +189,5 @@ else:
 
 ---
 
-*最後更新：2026-01-29*
+*最後更新：2026-01-30*
+

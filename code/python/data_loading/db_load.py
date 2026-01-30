@@ -29,8 +29,7 @@ from data_loading.db_load_utils import (
 # Import vector database client directly
 from core.retriever import get_vector_db_client, upload_documents, delete_documents_by_site
 
-# Import RSS to Schema converter
-import data_loading.rss2schema as rss2schema
+# rss2schema removed — RSS ingestion replaced by crawler/indexing pipeline
 
 # Define URL extractor function since json_url_extractor module is not available
 def process_line(line):
@@ -515,7 +514,7 @@ async def process_rss_feed(file_path: str, site: str) -> List[Dict[str, Any]]:
     
     try:
         # Convert feed to schema.org format
-        podcast_episodes = rss2schema.feed_to_schema(file_path)
+        raise NotImplementedError("RSS ingestion via rss2schema has been removed. Use the crawler/indexing pipeline instead.")
         
         documents = []
         

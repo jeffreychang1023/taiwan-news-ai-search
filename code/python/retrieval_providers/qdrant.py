@@ -586,7 +586,66 @@ class QdrantVectorClient(RetrievalClientBase):
         return models.Filter(
             must=[models.FieldCondition(key="site", match=models.MatchAny(any=sites))]
         )
-    
+
+    def _point_passes_filters(self, point, filters: List[Dict[str, Any]]) -> bool:
+        """
+        Check if a Qdrant ScoredPoint passes all generic filters.
+
+        Generic filter format:
+            [{"field": "datePublished", "operator": "gte", "value": "2026-01-01"}, ...]
+
+        Since datePublished/author are stored inside schema_json (a JSON string),
+        this performs post-search filtering by parsing the payload.
+
+        Args:
+            point: Qdrant ScoredPoint
+            filters: List of generic filter dicts
+
+        Returns:
+            True if the point passes all filters
+        """
+        schema_json_str = point.payload.get('schema_json', '{}')
+        try:
+            schema = json.loads(schema_json_str)
+        except (json.JSONDecodeError, TypeError):
+            return False
+
+        for f in filters:
+            field = f.get('field', '')
+            op = f.get('operator', '')
+            value = f.get('value', '')
+
+            if field == 'datePublished':
+                date_str = (schema.get('datePublished', '') or
+                            schema.get('dateCreated', '') or
+                            schema.get('publishDate', ''))
+                if not date_str:
+                    return False
+                # Normalize to YYYY-MM-DD for string comparison
+                date_str = date_str.split('T')[0] if 'T' in date_str else date_str
+                try:
+                    if op == 'gte' and date_str < value:
+                        return False
+                    if op == 'lte' and date_str > value:
+                        return False
+                except (ValueError, TypeError):
+                    return False
+
+            elif field == 'author':
+                author_data = schema.get('author', '')
+                if isinstance(author_data, dict):
+                    author = author_data.get('name', '')
+                elif isinstance(author_data, list) and author_data:
+                    author = author_data[0].get('name', '') if isinstance(author_data[0], dict) else str(author_data[0])
+                else:
+                    author = str(author_data)
+                if op == 'contains' and value.lower() not in author.lower():
+                    return False
+                elif op == 'eq' and value.lower() != author.lower():
+                    return False
+
+        return True
+
     def _detect_query_intent(self, query: str, alpha_default: float, beta_default: float) -> Tuple[float, float]:
         """
         Detect query intent (exact match vs semantic) and adjust alpha/beta weights.
@@ -1084,6 +1143,22 @@ class QdrantVectorClient(RetrievalClientBase):
                         # No domain filtering in query, sort all results
                         scored_results.sort(key=lambda x: x[0], reverse=True)
 
+                    # Apply generic payload filters (date range, author, etc.)
+                    _payload_filters = kwargs.get('filters')
+                    if _payload_filters and scored_results:
+                        _pre_filter_count = len(scored_results)
+                        _filtered_scored = [(s, p) for s, p in scored_results
+                                            if self._point_passes_filters(p, _payload_filters)]
+                        if _filtered_scored:
+                            scored_results = _filtered_scored
+                            logger.info(f"[FILTER] Payload filter applied: {_pre_filter_count} → {len(scored_results)} scored results")
+                        else:
+                            # No results after filter — keep original, set relaxed flag on handler
+                            _handler = kwargs.get('handler')
+                            if _handler:
+                                _handler.time_filter_relaxed = True
+                            logger.warning(f"[FILTER] No results after payload filter, keeping {_pre_filter_count} unfiltered results")
+
                     # Take top num_results
                     top_results = [point for _, point in scored_results[:num_results]]
 
@@ -1106,8 +1181,23 @@ class QdrantVectorClient(RetrievalClientBase):
                         logger.info("=" * 50)
                 else:
                     # No keywords, use vector results as-is
-                    top_results = search_result[:num_results]
-                    logger.info(f"No keywords found, using pure vector search: {len(top_results)} results")
+                    # Apply generic payload filters if provided
+                    _payload_filters = kwargs.get('filters')
+                    if _payload_filters and search_result:
+                        _pre_count = len(search_result)
+                        _filtered_points = [p for p in search_result if self._point_passes_filters(p, _payload_filters)]
+                        if _filtered_points:
+                            top_results = _filtered_points[:num_results]
+                            logger.info(f"[FILTER] Vector-only filter: {_pre_count} → {len(_filtered_points)}, returning top {len(top_results)}")
+                        else:
+                            top_results = search_result[:num_results]
+                            _handler = kwargs.get('handler')
+                            if _handler:
+                                _handler.time_filter_relaxed = True
+                            logger.warning(f"[FILTER] No results after vector-only filter, keeping {len(top_results)} unfiltered")
+                    else:
+                        top_results = search_result[:num_results]
+                    logger.info(f"No keywords found, using {'filtered' if _payload_filters else 'pure'} vector search: {len(top_results)} results")
 
                 # Format the results - pass point_scores if available (from keyword boosting)
                 results = self._format_results(

@@ -396,6 +396,17 @@ class QueryLogger:
                     created_at REAL NOT NULL,
                     FOREIGN KEY (query_id) REFERENCES queries(query_id)
                 )
+            """,
+            'user_feedback': """
+                CREATE TABLE IF NOT EXISTS user_feedback (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    query TEXT,
+                    answer_snippet TEXT,
+                    rating TEXT NOT NULL,
+                    comment TEXT,
+                    session_id TEXT,
+                    created_at REAL NOT NULL
+                )
             """
         }
 
@@ -562,6 +573,17 @@ class QueryLogger:
                     created_at DOUBLE PRECISION NOT NULL,
                     FOREIGN KEY (query_id) REFERENCES queries(query_id)
                 )
+            """,
+            'user_feedback': """
+                CREATE TABLE IF NOT EXISTS user_feedback (
+                    id SERIAL PRIMARY KEY,
+                    query TEXT,
+                    answer_snippet TEXT,
+                    rating VARCHAR(20) NOT NULL,
+                    comment TEXT,
+                    session_id VARCHAR(255),
+                    created_at DOUBLE PRECISION NOT NULL
+                )
             """
         }
 
@@ -576,7 +598,9 @@ class QueryLogger:
             "CREATE INDEX IF NOT EXISTS idx_interactions_url ON user_interactions(doc_url)",
             "CREATE INDEX IF NOT EXISTS idx_feature_vectors_query ON feature_vectors(query_id)",
             "CREATE INDEX IF NOT EXISTS idx_feature_vectors_doc ON feature_vectors(doc_url)",
-            "CREATE INDEX IF NOT EXISTS idx_feature_vectors_clicked ON feature_vectors(clicked)"
+            "CREATE INDEX IF NOT EXISTS idx_feature_vectors_clicked ON feature_vectors(clicked)",
+            "CREATE INDEX IF NOT EXISTS idx_user_feedback_created ON user_feedback(created_at)",
+            "CREATE INDEX IF NOT EXISTS idx_user_feedback_rating ON user_feedback(rating)"
         ]
 
     def _start_worker(self):
@@ -1103,6 +1127,27 @@ class QueryLogger:
         except Exception as e:
             logger.error(f"Error getting query stats: {e}")
             return {}
+
+    def log_feedback(self, query: str, answer_snippet: str, rating: str, comment: str = "", session_id: str = ""):
+        """Log user feedback (thumbs up/down + optional comment).
+
+        Args:
+            query: The search query associated with the feedback
+            answer_snippet: First ~200 chars of the answer being rated
+            rating: 'positive' or 'negative'
+            comment: Optional user comment
+            session_id: Optional session identifier
+        """
+        data = {
+            "query": query or "",
+            "answer_snippet": (answer_snippet or "")[:500],
+            "rating": rating,
+            "comment": comment or "",
+            "session_id": session_id or "",
+            "created_at": time.time()
+        }
+        self.log_queue.put({"table": "user_feedback", "data": data})
+        logger.info(f"Queued feedback: rating={rating}, query='{(query or '')[:50]}'")
 
     def shutdown(self):
         """Gracefully shutdown the logger."""

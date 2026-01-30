@@ -156,12 +156,6 @@ async def get_storage_client() -> StorageProvider:
         if storage_type == 'qdrant':
             from storage_providers.qdrant_storage import QdrantStorageProvider
             _storage_client = QdrantStorageProvider(storage_config)
-        elif storage_type == 'azure_ai_search':
-            from storage_providers.azure_search_storage import AzureSearchStorageProvider
-            _storage_client = AzureSearchStorageProvider(storage_config)
-        elif storage_type == 'azure_cosmos':
-            from storage_providers.cosmos_storage import CosmosStorageProvider
-            _storage_client = CosmosStorageProvider(storage_config)
         elif storage_type == 'postgres':
             from storage_providers.postgres_storage import PostgresStorageProvider
             _storage_client = PostgresStorageProvider(storage_config)

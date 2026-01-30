@@ -272,6 +272,7 @@
                                 <button class="mode-btn-inline" data-mode="chat">自由對話</button>
                             </div>
                             <button class="btn-search" id="btnSearch">搜尋</button>
+                            <button class="btn-stop-generate" id="btnStopGenerate" style="display: none;">停止生成</button>
                         </div>
                     </div>
 
@@ -384,18 +385,21 @@
                             </button>
                         </div>
                     </div>
-                    <!-- Graph View -->
-                    <div class="kg-graph-container" id="kgGraphView">
-                        <div class="kg-tooltip" id="kgTooltip"></div>
-                    </div>
-                    <!-- List View -->
-                    <div class="kg-display-content" id="kgDisplayContent" style="display: none;">
-                        <!-- KG list content will be populated here -->
-                    </div>
-                    <!-- Legend -->
-                    <div class="kg-legend" id="kgLegend" style="padding: 12px 20px;"></div>
-                    <div class="kg-display-empty" id="kgDisplayEmpty" style="display: none;">
-                        ℹ️ 此查詢不適合生成知識圖譜（例如：純粹的意見問答或單一數據查詢）
+                    <!-- Bug #17: Wrapper for toggle collapse (header stays visible) -->
+                    <div id="kgContentWrapper">
+                        <!-- Graph View -->
+                        <div class="kg-graph-container" id="kgGraphView">
+                            <div class="kg-tooltip" id="kgTooltip"></div>
+                        </div>
+                        <!-- List View -->
+                        <div class="kg-display-content" id="kgDisplayContent" style="display: none;">
+                            <!-- KG list content will be populated here -->
+                        </div>
+                        <!-- Legend -->
+                        <div class="kg-legend" id="kgLegend" style="padding: 12px 20px;"></div>
+                        <div class="kg-display-empty" id="kgDisplayEmpty" style="display: none;">
+                            ℹ️ 此查詢不適合生成知識圖譜（例如：純粹的意見問答或單一數據查詢）
+                        </div>
                     </div>
                 </div>
 

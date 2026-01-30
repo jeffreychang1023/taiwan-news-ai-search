@@ -10,21 +10,21 @@ Backwards compatibility is not guaranteed at this time.
 """
 
 import asyncio
+import json
+import traceback
+from datetime import datetime, timezone
+
 from core.baseHandler import NLWebHandler
 from core.llm import ask_llm
-from core.prompts import PromptRunner
+from core.prompts import PromptRunner, find_prompt, fill_prompt
 from core.retriever import search
-from core.prompts import find_prompt, fill_prompt
 from core.utils.json_utils import trim_json, trim_json_hard
-from misc.logger.logging_config_helper import get_configured_logger
 from core.utils.utils import log, get_param
+from misc.logger.logging_config_helper import get_configured_logger
 import core.query_analysis.analyze_query as analyze_query
 import core.query_analysis.relevance_detection as relevance_detection
 import core.query_analysis.memory as memory
 import core.query_analysis.required_info as required_info
-import json
-import traceback
-from datetime import datetime, timezone
 
 
 logger = get_configured_logger("generate_answer")
@@ -608,6 +608,24 @@ class GenerateAnswer(NLWebHandler):
                     article_context += "\n"
                 article_context += "===\n\n"
 
+            # Build pinned articles context if user pinned specific news cards
+            pinned_articles_context = ""
+            pinned_articles = get_param(self.query_params, "pinned_articles", list, [])
+            if pinned_articles:
+                pinned_articles_context = "\n===用戶釘選的重點文章===\n"
+                for idx, article in enumerate(pinned_articles, 1):
+                    title = article.get('title', '') if isinstance(article, dict) else ''
+                    desc = article.get('description', '') if isinstance(article, dict) else ''
+                    url = article.get('url', '') if isinstance(article, dict) else ''
+                    pinned_articles_context += f"釘選 {idx}: {title}\n"
+                    if desc:
+                        pinned_articles_context += f"   摘要: {desc}\n"
+                    if url:
+                        pinned_articles_context += f"   網址: {url}\n"
+                    pinned_articles_context += "\n"
+                pinned_articles_context += "===\n\n"
+                logger.info(f"[FREE_CONVERSATION] {len(pinned_articles)} pinned articles injected into prompt")
+
             # Build Deep Research report context if available
             research_report_context = ""
             has_research_report = getattr(self, 'injected_research_report', None) is not None
@@ -628,15 +646,38 @@ class GenerateAnswer(NLWebHandler):
 
             # Create a detailed prompt for high-quality conversational responses
             # Priority: Deep Research report > cached articles > general conversation
+            from datetime import datetime
+            current_date = datetime.now().strftime("%Y-%m-%d")
+
+            # Shared system context for all prompt variants (Bug #1, #3, #9, #24)
+            system_context = f"""**今天的日期是：{current_date}**
+如果用戶詢問日期相關問題，請使用此日期，不要從搜尋結果中推測日期。
+
+**重要系統限制**：
+- 你只能存取資料庫中已收錄的新聞，不代表所有新聞。
+- **如果用戶問「為什麼只有某日期/某主題的新聞」，最可能的原因是資料庫收錄範圍有限。**
+- **絕對不要猜測或合理化新聞數量/日期分布的原因。**
+- 誠實回答：「這可能是因為資料庫收錄範圍的限制，建議調整搜尋條件或時間範圍重新搜尋。」
+
+**你的能力範圍**：
+- 你可以分析和討論已搜尋到的新聞文章
+- 你可以回答基於搜尋結果的問題
+- 如果用戶的問題超出目前搜尋結果的範圍，建議他們：修改搜尋關鍵字重新搜尋、調整時間範圍、或使用深度研究模式
+- 不要說「我無法存取即時新聞」，而是說「目前搜尋結果中沒有相關資訊，建議您重新搜尋 [具體建議]」
+
+請使用 Markdown 格式回答。段落之間用空行分隔，列表使用 - 或 1. 2. 3. 格式，重要概念可用 **粗體** 強調。
+"""
+
             if has_research_report:
                 # Has previous Deep Research report - use it as primary context
                 prompt = f"""你是一個專業的台灣新聞分析助手。用戶之前進行了一次深度研究，現在針對該研究結果進行追問。
 
+{system_context}
 {research_report_context}
-{conversation_context}當前問題: {self.query}
+{pinned_articles_context}{conversation_context}當前問題: {self.query}
 
 回答要求：
-1. **基於報告回答** - 優先使用深度研究報告中的內容回答
+1. **基於報告回答** - 優先使用深度研究報告中的內容回答，同時參考用戶釘選的重點文章
 2. **保持引用格式** - 如果引用報告中的資訊，保留原有的 [數字] 引用標記
 3. **直接且具體** - 使用報告中的具體數據、公司名稱、技術名稱
 4. **結構清晰** - 用 1-2 段組織回答，直接回應用戶的追問
@@ -647,7 +688,8 @@ class GenerateAnswer(NLWebHandler):
             elif has_cached_articles:
                 prompt = f"""You are an AI assistant helping with Taiwan news analysis. You have access to news articles from the user's previous search.
 
-{conversation_context}{article_context}當前問題: {self.query}
+{system_context}
+{conversation_context}{article_context}{pinned_articles_context}當前問題: {self.query}
 
 回答要求：
 1. **直接且具體回答** - 使用文章中的具體公司名稱、產品名稱、技術名稱
@@ -673,7 +715,8 @@ class GenerateAnswer(NLWebHandler):
                 # No cached articles - provide general conversational response
                 prompt = f"""You are an AI assistant helping with questions about Taiwan news and current events.
 
-{conversation_context}{article_context}當前問題: {self.query}
+{system_context}
+{conversation_context}{article_context}{pinned_articles_context}當前問題: {self.query}
 
 請根據對話脈絡和提供的文件內容提供有幫助的回答。
 
@@ -732,19 +775,20 @@ class GenerateAnswer(NLWebHandler):
             
         try:
             logger.info("Starting answer synthesis")
-            
+            msg_type = "answer" if self.generate_mode == 'unified' else "nlws"
+
             # Check if we have any ranked answers to work with
             if not self.final_ranked_answers:
                 logger.warning("No ranked answers found, sending empty response")
                 message = {
-                    "message_type": "nlws",
+                    "message_type": msg_type,
                     "@type": "GeneratedAnswer",
-                    "answer": "I couldn't find relevant information to answer your question.", 
+                    "answer": "I couldn't find relevant information to answer your question.",
                     "items": []
                 }
                 await self.send_message(message)
                 return
-                
+
             response = await PromptRunner(self).run_prompt(self.SYNTHESIZE_PROMPT_NAME, timeout=100, verbose=True, max_length=2048)
             logger.debug(f"Synthesis response received")
 
@@ -752,7 +796,7 @@ class GenerateAnswer(NLWebHandler):
             if response is None:
                 logger.error("Synthesis prompt returned None - prompt may not be found or LLM error occurred")
                 message = {
-                    "message_type": "nlws",
+                    "message_type": msg_type,
                     "@type": "GeneratedAnswer",
                     "answer": "抱歉，無法生成回答。系統配置可能有問題，請聯繫管理員。",
                     "items": []
@@ -791,8 +835,8 @@ class GenerateAnswer(NLWebHandler):
             # Match bare URLs not already in markdown format
             answer = re.sub(r'(?<!\]\()https?://\S+', convert_url_to_link, answer)
 
-            # Create initial message with just the answer
-            message = {"message_type": "nlws", "@type": "GeneratedAnswer", "answer": answer, "items": json_results}
+            # Create initial message with just the answer (msg_type set at function start)
+            message = {"message_type": msg_type, "@type": "GeneratedAnswer", "answer": answer, "items": json_results}
             logger.info("Sending initial answer")
             await self.send_message(message)
             
@@ -832,7 +876,7 @@ class GenerateAnswer(NLWebHandler):
                         })
                         
                     # Update message with descriptions
-                    message = {"message_type": "nlws", "@type": "GeneratedAnswer", "answer": answer, "items": json_results}
+                    message = {"message_type": msg_type, "@type": "GeneratedAnswer", "answer": answer, "items": json_results}
                     logger.info(f"Sending final answer with {len(json_results)} item descriptions")
                     await self.send_message(message)
             else:
@@ -840,8 +884,10 @@ class GenerateAnswer(NLWebHandler):
 
             # UNIFICATION: Also send the ranked list items (like summarize mode does)
             # This allows the frontend to show both the AI answer AND the source list
-            logger.info("Sending ranked list items for display alongside generated answer")
-            await self._send_ranked_list()
+            # Skip in unified mode — articles already sent by ranking.py
+            if self.generate_mode != 'unified':
+                logger.info("Sending ranked list items for display alongside generated answer")
+                await self._send_ranked_list()
 
         except Exception as e:
             logger.exception(f"Error in synthesizeAnswer: {e}")

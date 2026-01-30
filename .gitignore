@@ -527,3 +527,6 @@ tests/architecture_dev/*~
 # Project indexer database
 tools/project_index.db
 project_index.db
+
+# Legacy NLWeb original files (not used in news search project)
+legacy/

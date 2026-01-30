@@ -17,9 +17,58 @@ import json
 
 from core.config import CONFIG
 from core.utils.utils import get_param
+from core.utils.json_utils import jsonify as _jsonify
 from misc.logger.logging_config_helper import get_configured_logger
 from misc.logger.logger import LogLevel
-from core.utils.json_utils import merge_json_array
+
+
+def _merge_json_objects(obj1, obj2):
+    """Recursively merge two JSON objects."""
+    obj1 = _jsonify(obj1)
+    obj2 = _jsonify(obj2)
+    if isinstance(obj1, list):
+        obj1 = obj1[0] if obj1 else {}
+    if isinstance(obj2, list):
+        obj2 = obj2[0] if obj2 else {}
+    if not isinstance(obj1, dict):
+        obj1 = {}
+    if not isinstance(obj2, dict):
+        obj2 = {}
+    merged = {}
+    for key in set(obj1.keys()) | set(obj2.keys()):
+        val1 = obj1.get(key)
+        val2 = obj2.get(key)
+        if key in obj1 and key not in obj2:
+            merged[key] = val1
+        elif key not in obj1 and key in obj2:
+            merged[key] = val2
+        elif isinstance(val1, dict) and isinstance(val2, dict):
+            merged[key] = _merge_json_objects(val1, val2)
+        elif isinstance(val1, list) and isinstance(val2, list):
+            merged[key] = val1 + val2
+        elif val1 is None:
+            merged[key] = val2
+        elif val2 is None:
+            merged[key] = val1
+        elif val1 == val2:
+            merged[key] = val1
+        else:
+            merged[key] = [val1, val2]
+    return merged
+
+
+def merge_json_array(json_array):
+    """Merge an array of JSON objects into a single object."""
+    if not json_array:
+        return {}
+    result = _jsonify(json_array[0])
+    if isinstance(result, list):
+        result = result[0] if result else {}
+    if not isinstance(result, dict):
+        result = {}
+    for obj in json_array[1:]:
+        result = _merge_json_objects(result, obj)
+    return result
 
 logger = get_configured_logger("retriever")
 
@@ -41,55 +90,22 @@ def init():
                 _ensure_package_installed(db_type)
                 
                 # Preload the module
-                if db_type == "azure_ai_search":
-                    from retrieval_providers.azure_search_client import AzureSearchClient
-                    _preloaded_modules[db_type] = AzureSearchClient
-                elif db_type == "milvus":
-                    from retrieval_providers.milvus_client import MilvusVectorClient
-                    _preloaded_modules[db_type] = MilvusVectorClient
-                elif db_type == "opensearch":
-                    from retrieval_providers.opensearch_client import OpenSearchClient
-                    _preloaded_modules[db_type] = OpenSearchClient
-                elif db_type == "qdrant":
+                if db_type == "qdrant":
                     from retrieval_providers.qdrant import QdrantVectorClient
                     _preloaded_modules[db_type] = QdrantVectorClient
-                elif db_type == "snowflake_cortex_search":
-                    from retrieval_providers.snowflake_client import SnowflakeCortexSearchClient
-                    _preloaded_modules[db_type] = SnowflakeCortexSearchClient
-                elif db_type == "elasticsearch":
-                    from retrieval_providers.elasticsearch_client import ElasticsearchClient
-                    _preloaded_modules[db_type] = ElasticsearchClient
                 elif db_type == "postgres":
                     from retrieval_providers.postgres_client import PgVectorClient
                     _preloaded_modules[db_type] = PgVectorClient
-                elif db_type == "shopify_mcp":
-                    from retrieval_providers.shopify_mcp import ShopifyMCPClient
-                    _preloaded_modules[db_type] = ShopifyMCPClient
-                elif db_type == "cloudflare_autorag":
-                    from code.python.retrieval_providers.cf_autorag_client import (
-                        CloudflareAutoRAGClient,
-                    )
-
-                    _preloaded_modules[db_type] = CloudflareAutoRAGClient
-                elif db_type == "hnswlib":
-                    from retrieval_providers.hnswlib_client import HnswlibClient
-                    _preloaded_modules[db_type] = HnswlibClient
+                else:
+                    logger.warning(f"Unsupported db_type: {db_type} (only qdrant and postgres are supported)")
 
             except Exception as e:
                 logger.warning(f"Failed to preload {db_type} client module: {e}")
 
 # Mapping of database types to their required pip packages
 _db_type_packages = {
-    "azure_ai_search": ["azure-core", "azure-search-documents>=11.4.0"],
-    "milvus": ["pymilvus>=1.1.0", "numpy"],
-    "opensearch": ["httpx>=0.28.1"],
     "qdrant": ["qdrant-client>=1.14.0"],
-    "snowflake_cortex_search": ["httpx>=0.28.1"],
-    "elasticsearch": ["elasticsearch[async]>=8,<9"],
     "postgres": ["psycopg", "psycopg[binary]>=3.1.12", "psycopg[pool]>=3.2.0", "pgvector>=0.4.0"],
-    "shopify_mcp": ["aiohttp>=3.8.0"],
-    "cloudflare_autorag": ['cloudflare>=4.3.1', "httpx>=0.28.1", "zon>=3.0.0", "markdown>=3.8.2", "beautifulsoup4>=4.13.4"],
-    "hnswlib": ["hnswlib>=0.7.0"],
 }
 
 # Cache for installed packages
@@ -451,12 +467,7 @@ class VectorDBClient:
             logger.warning("No write endpoint configured - write operations will fail")
         
         self._retrieval_lock = asyncio.Lock()
-        
-        
-    
-    
-    
-    
+
     def _has_valid_credentials(self, name: str, config) -> bool:
         """
         Check if an endpoint has valid credentials based on its database type.
@@ -536,39 +547,12 @@ class VectorDBClient:
                 if db_type in _preloaded_modules:
                     client_class = _preloaded_modules[db_type]
                     client = client_class(endpoint_name)
-                elif db_type == "azure_ai_search":
-                    from retrieval_providers.azure_search_client import AzureSearchClient
-                    client = AzureSearchClient(endpoint_name)
-                elif db_type == "milvus":
-                    from retrieval_providers.milvus_client import MilvusVectorClient
-                    client = MilvusVectorClient(endpoint_name)
-                elif db_type == "opensearch":
-                    from retrieval_providers.opensearch_client import OpenSearchClient
-                    client = OpenSearchClient(endpoint_name)
                 elif db_type == "qdrant":
                     from retrieval_providers.qdrant import QdrantVectorClient
                     client = QdrantVectorClient(endpoint_name)
-                elif db_type == "snowflake_cortex_search":
-                    from retrieval_providers.snowflake_client import SnowflakeCortexSearchClient
-                    client = SnowflakeCortexSearchClient(endpoint_name)
-                elif db_type == "cloudflare_autorag":
-                    from retrieval_providers.cf_autorag_client import (
-                        CloudflareAutoRAGClient,
-                    )
-
-                    client = CloudflareAutoRAGClient(endpoint_name)
-                elif db_type == "elasticsearch":
-                    from retrieval_providers.elasticsearch_client import ElasticsearchClient
-                    client = ElasticsearchClient(endpoint_name)
                 elif db_type == "postgres":
                     from retrieval_providers.postgres_client import PgVectorClient
                     client = PgVectorClient(endpoint_name)
-                elif db_type == "shopify_mcp":
-                    from retrieval_providers.shopify_mcp import ShopifyMCPClient
-                    client = ShopifyMCPClient(endpoint_name)
-                elif db_type == "hnswlib":
-                    from retrieval_providers.hnswlib_client import HnswlibClient
-                    client = HnswlibClient(endpoint_name)
                 else:
                     error_msg = f"Unsupported database type: {db_type}"
                     logger.error(error_msg)
@@ -1120,16 +1104,17 @@ def get_vector_db_client(endpoint_name: Optional[str] = None,
 
 
 
-async def search(query: str, 
+async def search(query: str,
                 site: str = "all",
                 num_results: int = 50,
                 endpoint_name: Optional[str] = None,
                 query_params: Optional[Dict[str, Any]] = None,
                 handler: Optional[Any] = None,
+                filters: Optional[List[Dict[str, Any]]] = None,
                 **kwargs) -> List[Dict[str, Any]]:
     """
     Simplified search interface that combines client creation and search in one call.
-    
+
     Args:
         query: The search query
         site: Site to search in (default: "all")
@@ -1137,18 +1122,23 @@ async def search(query: str,
         endpoint_name: Optional name of the endpoint to use
         query_params: Optional query parameters for overriding endpoint
         handler: Optional handler with http_handler for sending messages
+        filters: Optional list of generic filters, e.g.
+            [{"field": "datePublished", "operator": "gte", "value": "2026-01-01"}]
+            Each provider converts these to its native filter format.
         **kwargs: Additional parameters passed to the search method
-        
+
     Returns:
         List of search results
-        
+
     Example:
         results = await search("climate change", site="example.com", num_results=5)
     """
     client = get_vector_db_client(endpoint_name=endpoint_name, query_params=query_params)
-    # Pass handler through kwargs if provided
+    # Pass handler and filters through kwargs if provided
     if handler:
         kwargs['handler'] = handler
+    if filters:
+        kwargs['filters'] = filters
 
     results = await client.search(query, site, num_results, **kwargs)
     
@@ -1169,6 +1159,109 @@ async def search(query: str,
             logger.warning(f"Failed to send retrieval count message: {e}")
     
     return results
+
+
+def _extract_url(item) -> Optional[str]:
+    """Extract URL from a search result item (Dict or Tuple format)."""
+    if isinstance(item, dict):
+        return item.get('url')
+    elif isinstance(item, (list, tuple)) and len(item) >= 1:
+        return item[0]
+    return None
+
+
+async def search_with_expansion(
+    query: str,
+    expansion_queries: List[str],
+    site: str = "all",
+    num_results: int = 50,
+    num_per_expansion: int = 20,
+    endpoint_name: Optional[str] = None,
+    query_params: Optional[Dict[str, Any]] = None,
+    handler: Optional[Any] = None,
+    filters: Optional[List[Dict[str, Any]]] = None,
+    **kwargs
+) -> List[Dict[str, Any]]:
+    """
+    Search with the original query plus expansion queries in parallel.
+    Original query results are prioritised; expansion results are appended
+    after URL-based deduplication.
+
+    Args:
+        query: The primary search query
+        expansion_queries: Additional queries from QueryRewrite expansion
+        site: Site to search in
+        num_results: Max results for the primary query
+        num_per_expansion: Max results per expansion query
+        endpoint_name: Optional endpoint override
+        query_params: Optional query parameters
+        handler: Optional handler for messaging
+        filters: Optional generic filters (time range, author, etc.)
+        **kwargs: Additional parameters
+
+    Returns:
+        Deduplicated list of search results, primary results first.
+    """
+    # Primary search gets handler (may mutate handler.time_filter_relaxed etc.)
+    primary_kwargs = dict(
+        site=site,
+        endpoint_name=endpoint_name,
+        query_params=query_params,
+        handler=handler,
+        filters=filters,
+        **kwargs
+    )
+    # Expansion searches omit handler to avoid concurrent mutations
+    expansion_kwargs = dict(
+        site=site,
+        endpoint_name=endpoint_name,
+        query_params=query_params,
+        filters=filters,
+        **kwargs
+    )
+
+    # Launch all searches in parallel
+    primary_task = search(query, num_results=num_results, **primary_kwargs)
+    expansion_tasks = [
+        search(eq, num_results=num_per_expansion, **expansion_kwargs)
+        for eq in expansion_queries
+    ]
+
+    all_results = await asyncio.gather(primary_task, *expansion_tasks, return_exceptions=True)
+
+    # Primary results first
+    primary_items = all_results[0] if not isinstance(all_results[0], Exception) else []
+    if isinstance(all_results[0], Exception):
+        logger.warning(f"Primary search failed: {all_results[0]}")
+
+    # Deduplicate: primary results take priority
+    seen_urls = set()
+    merged = []
+
+    for item in primary_items:
+        url = _extract_url(item)
+        if url and url not in seen_urls:
+            seen_urls.add(url)
+            merged.append(item)
+
+    # Append expansion results, skipping duplicates
+    for i, result in enumerate(all_results[1:]):
+        if isinstance(result, Exception):
+            logger.warning(f"Expansion search failed for '{expansion_queries[i]}': {result}")
+            continue
+        for item in result:
+            url = _extract_url(item)
+            if url and url not in seen_urls:
+                seen_urls.add(url)
+                merged.append(item)
+
+    logger.info(
+        f"search_with_expansion: primary={len(primary_items)}, "
+        f"expansions={len(expansion_queries)}, "
+        f"merged={len(merged)} (after dedup)"
+    )
+
+    return merged
 
 
 async def search_all_sites(query: str,

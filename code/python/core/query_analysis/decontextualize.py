@@ -8,13 +8,14 @@ WARNING: This code is under development and may undergo changes in future releas
 Backwards compatibility is not guaranteed at this time.
 """
 
-import core.retriever as retriever
 import asyncio
-from core.utils.trim import trim_json
 import json
+
+import core.retriever as retriever
 from core.prompts import PromptRunner
-from misc.logger.logging_config_helper import get_configured_logger
+from core.utils.json_utils import trim_json
 from core.config import CONFIG
+from misc.logger.logging_config_helper import get_configured_logger
 
 logger = get_configured_logger("decontextualizer")
 

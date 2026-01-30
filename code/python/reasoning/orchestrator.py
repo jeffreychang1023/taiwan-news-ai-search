@@ -1112,8 +1112,12 @@ class DeepResearchOrchestrator:
         # Frontend expects: sources[0] = URL for [1], sources[1] = URL for [2], etc.
         # We build a complete array from citation ID 1 to max ID used
         source_urls = []
-        max_cid = max(self.source_map.keys()) if self.source_map else 0
         writer_citations = final_report.sources_used  # List of citation IDs like [1, 4, 10, 18...]
+        # Bug #25 Plan A: Extend max_cid to cover Writer's actual citations (even if out of source_map range)
+        max_cid = max(
+            max(self.source_map.keys(), default=0),
+            max(writer_citations, default=0)
+        )
 
         self.logger.info(f"Writer cited {len(writer_citations)} sources: {writer_citations}")
         self.logger.info(f"Building complete source URL array from 1 to {max_cid}")

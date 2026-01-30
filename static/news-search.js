@@ -68,6 +68,10 @@
         let currentSearchAbortController = null;
         let currentSearchEventSource = null;
 
+        // Bug #23: Deep Research & Free Conversation abort infrastructure
+        let currentDeepResearchEventSource = null;
+        let currentFreeConvAbortController = null;
+
         // Session ID for analytics and A/B testing (persists until browser tab closes)
         let currentSessionId = sessionStorage.getItem('nlweb_session_id');
         if (!currentSessionId) {
@@ -247,7 +251,7 @@
                     }
                 } else if (newMode === 'chat') {
                     btnSearch.textContent = '發送';
-                    searchInput.placeholder = '繼續對話...';
+                    searchInput.placeholder = '研究助理會參考摘要內容及您釘選的文章來回答...';
 
                     // 必須無條件顯示 resultsSection，因為 chatContainer 是它的子元素
                     // B1（空結果）已由 resetToHome() 清空 listView/timelineView 處理
@@ -726,6 +730,12 @@
                                 console.warn('[Clarification] Received clarification_required in regular search — not handled');
                                 break;
 
+                            case 'time_filter_relaxed':
+                                // Time filter was too strict — show warning banner
+                                console.warn('[Temporal] Time filter relaxed:', data.content);
+                                showTimeFilterRelaxedWarning(data.content);
+                                break;
+
                             case 'complete':
                                 // Stream complete, close connection
                                 console.log('Stream complete. Accumulated data:', accumulatedData);
@@ -757,15 +767,18 @@
         }
 
         // Function to handle POST streaming requests (for large payloads like research reports)
-        async function handlePostStreamingRequest(url, body, query) {
-            const response = await fetch(url, {
+        // Bug #23: Added abortSignal parameter for cancellation support
+        async function handlePostStreamingRequest(url, body, query, abortSignal = null) {
+            const fetchOptions = {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                     'Accept': 'text/event-stream'
                 },
                 body: JSON.stringify(body)
-            });
+            };
+            if (abortSignal) fetchOptions.signal = abortSignal;
+            const response = await fetch(url, fetchOptions);
 
             if (!response.ok) {
                 throw new Error(`HTTP error! status: ${response.status}`);
@@ -813,6 +826,26 @@
                                         if (data.item_to_remember) {
                                             showMemoryNotification(data.item_to_remember);
                                         }
+                                        break;
+
+                                    case 'time_filter_relaxed':
+                                        console.warn('[Temporal] Time filter relaxed:', data.content);
+                                        showTimeFilterRelaxedWarning(data.content);
+                                        break;
+
+                                    // Unified mode message types
+                                    case 'articles':
+                                        accumulatedData.content = data.content || [];
+                                        break;
+                                    case 'summary':
+                                        accumulatedData.summary = { message: data.content };
+                                        break;
+                                    case 'answer':
+                                        // Received twice (initial + enriched), idempotent overwrite
+                                        accumulatedData.nlws = data.answer ? { answer: data.answer } : null;
+                                        break;
+                                    case 'end-nlweb-response':
+                                        // Explicit no-op — stream ends on 'complete'
                                         break;
 
                                     case 'complete':
@@ -1019,6 +1052,21 @@
             }, 5000);
         }
 
+        // Function to show time filter relaxed warning banner
+        function showTimeFilterRelaxedWarning(message) {
+            // Remove existing warning if present
+            const existing = document.getElementById('timeFilterWarning');
+            if (existing) existing.remove();
+
+            const warning = document.createElement('div');
+            warning.id = 'timeFilterWarning';
+            warning.className = 'time-filter-warning';
+            warning.innerHTML = `<span class="warning-text">${escapeHTML(message)}</span>`;
+
+            // Insert at top of results section
+            resultsSection.insertBefore(warning, resultsSection.firstChild);
+        }
+
         // Function to populate UI from API response
         function populateResultsFromAPI(data, query) {
             // Get articles from response - prioritize content/results for summarize mode
@@ -1039,8 +1087,8 @@
                     <div class="summary-footer">
                         <div class="source-info">⚠️ 資料來源：基於 ${articles.length} 則報導生成</div>
                         <div class="feedback-buttons">
-                            <button class="btn-feedback">👍 有幫助</button>
-                            <button class="btn-feedback">👎 不準確</button>
+                            <button class="btn-feedback" data-rating="positive">👍 有幫助</button>
+                            <button class="btn-feedback" data-rating="negative">👎 不準確</button>
                         </div>
                     </div>
                 `;
@@ -1056,8 +1104,8 @@
                     <div class="summary-footer">
                         <div class="source-info">⚠️ 資料來源：基於 ${articles.length} 則報導生成</div>
                         <div class="feedback-buttons">
-                            <button class="btn-feedback">👍 有幫助</button>
-                            <button class="btn-feedback">👎 不準確</button>
+                            <button class="btn-feedback" data-rating="positive">👍 有幫助</button>
+                            <button class="btn-feedback" data-rating="negative">👎 不準確</button>
                         </div>
                     </div>
                 `;
@@ -1131,7 +1179,7 @@
 
                 // Create card for list view
                 const cardHTML = `
-                    <div class="news-card" data-url="${escapeHTML(url)}" data-title="${escapeHTML(title)}">
+                    <div class="news-card" data-url="${escapeHTML(url)}" data-title="${escapeHTML(title)}" data-description="${escapeHTML(description)}">
                         <div class="news-title">${escapeHTML(title)}</div>
                         <div class="news-meta">
                             <span>🏢 ${escapeHTML(publisher)}</span>
@@ -1231,8 +1279,10 @@
         // Search functionality
         btnSearch.addEventListener('click', performSearch);
         searchInput.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
+            if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
                 e.preventDefault();
+                // Bug #23: Prevent duplicate sends during processing
+                if (searchInput.dataset.processing === 'true') return;
                 performSearch();
             }
         });
@@ -1251,12 +1301,57 @@
             loadingState.classList.remove('active');
         }
 
+        // Bug #23: Cancel all active requests across all modes (search, DR, FC)
+        function cancelAllActiveRequests() {
+            cancelActiveSearch();
+            if (currentDeepResearchEventSource) {
+                currentDeepResearchEventSource.close();
+                currentDeepResearchEventSource = null;
+            }
+            if (currentFreeConvAbortController) {
+                currentFreeConvAbortController.abort();
+                currentFreeConvAbortController = null;
+            }
+            // Reset UI loading states
+            loadingState.classList.remove('active');
+            const chatLoadingEl = document.getElementById('chatLoading');
+            if (chatLoadingEl) chatLoadingEl.classList.remove('active');
+        }
+
+        // Bug #23: UI state machine — toggle between idle and processing states
+        function setProcessingState(isProcessing) {
+            const searchBtn = document.getElementById('btnSearch');
+            const stopBtn = document.getElementById('btnStopGenerate');
+            if (isProcessing) {
+                if (searchBtn) searchBtn.style.display = 'none';
+                if (stopBtn) stopBtn.style.display = '';
+                // Disable Enter key submission during processing
+                searchInput.dataset.processing = 'true';
+            } else {
+                if (searchBtn) searchBtn.style.display = '';
+                if (stopBtn) stopBtn.style.display = 'none';
+                searchInput.dataset.processing = '';
+            }
+        }
+
+        // Bug #23: Stop button click handler
+        document.addEventListener('DOMContentLoaded', () => {
+            const stopBtn = document.getElementById('btnStopGenerate');
+            if (stopBtn) {
+                stopBtn.addEventListener('click', () => {
+                    cancelAllActiveRequests();
+                    setProcessingState(false);
+                });
+            }
+        });
+
         async function performSearch() {
             const query = searchInput.value.trim();
             if (!query) return;
 
-            // Cancel any previous in-flight search
-            cancelActiveSearch();
+            // Bug #23: Cancel all active requests (search, DR, FC) before starting new search
+            cancelAllActiveRequests();
+            setProcessingState(true);
             const mySearchGeneration = searchGenerationId;
             currentSearchAbortController = new AbortController();
 
@@ -1286,88 +1381,38 @@
                 return;
             }
 
-            // Search mode - normal flow
-            // Show loading
+            // Search mode - unified SSE flow (single request for articles + summary + AI answer)
             loadingState.classList.add('active');
             resultsSection.classList.remove('active');
 
             try {
-                const base = window.location.origin;
-
-                // Capture conversation history BEFORE this query (for context)
                 const prevQueriesForThisTurn = [...conversationHistory];
 
-                // Make TWO API calls to get both summary and scores
-                // Call 1: Get articles with relevance scores using 'summarize' mode
-                const summarizeUrl = new URL('/ask', base);
-                summarizeUrl.searchParams.append('query', query);
-                summarizeUrl.searchParams.append('site', getSelectedSitesParam());
-                summarizeUrl.searchParams.append('generate_mode', 'summarize');
-                summarizeUrl.searchParams.append('streaming', 'false');
-                summarizeUrl.searchParams.append('session_id', currentSessionId);
-                // Send conversation history for context
-                if (prevQueriesForThisTurn.length > 0) {
-                    summarizeUrl.searchParams.append('prev', JSON.stringify(prevQueriesForThisTurn));
-                }
-
-                const summarizeResponse = await fetch(summarizeUrl.toString(), { signal: currentSearchAbortController?.signal });
-                if (!summarizeResponse.ok) {
-                    throw new Error(`API error: ${summarizeResponse.statusText}`);
-                }
-                // Stale check: if another search/session-load started, discard results
-                if (mySearchGeneration !== searchGenerationId) {
-                    console.log('[Search] Stale search discarded after summarize fetch');
-                    return;
-                }
-
-                let summarizeData = await summarizeResponse.json();
-                if (Array.isArray(summarizeData) && summarizeData.length > 0) {
-                    summarizeData = summarizeData[0];
-                }
-
-                // Extract parent_query_id from summarize response for analytics linking
-                const parentQueryId = summarizeData.query_id || summarizeData.conversation_id;
-
-                // Call 2: Get AI-generated summary using 'generate' mode with STREAMING
-                // This allows us to receive memory messages in real-time
-                const generateUrl = new URL('/ask', base);
-                generateUrl.searchParams.append('query', query);
-                generateUrl.searchParams.append('site', getSelectedSitesParam());
-                generateUrl.searchParams.append('generate_mode', 'generate');
-                generateUrl.searchParams.append('streaming', 'true'); // Enable streaming for memory messages
-                generateUrl.searchParams.append('session_id', currentSessionId);
-                if (parentQueryId) {
-                    generateUrl.searchParams.append('parent_query_id', parentQueryId);
-                }
-                // Send conversation history for context
-                if (prevQueriesForThisTurn.length > 0) {
-                    generateUrl.searchParams.append('prev', JSON.stringify(prevQueriesForThisTurn));
-                }
-
-                let generateData = await handleStreamingRequest(generateUrl.toString(), query);
-
-                // Debug logging
-                console.log('Generate Data received:', generateData);
-                console.log('Generate Data answer:', generateData.answer);
-                console.log('Summarize Data:', summarizeData);
-
-                // Combine both: use articles with scores from summarize, and AI answer from generate
-                // The SSE stream returns answer directly in the data object, not nested under nlws
-                const combinedData = {
-                    content: summarizeData.content || [], // Articles with scores
-                    nlws: generateData.answer ? { answer: generateData.answer } : null, // AI summary - wrap answer in nlws format
-                    summary: summarizeData.summary || null
+                // Single unified POST SSE call
+                const body = {
+                    query: query,
+                    site: getSelectedSitesParam(),
+                    generate_mode: 'unified',
+                    streaming: 'true',
+                    session_id: currentSessionId
                 };
+                if (prevQueriesForThisTurn.length > 0) {
+                    body.prev = JSON.stringify(prevQueriesForThisTurn);
+                }
 
-                console.log('Combined Data:', combinedData);
+                const combinedData = await handlePostStreamingRequest(
+                    '/ask', body, query, currentSearchAbortController.signal
+                );
 
-                // Stale check: if another search/session-load started, discard results
+                // Stale check
                 if (mySearchGeneration !== searchGenerationId) {
                     console.log('[Search] Stale search discarded before rendering');
                     return;
                 }
 
-                // Parse and populate the UI with combined data
+                console.log('Unified Combined Data:', combinedData);
+
+                // Parse and populate the UI
                 populateResultsFromAPI(combinedData, query);
 
                 // Store complete session data for this query
@@ -1379,7 +1424,6 @@
 
                 // Accumulate articles from this search for chat mode
                 if (combinedData.content && combinedData.content.length > 0) {
-                    // Add new articles, avoiding duplicates by URL
                     const existingUrls = new Set(accumulatedArticles.map(art => art.url || art.schema_object?.url));
                     const newArticles = combinedData.content.filter(art => {
                         const url = art.url || art.schema_object?.url;
@@ -1391,26 +1435,20 @@
 
                 // Add current query to history for NEXT turn
                 conversationHistory.push(query);
-                // Keep only last 10 queries
                 if (conversationHistory.length > 10) {
                     conversationHistory.shift();
-                    // Also trim sessionHistory to match
                     sessionHistory.shift();
                 }
 
-                // Update conversation history display
                 renderConversationHistory();
-
-                // 自動建立/更新 session（第一則訊息發出時建立，後續查詢更新）
                 saveCurrentSession();
 
                 loadingState.classList.remove('active');
+                setProcessingState(false);
                 resultsSection.classList.add('active');
-
-                // Scroll to results
                 resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
             } catch (error) {
-                // Silently ignore cancelled searches (user loaded session or started new search)
+                setProcessingState(false);
                 if (error.name === 'AbortError' || mySearchGeneration !== searchGenerationId) {
                     console.log('[Search] Search cancelled or superseded');
                     return;
@@ -1435,6 +1473,7 @@
 
             // Clear input
             searchInput.value = '';
+            setProcessingState(true); // Bug #23
 
             // Enable chat container for conversational clarification
             const chatContainer = document.getElementById('chatContainer');
@@ -1527,8 +1566,12 @@
 
                 console.log('Deep Research URL:', deepResearchUrl.toString());
 
+                // Bug #23: Cancel any previous active requests before starting DR
+                cancelAllActiveRequests();
+
                 // Use SSE streaming to get progress updates
                 const eventSource = new EventSource(deepResearchUrl.toString());
+                currentDeepResearchEventSource = eventSource; // Bug #23: store for external abort
 
                 let fullReport = '';
                 let progressContainer = null;
@@ -1558,9 +1601,11 @@
 
                             // Close event source
                             eventSource.close();
+                            currentDeepResearchEventSource = null;
 
                             // Hide loading
                             loadingState.classList.remove('active');
+                            setProcessingState(false); // Bug #23
 
                             // Display results
                             displayDeepResearchResults(fullReport, data, savedQuery);
@@ -1570,11 +1615,15 @@
                         } else if (data.message_type === 'complete') {
                             // Stream complete - close connection
                             eventSource.close();
+                            currentDeepResearchEventSource = null;
+                            setProcessingState(false); // Bug #23
                             console.log('Deep Research stream complete');
                         } else if (data.message_type === 'error') {
                             console.error('Deep Research error:', data.error);
                             eventSource.close();
+                            currentDeepResearchEventSource = null;
                             loadingState.classList.remove('active');
+                            setProcessingState(false); // Bug #23
                             alert('Deep Research 發生錯誤: ' + data.error);
                         }
                     } catch (e) {
@@ -1585,13 +1634,17 @@
                 eventSource.onerror = (error) => {
                     console.error('SSE connection error:', error);
                     eventSource.close();
+                    currentDeepResearchEventSource = null;
                     loadingState.classList.remove('active');
+                    setProcessingState(false); // Bug #23
                     alert('Deep Research 連線錯誤');
                 };
 
             } catch (error) {
                 console.error('Deep Research error:', error);
+                currentDeepResearchEventSource = null;
                 loadingState.classList.remove('active');
+                setProcessingState(false); // Bug #23
                 alert('Deep Research 發生錯誤: ' + error.message);
             }
         }
@@ -1615,11 +1668,16 @@
                             const topic = url.replace('urn:llm:knowledge:', '');
                             return `<span class="citation-urn" title="AI 背景知識：${topic}">[${num}]<sup>AI</sup></span>`;
                         }
+                        // Bug #13: Handle private:// protocol (user-uploaded documents)
+                        if (url.startsWith('private://')) {
+                            return `<span class="citation-private" title="私人文件來源">[${num}]<sup>\u{1F4C1}</sup></span>`;
+                        }
                         // Normal URL - create clickable link
                         return `<a href="${url}" target="_blank" class="citation-link" title="來源 ${num}">[${num}]</a>`;
                     }
                 }
-                return match; // Keep original if index out of range or URL is empty
+                // Bug #25 Plan C: Out-of-range citation — show styled tooltip instead of raw text
+                return `<span class="citation-no-link" title="來源暫無連結">[${num}]</span>`;
             });
         }
 
@@ -2401,23 +2459,18 @@
             return mapping[confidence] || 5.0;
         }
 
-        // KG Toggle Button Handler
+        // KG Toggle Button Handler (Bug #17: operate on kgContentWrapper, not individual elements)
         document.addEventListener('DOMContentLoaded', () => {
             const toggleButton = document.getElementById('kgToggleButton');
-            const content = document.getElementById('kgDisplayContent');
+            const wrapper = document.getElementById('kgContentWrapper');
             const icon = document.getElementById('kgToggleIcon');
 
-            if (toggleButton) {
+            if (toggleButton && wrapper) {
                 toggleButton.addEventListener('click', () => {
-                    if (content.classList.contains('collapsed')) {
-                        content.classList.remove('collapsed');
-                        icon.textContent = '▼';
-                        toggleButton.childNodes[1].textContent = ' 收起';
-                    } else {
-                        content.classList.add('collapsed');
-                        icon.textContent = '▶';
-                        toggleButton.childNodes[1].textContent = ' 展開';
-                    }
+                    const isCollapsed = wrapper.style.display === 'none';
+                    wrapper.style.display = isCollapsed ? '' : 'none';
+                    icon.textContent = isCollapsed ? '▼' : '▶';
+                    toggleButton.childNodes[1].textContent = isCollapsed ? ' 收起' : ' 展開';
                 });
             }
         });
@@ -2474,6 +2527,13 @@
                     console.log('[Free Conversation] Passing full research report:', currentResearchReport.report.length, 'chars');
                 }
 
+                // Add pinned articles if any
+                if (pinnedNewsCards.length > 0) {
+                    requestBody.pinned_articles = pinnedNewsCards.map(p => ({
+                        url: p.url, title: p.title, description: p.description || ''
+                    }));
+                }
+
                 // Add private sources parameters if enabled
                 if (includePrivateSources) {
                     requestBody.include_private_sources = true;
@@ -2482,8 +2542,14 @@
 
                 console.log('[Free Conversation] Using POST request with body size:', JSON.stringify(requestBody).length, 'bytes');
 
+                // Bug #23: Cancel any previous active requests and create abort controller
+                cancelAllActiveRequests();
+                currentFreeConvAbortController = new AbortController();
+                setProcessingState(true);
+
                 // Use fetch with POST for streaming (handles large payloads)
-                let chatData = await handlePostStreamingRequest('/ask', requestBody, query);
+                let chatData = await handlePostStreamingRequest('/ask', requestBody, query, currentFreeConvAbortController.signal);
+                currentFreeConvAbortController = null;
 
                 // Add assistant response to chat
                 if (chatData.answer) {
@@ -2493,11 +2559,19 @@
                 }
 
                 chatLoading.classList.remove('active');
+                setProcessingState(false); // Bug #23
                 chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
 
                 // 自動建立/更新 session
                 saveCurrentSession();
             } catch (error) {
+                currentFreeConvAbortController = null;
+                setProcessingState(false); // Bug #23
+                if (error.name === 'AbortError') {
+                    console.log('[Free Conversation] Request aborted by user');
+                    chatLoading.classList.remove('active');
+                    return;
+                }
                 console.error('Chat failed:', error);
                 chatLoading.classList.remove('active');
                 addChatMessage('assistant', '抱歉，發生錯誤。請稍後再試。');
@@ -2764,7 +2838,7 @@
         // ==================== PIN NEWS CARD FUNCTIONS ====================
 
         // Toggle pin state for a news card
-        function togglePinNewsCard(url, title) {
+        function togglePinNewsCard(url, title, description) {
             const existingIndex = pinnedNewsCards.findIndex(p => p.url === url);
 
             if (existingIndex !== -1) {
@@ -2780,6 +2854,7 @@
                 pinnedNewsCards.push({
                     url,
                     title,
+                    description: description || '',
                     pinnedAt: Date.now()
                 });
                 console.log('[PinNews] Pinned news:', url);
@@ -2845,7 +2920,7 @@
                 if (unpinBtn && news) {
                     unpinBtn.addEventListener('click', (e) => {
                         e.stopPropagation();
-                        togglePinNewsCard(news.url, news.title);
+                        togglePinNewsCard(news.url, news.title, news.description);
                     });
                 }
             });
@@ -2860,8 +2935,9 @@
                 if (card) {
                     const url = card.dataset.url;
                     const title = card.dataset.title;
+                    const description = card.dataset.description || '';
                     if (url && title) {
-                        togglePinNewsCard(url, title);
+                        togglePinNewsCard(url, title, description);
                     }
                 }
             }
@@ -2960,11 +3036,28 @@
                 contentHTML += '</div></div>';
             });
 
-            // Submit button
+            // Global extra focus section (Bug #4: 自由聚焦選項)
             contentHTML += `
-                <button class="submit-clarification" disabled>
-                    ${clarificationData.submit_label || '開始搜尋'}
-                </button>
+                <div class="clarification-extra-section" style="margin-top: 16px; padding-top: 12px; border-top: 1px solid #e0e0e0;">
+                    <div class="extra-focus-label" style="font-size: 0.9em; color: #555; margin-bottom: 6px;">
+                        有沒有其他你想更具體聚焦的內容？
+                    </div>
+                    <input type="text" class="clarification-extra-focus"
+                           placeholder="例如：特定事件、人物、時間段..."
+                           style="width: 100%; padding: 8px 12px; border: 1px solid #ddd; border-radius: 8px; font-size: 0.9em; box-sizing: border-box;">
+                </div>
+            `;
+
+            // Submit buttons: skip + submit
+            contentHTML += `
+                <div class="clarification-actions" style="display: flex; gap: 8px; margin-top: 12px;">
+                    <button class="skip-clarification" style="flex: 1; padding: 10px; border: 1px solid #ddd; border-radius: 8px; background: #f5f5f5; cursor: pointer; font-size: 0.9em;">
+                        沒有，直接開始研究
+                    </button>
+                    <button class="submit-clarification" disabled style="flex: 1;">
+                        ${clarificationData.submit_label || '開始搜尋'}
+                    </button>
+                </div>
             `;
 
             contentHTML += '</div></div>'; // Close card and bubble
@@ -3074,16 +3167,29 @@
                 });
             });
 
+            // Skip clarification button handler (Bug #4: 直接開始研究)
+            const skipBtn = container.querySelector('.skip-clarification');
+            if (skipBtn) {
+                skipBtn.addEventListener('click', () => {
+                    const extraFocusInput = container.querySelector('.clarification-extra-focus');
+                    const extraFocus = extraFocusInput ? extraFocusInput.value.trim() : '';
+                    submitClarification(selectedAnswers, originalQuery, eventSource, questions, extraFocus, true);
+                });
+            }
+
             // Submit button handler
             container.querySelector('.submit-clarification').addEventListener('click', () => {
-                submitClarification(selectedAnswers, originalQuery, eventSource, questions);
+                const extraFocusInput = container.querySelector('.clarification-extra-focus');
+                const extraFocus = extraFocusInput ? extraFocusInput.value.trim() : '';
+                submitClarification(selectedAnswers, originalQuery, eventSource, questions, extraFocus);
             });
         }
 
         // Submit clarification response with natural language query building
-        function submitClarification(selectedAnswers, originalQuery, eventSource, questions) {
+        function submitClarification(selectedAnswers, originalQuery, eventSource, questions, extraFocus = '', forceAllComprehensive = false) {
             console.log('[Clarification] Submitting answers:', selectedAnswers);
             console.log('[Clarification] Original query:', originalQuery);
+            console.log('[Clarification] Extra focus:', extraFocus, 'Force comprehensive:', forceAllComprehensive);
 
             // Close event source
             if (eventSource) {
@@ -3144,6 +3250,16 @@
                 clarifiedQuery = `${entityModifier}${originalQuery}`;
             }
 
+            // Append extra focus text if provided (Bug #4)
+            if (extraFocus) {
+                clarifiedQuery += `，${extraFocus}`;
+            }
+
+            // Override allComprehensive if skip button was used (Bug #4)
+            if (forceAllComprehensive) {
+                allComprehensive = true;
+            }
+
             console.log('[Clarification] Clarified query:', clarifiedQuery);
             console.log('[Clarification] All comprehensive:', allComprehensive);
             console.log('[Clarification] User time range:', userTimeRange);
@@ -3153,7 +3269,10 @@
             const userMessageDiv = document.createElement('div');
             userMessageDiv.className = 'chat-message user';
 
-            const selectionText = Object.values(selectedAnswers).map(a => a.label).join(' + ');
+            const selections = Object.values(selectedAnswers).map(a => a.label);
+            if (extraFocus) selections.push(extraFocus);
+            if (forceAllComprehensive && selections.length === 0) selections.push('直接開始研究');
+            const selectionText = selections.join(' + ');
             userMessageDiv.innerHTML = `
                 <div class="chat-message-header">你</div>
                 <div class="chat-message-bubble">${escapeHTML(selectionText)}</div>
@@ -3394,7 +3513,7 @@
                 const chatInlineBtn = document.querySelector('.mode-btn-inline[data-mode="chat"]');
                 if (chatInlineBtn) chatInlineBtn.classList.add('active');
                 btnSearch.textContent = '發送';
-                searchInput.placeholder = '繼續對話...';
+                searchInput.placeholder = '研究助理會參考摘要內容及您釘選的文章來回答...';
 
                 // Move search container into chat area
                 chatInputContainer.appendChild(searchContainer);
@@ -3715,20 +3834,96 @@
             copyAndOpen(content, 'https://notebooklm.google.com/', btnCopyNotebookLM);
         });
 
-        // Feedback buttons
+        // Feedback buttons — open modal for user comment (Bug #14)
         const feedbackButtons = document.querySelectorAll('.btn-feedback');
         feedbackButtons.forEach(btn => {
             btn.addEventListener('click', () => {
-                const originalText = btn.textContent;
-                btn.textContent = btn.textContent.includes('👍') ? '✓ 已回饋' : '✓ 已回報';
-                btn.style.color = '#059669';
-
-                setTimeout(() => {
-                    btn.textContent = originalText;
-                    btn.style.color = '';
-                }, 2000);
+                const rating = btn.dataset.rating || (btn.textContent.includes('👍') ? 'positive' : 'negative');
+                openFeedbackModal(rating);
             });
         });
+
+        // Feedback modal logic (Bug #14)
+        function openFeedbackModal(rating) {
+            // Remove existing modal if any
+            const existing = document.getElementById('feedbackModal');
+            if (existing) existing.remove();
+
+            const ratingLabel = rating === 'positive' ? '👍 正面回饋' : '👎 負面回饋';
+
+            const modal = document.createElement('div');
+            modal.id = 'feedbackModal';
+            modal.className = 'feedback-modal-overlay';
+            modal.innerHTML = `
+                <div class="feedback-modal">
+                    <div class="feedback-modal-header">
+                        <span>${ratingLabel}</span>
+                        <button class="feedback-modal-close">&times;</button>
+                    </div>
+                    <div class="feedback-modal-body">
+                        <textarea class="feedback-textarea"
+                                  placeholder="感謝提供意見，有任何正面、負面體驗，或其他意見都歡迎回饋！"
+                                  rows="4"></textarea>
+                    </div>
+                    <div class="feedback-modal-footer">
+                        <button class="feedback-cancel">取消</button>
+                        <button class="feedback-submit">提交回饋</button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(modal);
+
+            // Focus textarea
+            const textarea = modal.querySelector('.feedback-textarea');
+            setTimeout(() => textarea.focus(), 100);
+
+            // Close handlers
+            modal.querySelector('.feedback-modal-close').addEventListener('click', () => modal.remove());
+            modal.querySelector('.feedback-cancel').addEventListener('click', () => modal.remove());
+            modal.addEventListener('click', (e) => {
+                if (e.target === modal) modal.remove();
+            });
+
+            // Submit handler
+            modal.querySelector('.feedback-submit').addEventListener('click', async () => {
+                const comment = textarea.value.trim();
+                const submitBtn = modal.querySelector('.feedback-submit');
+                submitBtn.disabled = true;
+                submitBtn.textContent = '提交中...';
+
+                // Gather context
+                const query = document.getElementById('searchInput')?.value || '';
+                const summaryEl = document.querySelector('.summary-content');
+                const answerSnippet = summaryEl ? summaryEl.textContent.substring(0, 200) : '';
+
+                try {
+                    const resp = await fetch('/api/feedback', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            rating: rating,
+                            query: query,
+                            answer_snippet: answerSnippet,
+                            comment: comment,
+                            session_id: currentSessionId || ''
+                        })
+                    });
+                    if (resp.ok) {
+                        submitBtn.textContent = '已提交';
+                        submitBtn.style.background = '#059669';
+                        submitBtn.style.color = '#fff';
+                        setTimeout(() => modal.remove(), 1000);
+                    } else {
+                        submitBtn.textContent = '提交失敗，請重試';
+                        submitBtn.disabled = false;
+                    }
+                } catch (err) {
+                    console.error('[Feedback] Submit error:', err);
+                    submitBtn.textContent = '提交失敗，請重試';
+                    submitBtn.disabled = false;
+                }
+            });
+        }
 
         // ==================== SITE FILTER FUNCTIONS ====================
 
@@ -4031,6 +4226,11 @@
                     }
                 });
             });
+
+            // 若處於資料夾管理模式，重新綁定拖曳
+            if (_folderModeActive) {
+                makeSidebarSessionsDraggable();
+            }
         }
 
         // Close sidebar session dropdowns on outside click
@@ -4089,6 +4289,10 @@
                 }
             });
         }
+
+        // 資料夾相關旗標（須在任何引用它們的函式呼叫前宣告，避免 let TDZ）
+        let _folderModeActive = false;
+        let _preFolderState = null;
 
         // 監聽 session 變更事件，同步更新左側邊欄
         document.addEventListener('session-saved', renderLeftSidebarSessions);
@@ -4172,9 +4376,6 @@
 
         // -- View switching: show folder page, hide other main content --
 
-        // 記住進入資料夾頁前的 UI 狀態，離開時完整還原
-        let _preFolderState = null;
-
         function showFolderPage() {
             const ids = ['initialState', 'searchContainer', 'resultsSection', 'loadingState'];
             // 快照目前每個元素的 display 值（含 chat 相關元素）
@@ -4197,9 +4398,17 @@
 
             showFolderMain();
             renderFolderGrid();
+
+            // 進入資料夾管理模式：啟用 sidebar session 拖曳
+            _folderModeActive = true;
+            makeSidebarSessionsDraggable();
         }
 
         function hideFolderPage() {
+            // 離開資料夾管理模式：關閉 sidebar session 拖曳
+            _folderModeActive = false;
+            removeSidebarSessionsDraggable();
+
             document.getElementById('folderPage').style.display = 'none';
             currentOpenFolderId = null;
 
@@ -4322,6 +4531,9 @@
                     const sessionId = parseInt(e.dataTransfer.getData('text/session-id'));
                     if (sessionId) {
                         addSessionToFolder(folderId, sessionId);
+                        // 成功閃爍回饋
+                        card.classList.add('drop-success');
+                        setTimeout(() => card.classList.remove('drop-success'), 600);
                         console.log(`[Folder] Session ${sessionId} added to folder ${folderId}`);
                     }
                 });
@@ -4441,21 +4653,40 @@
                 const dateStr = getTimeAgo(session.updatedAt || session.createdAt);
                 return `
                     <div class="folder-session-item" data-session-id="${session.id}">
-                        <div class="folder-session-title">${escapeHTML(session.title)}</div>
-                        <div class="folder-session-meta">更新時間 ${dateStr}</div>
+                        <div class="folder-session-info">
+                            <div class="folder-session-title">${escapeHTML(session.title)}</div>
+                            <div class="folder-session-meta">更新時間 ${dateStr}</div>
+                        </div>
+                        <button class="folder-session-remove-btn" data-remove-session-id="${session.id}" title="從資料夾移除">&times;</button>
                     </div>
                 `;
             }).join('');
 
-            // Click session → load it
+            // Click session → load it (ignore remove button clicks)
             container.querySelectorAll('.folder-session-item').forEach(item => {
-                item.addEventListener('click', () => {
+                item.addEventListener('click', (e) => {
+                    if (e.target.closest('.folder-session-remove-btn')) return;
                     const sessionId = parseInt(item.dataset.sessionId);
                     const session = savedSessions.find(s => s.id === sessionId);
                     if (session) {
                         hideFolderPage();
                         loadSavedSession(session);
                     }
+                });
+            });
+
+            // Remove session from folder
+            container.querySelectorAll('.folder-session-remove-btn').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const sessionId = parseInt(btn.dataset.removeSessionId);
+                    removeSessionFromFolder(folder.id, sessionId);
+                    // Re-render with updated folder data
+                    const updatedFolder = folders.find(f => f.id === folder.id);
+                    if (updatedFolder) {
+                        renderFolderDetailSessions(updatedFolder);
+                    }
+                    console.log(`[Folder] Session ${sessionId} removed from folder ${folder.id}`);
                 });
             });
         }
@@ -4496,27 +4727,46 @@
             });
         });
 
-        // -- Drag-and-drop: make sidebar session items draggable --
+        // -- Drag-and-drop: sidebar sessions → folder cards --
+        // 使用 event delegation 避免 listener 堆疊，且不干擾子元素點擊
+
+        // 單一 delegated handler，綁在 container 上（只綁一次）
+        (function initSidebarDragDelegation() {
+            const container = document.getElementById('leftSidebarSessions');
+            if (!container) return;
+
+            container.addEventListener('dragstart', (e) => {
+                if (!_folderModeActive) return;
+                // 若從按鈕/選單觸發，取消拖曳
+                if (e.target.closest('.left-sidebar-session-menu-btn') || e.target.closest('.left-sidebar-session-dropdown')) {
+                    e.preventDefault();
+                    return;
+                }
+                const item = e.target.closest('.left-sidebar-session-item');
+                if (!item) return;
+                const sessionId = item.dataset.sidebarSessionId;
+                if (!sessionId) return;
+                e.dataTransfer.setData('text/session-id', sessionId);
+                e.dataTransfer.effectAllowed = 'copy';
+                item.classList.add('dragging');
+            });
+
+            container.addEventListener('dragend', (e) => {
+                const item = e.target.closest('.left-sidebar-session-item');
+                if (item) item.classList.remove('dragging');
+            });
+        })();
 
         function makeSidebarSessionsDraggable() {
-            // Find session items in left sidebar (the recent session titles)
-            // These are rendered in the right tab's history panel.
-            // For drag-and-drop, we make the items in the history popup draggable too.
-            document.querySelectorAll('.saved-session-item').forEach(item => {
-                const sessionId = item.querySelector('.delete-btn')?.dataset?.sessionId;
-                if (!sessionId) return;
-
+            document.querySelectorAll('.left-sidebar-session-item').forEach(item => {
                 item.setAttribute('draggable', 'true');
-                item.classList.add('session-item-draggable');
+            });
+        }
 
-                item.addEventListener('dragstart', (e) => {
-                    e.dataTransfer.setData('text/session-id', sessionId);
-                    item.classList.add('dragging');
-                });
-
-                item.addEventListener('dragend', () => {
-                    item.classList.remove('dragging');
-                });
+        function removeSidebarSessionsDraggable() {
+            document.querySelectorAll('.left-sidebar-session-item').forEach(item => {
+                item.removeAttribute('draggable');
+                item.classList.remove('dragging');
             });
         }
 

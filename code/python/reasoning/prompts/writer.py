@@ -108,7 +108,7 @@ class WriterPromptBuilder:
 
 ### 要求
 1. 嚴格遵循大綱結構，每個章節充分展開
-2. 所有引用 **必須** 來自白名單：{analyst_citations}
+2. 所有引用 **必須** 來自白名單：{analyst_citations}（最大 ID: {max(analyst_citations) if analyst_citations else 0}，絕不可超過）
 3. 提供具體證據和細節，避免空洞論述
 4. 目標字數：{plan.estimated_length} 字（允許 ±10%）
 5. 使用 Markdown 格式，包含章節標題（## 或 ###）
@@ -245,8 +245,26 @@ class WriterPromptBuilder:
 ### Sources Used 限制
 
 **CRITICAL**：`sources_used` 列表中的每個 ID 都必須在 `analyst_citations` 白名單中。
+- 白名單中的最大 ID 為 {max(analyst_citations) if analyst_citations else 0}，你的引用 **絕不可超過** 此數字
 - ✅ 正確：analyst_citations = [1, 2, 3]，你使用 [1, 3]
 - ❌ 錯誤：analyst_citations = [1, 2, 3]，你使用 [1, 5]（5 不在白名單中）
+- ❌ 錯誤：analyst_citations = [1, 2, 3]，你在報告中寫 [15]（超出白名單範圍）
+
+### 引用語法風格
+
+引用標記 [N] 應自然嵌入句子中，不要讓引用破壞閱讀流暢性。
+
+✅ 正確範例：
+- 「台積電股價上漲 3%[1]。」
+- 「根據報導[1]，台積電股價上漲 3%。」
+- 「多項研究顯示[2][3]，AI 產業持續成長。」
+
+❌ 錯誤範例（絕對禁止）：
+- 「根據報導，在[1]中提到，台積電股價上漲 3%。」
+- 「在[1]報導中，提到台積電股價上漲 3%。」
+- 「依據[1]所述的內容來看，...」
+
+原則：引用標記放在句末或緊跟在來源描述之後，不要拆開句子。
 
 ---
 

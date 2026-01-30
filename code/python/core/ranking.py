@@ -9,15 +9,15 @@ Backwards compatibility is not guaranteed at this time.
 """
 
 from core.utils.utils import log
+from core.utils.json_utils import trim_json
 from core.llm import ask_llm
+from core.prompts import find_prompt, fill_prompt
+from core.schemas import create_assistant_result, create_status_message, Message, SenderType, MessageType
+from misc.logger.logging_config_helper import get_configured_logger
 import asyncio
 import json
 from dataclasses import dataclass
 from typing import Optional, List, Dict
-from core.utils.json_utils import trim_json
-from core.prompts import find_prompt, fill_prompt
-from misc.logger.logging_config_helper import get_configured_logger
-from core.schemas import create_assistant_result, create_status_message, Message, SenderType, MessageType
 
 # Analytics logging
 from core.query_logger import get_query_logger
@@ -170,13 +170,15 @@ The user's question is: {request.query}. The item's description is {item.descrip
                     ranking["score"] = 0
             
             if (ranking["score"] > self.EARLY_SEND_THRESHOLD):
-                logger.info(f"High score item: {name} (score: {ranking['score']}) - sending early {self.ranking_type_str}")
-                try:
-                    await self.sendAnswers([ansr])
-                except (BrokenPipeError, ConnectionResetError):
-                    logger.warning(f"Client disconnected while sending early answer for {name}")
-                    self.handler.connection_alive_event.clear()
-                    return
+                # Skip early send in unified mode — articles sent as batch after ranking
+                if self.handler.generate_mode != 'unified':
+                    logger.info(f"High score item: {name} (score: {ranking['score']}) - sending early {self.ranking_type_str}")
+                    try:
+                        await self.sendAnswers([ansr])
+                    except (BrokenPipeError, ConnectionResetError):
+                        logger.warning(f"Client disconnected while sending early answer for {name}")
+                        self.handler.connection_alive_event.clear()
+                        return
 
             self.rankedAnswers.append(ansr)
             logger.debug(f"Item {name} added to ranked answers")
@@ -298,7 +300,15 @@ The user's question is: {request.query}. The item's description is {item.descrip
                     logger.info("Fast track ranking successful")
                 
                 # Use the new schema to create and auto-send the message
-                create_assistant_result(json_results, handler=self.handler)
+                if self.handler.generate_mode == 'unified':
+                    # Unified mode: send as 'articles' with await for ordering guarantee
+                    articles_message = {
+                        "message_type": "articles",
+                        "content": json_results
+                    }
+                    await self.handler.send_message(articles_message)
+                else:
+                    create_assistant_result(json_results, handler=self.handler)
                 self.num_results_sent += len(json_results)
                 logger.info(f"Sent {len(json_results)} results, total sent: {self.num_results_sent}/{self.NUM_RESULTS_TO_SEND}")
             except (BrokenPipeError, ConnectionResetError) as e:
@@ -362,8 +372,6 @@ The user's question is: {request.query}. The item's description is {item.descrip
             logger.info(f"Vectors available for {len(self.url_to_vector)} items (MMR-ready)")
             # Store vectors on handler for PostRanking to use
             self.handler.url_to_vector = self.url_to_vector
-        else:
-            pass  # No vectors available
 
         tasks = []
         for item in self.items:

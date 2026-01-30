@@ -8,7 +8,7 @@ WARNING: This code is under development and may undergo changes in future releas
 Backwards compatibility is not guaranteed at this time.
 """
 
-from core.retriever import search
+from core.retriever import search, search_with_expansion
 import asyncio
 import importlib
 import time
@@ -22,6 +22,7 @@ import core.query_analysis.analyze_query as analyze_query
 import core.query_analysis.memory as memory
 import core.query_analysis.query_rewrite as query_rewrite
 import core.query_analysis.time_range_extractor as time_range_extractor
+import core.query_analysis.author_intent_detector as author_intent_detector
 import core.ranking as ranking
 import core.query_analysis.required_info as required_info
 import traceback
@@ -30,8 +31,6 @@ import core.fastTrack as fastTrack
 from core.fastTrack import site_supports_standard_retrieval
 import core.post_ranking as post_ranking
 import core.router as router
-import methods.accompaniment as accompaniment
-import methods.recipe_substitution as substitution
 from core.state import NLWebHandlerState
 from core.utils.utils import get_param, siteToItemType, log
 from core.utils.message_senders import MessageSender
@@ -292,49 +291,53 @@ class NLWebHandler:
             self.return_value["query_id"] = self.query_id
 
             # Send end-nlweb-response message at the end
-            await self.message_sender.send_end_response()
+            if not getattr(self, 'skip_end_response', False):
+                await self.message_sender.send_end_response()
 
-            # Analytics: Log query completion
-            try:
-                query_end_time = time.time()
-                total_latency_ms = (query_end_time - query_start_time) * 1000
+            # Analytics: Log query completion (skip if api.py handles it, e.g. unified mode)
+            if not getattr(self, 'skip_end_response', False):
+                try:
+                    query_end_time = time.time()
+                    total_latency_ms = (query_end_time - query_start_time) * 1000
 
-                num_results = 0
-                if hasattr(self, 'final_ranked_answers') and self.final_ranked_answers:
-                    num_results = len(self.final_ranked_answers)
+                    num_results = 0
+                    if hasattr(self, 'final_ranked_answers') and self.final_ranked_answers:
+                        num_results = len(self.final_ranked_answers)
 
-                query_logger.log_query_complete(
-                    query_id=self.query_id,
-                    latency_total_ms=total_latency_ms,
-                    num_results_retrieved=getattr(self, 'num_retrieved', 0),
-                    num_results_ranked=getattr(self, 'num_ranked', 0),
-                    num_results_returned=num_results,
-                    cost_usd=getattr(self, 'estimated_cost', 0),
-                    error_occurred=False
-                )
-            except Exception as e:
-                logger.warning(f"Failed to log query completion: {e}")
+                    query_logger.log_query_complete(
+                        query_id=self.query_id,
+                        latency_total_ms=total_latency_ms,
+                        num_results_retrieved=getattr(self, 'num_retrieved', 0),
+                        num_results_ranked=getattr(self, 'num_ranked', 0),
+                        num_results_returned=num_results,
+                        cost_usd=getattr(self, 'estimated_cost', 0),
+                        error_occurred=False
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to log query completion: {e}")
 
             # Return both return_value and messages (converted to dicts for backward compatibility)
             return self.return_value, [msg.to_dict() for msg in self.messages]
         except Exception as e:
             traceback.print_exc()
 
-            # Analytics: Log query error
-            try:
-                query_end_time = time.time()
-                total_latency_ms = (query_end_time - query_start_time) * 1000
-                query_logger.log_query_complete(
-                    query_id=self.query_id,
-                    latency_total_ms=total_latency_ms,
-                    error_occurred=True,
-                    error_message=str(e)
-                )
-            except Exception as log_err:
-                logger.warning(f"Failed to log query error: {log_err}")
+            # Analytics: Log query error (skip if api.py handles it, e.g. unified mode)
+            if not getattr(self, 'skip_end_response', False):
+                try:
+                    query_end_time = time.time()
+                    total_latency_ms = (query_end_time - query_start_time) * 1000
+                    query_logger.log_query_complete(
+                        query_id=self.query_id,
+                        latency_total_ms=total_latency_ms,
+                        error_occurred=True,
+                        error_message=str(e)
+                    )
+                except Exception as log_err:
+                    logger.warning(f"Failed to log query error: {log_err}")
 
             # Send end-nlweb-response even on error
-            await self.message_sender.send_end_response(error=True)
+            if not getattr(self, 'skip_end_response', False):
+                await self.message_sender.send_end_response(error=True)
 
             raise
     
@@ -346,7 +349,8 @@ class NLWebHandler:
         # tasks.append(asyncio.create_task(fastTrack.FastTrack(self).do()))
         tasks.append(asyncio.create_task(query_rewrite.QueryRewrite(self).do()))
         tasks.append(asyncio.create_task(time_range_extractor.TimeRangeExtractor(self).do()))
-        
+        tasks.append(asyncio.create_task(author_intent_detector.AuthorIntentDetector(self).do()))
+
         # Check if a specific tool is requested via the 'tool' parameter
         requested_tool = get_param(self.query_params, "tool", str, None)
         if requested_tool:
@@ -459,14 +463,61 @@ class NLWebHandler:
                 # Check if MMR is enabled and request vectors if needed
                 include_vectors = CONFIG.mmr_params.get('enabled', True) and CONFIG.mmr_params.get('include_vectors', True)
 
-                items = await search(
-                    self.decontextualized_query,
-                    self.site,
-                    query_params=self.query_params,
-                    handler=self,
-                    num_results=num_to_retrieve,
-                    include_vectors=include_vectors
-                )
+                # Construct generic filters from temporal_range and author_search
+                search_filters = []
+                self.time_filter_relaxed = False
+
+                if temporal_range and temporal_range.get('is_temporal'):
+                    start_date = temporal_range.get('start_date')
+                    end_date = temporal_range.get('end_date')
+                    if start_date:
+                        search_filters.append(
+                            {"field": "datePublished", "operator": "gte", "value": start_date}
+                        )
+                        if end_date:
+                            search_filters.append(
+                                {"field": "datePublished", "operator": "lte", "value": end_date}
+                            )
+
+                # Author filter from AuthorIntentDetector
+                author_search = getattr(self, 'author_search', None)
+                if author_search and author_search.get('is_author_search'):
+                    author_name = author_search['author_name']
+                    search_filters.append(
+                        {"field": "author", "operator": "contains", "value": author_name}
+                    )
+                    logger.info(f"[AUTHOR] Added author filter: '{author_name}'")
+
+                if search_filters:
+                    logger.info(f"[FILTER] Constructed retriever filters: {search_filters}")
+                else:
+                    search_filters = None
+
+                # Use expansion queries if QueryRewrite produced them
+                expansion_queries = getattr(self, 'rewritten_queries', [])
+                if expansion_queries:
+                    logger.info(f"[EXPANSION] Using {len(expansion_queries)} expansion queries: {expansion_queries}")
+                    items = await search_with_expansion(
+                        self.decontextualized_query,
+                        expansion_queries,
+                        self.site,
+                        num_results=num_to_retrieve,
+                        num_per_expansion=20,
+                        query_params=self.query_params,
+                        handler=self,
+                        include_vectors=include_vectors,
+                        filters=search_filters
+                    )
+                else:
+                    items = await search(
+                        self.decontextualized_query,
+                        self.site,
+                        query_params=self.query_params,
+                        handler=self,
+                        num_results=num_to_retrieve,
+                        include_vectors=include_vectors,
+                        filters=search_filters
+                    )
 
                 # Query user's private files if requested
                 if self.include_private_sources and self.user_id:
@@ -504,61 +555,38 @@ class NLWebHandler:
                         logger.exception(f"Failed to retrieve private documents: {str(e)}")
                         # Continue with public results only
 
-                # DIAGNOSTIC: Check items immediately after search
-                if items:
-                    pass  # Items received from search
+                # Date filtering is now done at the retriever/provider level via generic filters.
+                # The provider sets self.time_filter_relaxed = True if no results matched the filter.
+                if self.time_filter_relaxed:
+                    logger.warning(f"[TEMPORAL] Time filter was relaxed — provider found no results matching the date range")
+                    # Notify frontend to display a warning banner
+                    try:
+                        await self.message_sender.send_message({
+                            "message_type": "time_filter_relaxed",
+                            "content": "系統找不到完全符合日期需求的資料，已擴大搜尋範圍"
+                        })
+                    except Exception as e:
+                        logger.warning(f"Failed to send time_filter_relaxed message: {e}")
 
-                # Pre-filter by date for temporal queries using parsed time range
-                if temporal_range and temporal_range.get('is_temporal') and len(items) > 0:
-                    # Use precise date filtering from parsed range
-                    start_date_str = temporal_range.get('start_date')
-                    if not start_date_str:
-                        logger.warning(f"[TEMPORAL] temporal_range marked as temporal but missing start_date: {temporal_range}")
-                        # Skip filtering if start_date is missing
-                        self.final_retrieved_items = items
-                    else:
-                        cutoff_date = datetime.strptime(start_date_str, '%Y-%m-%d')
-                        cutoff_date = cutoff_date.replace(tzinfo=timezone.utc)
-                        filtered_items = []
+                self.final_retrieved_items = items
 
-                        for item in items:
-                            # Handle both 4-tuple and 5-tuple (with vector) formats
-                            if len(item) == 5:
-                                url, json_str, name, site, vector = item
-                            else:
-                                url, json_str, name, site = item
-                                vector = None
+                # For author searches, sort results by date (most recent first)
+                if author_search and author_search.get('is_author_search') and self.final_retrieved_items:
+                    try:
+                        def _extract_date(item):
+                            """Extract datePublished for sorting. Returns '0000-00-00' if unparseable."""
                             try:
-                                schema_obj = json.loads(json_str)
-                                date_published = schema_obj.get('datePublished', 'Unknown')
+                                sj = item.get('schema_json', '{}') if isinstance(item, dict) else ''
+                                schema = json.loads(sj) if sj else {}
+                                d = schema.get('datePublished', '') or ''
+                                return d.split('T')[0] if 'T' in d else d
+                            except Exception:
+                                return '0000-00-00'
 
-                                if date_published != 'Unknown':
-                                    # Parse date
-                                    date_str = date_published.split('T')[0] if 'T' in date_published else date_published
-                                    pub_date = datetime.strptime(date_str, '%Y-%m-%d')
-                                    pub_date = pub_date.replace(tzinfo=timezone.utc)
-
-                                    # Keep only articles within the parsed time range
-                                    if pub_date >= cutoff_date:
-                                        if vector is not None:
-                                            filtered_items.append([url, json_str, name, site, vector])
-                                        else:
-                                            filtered_items.append([url, json_str, name, site])
-                            except Exception as e:
-                                # If we can't parse the date, skip this article for temporal queries
-                                logger.debug(f"Could not parse date for temporal filtering: {e}")
-                                pass
-
-                        # If we filtered too aggressively, take top 50 anyway
-                        days = temporal_range.get('relative_days') or 365
-                        if len(filtered_items) < 50:
-                            logger.info(f"[TEMPORAL] Only {len(filtered_items)} articles found in last {days} days, using all {len(items)} retrieved")
-                            self.final_retrieved_items = items[:80]
-                        else:
-                            logger.info(f"[TEMPORAL] Filtered {len(items)} → {len(filtered_items)} articles (last {days} days)")
-                            self.final_retrieved_items = filtered_items[:80]
-                else:
-                    self.final_retrieved_items = items
+                        self.final_retrieved_items.sort(key=_extract_date, reverse=True)
+                        logger.info(f"[AUTHOR] Sorted {len(self.final_retrieved_items)} results by date (most recent first)")
+                    except Exception as e:
+                        logger.warning(f"[AUTHOR] Failed to sort by date: {e}")
 
                 self.retrieval_done_event.set()
 
@@ -579,14 +607,6 @@ class NLWebHandler:
     
     async def get_ranked_answers(self):
         try:
-            # Debug: check items before passing to ranking
-            if len(self.final_retrieved_items) > 0:
-                first_item_len = len(self.final_retrieved_items[0])
-                if first_item_len == 5:
-                    pass  # Items include vectors
-                else:
-                    pass  # Items do not include vectors
-
             await ranking.Ranking(self, self.final_retrieved_items, ranking.Ranking.REGULAR_TRACK).do()
             return self.return_value
         except Exception as e:
@@ -602,47 +622,32 @@ class NLWebHandler:
             await self.get_ranked_answers()
             return
 
-        top_tool = self.tool_routing_results[0] 
+        top_tool = self.tool_routing_results[0]
         tool = top_tool['tool']
         tool_name = tool.name
         params = top_tool['result']
-        
-        # Selected tool: {tool_name} with score: {top_tool.get('score', 0)}
-        # Tool handler class: {tool.handler_class}
-        
-        # Check if tool has a handler class defined
+
         if tool.handler_class:
-            try:                
+            try:
                 # For non-search tools, clear any items that FastTrack might have populated
                 if tool_name != "search":
-                    # Clearing items for non-search tool
                     self.final_retrieved_items = []
                     self.retrieved_items = []
-                
+
                 # Dynamic import of handler module and class
                 module_path, class_name = tool.handler_class.rsplit('.', 1)
-                # Importing handler class
                 module = importlib.import_module(module_path)
                 handler_class = getattr(module, class_name)
-                
-                # Instantiate and execute handler
-                # Creating handler instance
+
                 handler_instance = handler_class(params, self)
-                
-                # Standard handler pattern with do() method
-                # Executing handler's do() method
                 await handler_instance.do()
-                # Handler completed
-                    
+
             except Exception as e:
                 logger.error(f"ERROR executing {tool_name}: {e}")
-                import traceback
                 traceback.print_exc()
                 # Fall back to search
-                # Falling back to get_ranked_answers
                 await self.get_ranked_answers()
         else:
             # Default behavior for tools without handlers (like search)
-                # Tool has no handler class, using get_ranked_answers
-                await self.get_ranked_answers()
+            await self.get_ranked_answers()
 

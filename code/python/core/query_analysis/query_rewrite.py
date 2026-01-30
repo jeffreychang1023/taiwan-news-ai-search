@@ -2,8 +2,8 @@
 # Licensed under the MIT License
 
 """
-This file is used to rewrite complex queries into simpler keyword queries
-for traditional keyword-based search engines.
+Query expansion for news search: expands vague/abstract queries into concrete
+news-oriented search phrases to improve recall. Skips expansion for already-specific queries.
 
 WARNING: This code is under development and may undergo changes in future releases.
 Backwards compatibility is not guaranteed at this time.
@@ -27,58 +27,63 @@ class QueryRewrite(PromptRunner):
         
     async def do(self):
         """
-        Rewrite the decontextualized query into simpler keyword queries.
-        The results are stored in handler.rewritten_queries.
+        Expand the query into concrete news-oriented search phrases.
+
+        Sets on handler:
+          - rewritten_queries: list of expansion queries (empty list if no expansion needed)
+          - needs_query_expansion: bool indicating whether LLM deemed expansion useful
+
+        The original query is always searched separately by the retriever.
+        rewritten_queries contains ONLY the additional expansion queries.
         """
         # Wait for decontextualization to complete since we need the decontextualized query
         await self.handler.state._decon_event.wait()
-        
-        logger.info(f"Starting query rewrite for: {self.handler.decontextualized_query}")
-        
+
+        logger.info(f"Starting query expansion for: {self.handler.decontextualized_query}")
+
         try:
-            # Run the query rewrite prompt
             response = await self.run_prompt(self.QUERY_REWRITE_PROMPT_NAME, level="high")
-            
+
             if not response:
-                logger.warning("No response from QueryRewrite prompt, using original query")
-                self.handler.rewritten_queries = [self.handler.decontextualized_query]
+                logger.warning("No response from QueryRewrite prompt, skipping expansion")
+                self.handler.rewritten_queries = []
+                self.handler.needs_query_expansion = False
                 await self.handler.state.precheck_step_done(self.STEP_NAME)
                 return
-            
-            # Extract the rewritten queries from the response
-            rewritten_queries = response.get("rewritten_queries", [])
-            query_count = response.get("query_count", 0)
-            
-            # Validate the response
-            if not rewritten_queries or not isinstance(rewritten_queries, list):
-                logger.warning("Invalid response from QueryRewrite prompt, using original query")
-                self.handler.rewritten_queries = [self.handler.decontextualized_query]
+
+            needs_expansion = str(response.get("needs_expansion", "false")).lower() == "true"
+            self.handler.needs_query_expansion = needs_expansion
+
+            if not needs_expansion:
+                logger.info("LLM determined query is already specific, skipping expansion")
+                self.handler.rewritten_queries = []
             else:
-                # Filter out any empty queries and ensure they are strings
-                valid_queries = [q for q in rewritten_queries if q and isinstance(q, str) and q.strip()]
-                
-                if not valid_queries:
-                    logger.warning("No valid rewritten queries, using original query")
-                    self.handler.rewritten_queries = [self.handler.decontextualized_query]
+                rewritten_queries = response.get("rewritten_queries", [])
+
+                if not rewritten_queries or not isinstance(rewritten_queries, list):
+                    logger.warning("needs_expansion=true but no valid queries returned")
+                    self.handler.rewritten_queries = []
                 else:
-                    # Limit to 5 queries maximum
-                    self.handler.rewritten_queries = valid_queries
-                    logger.info(f"Generated {len(self.handler.rewritten_queries)} rewritten queries: {self.handler.rewritten_queries}")
-            
-            # Send a message to the client about the rewritten queries
-            if hasattr(self.handler, 'rewritten_queries') and len(self.handler.rewritten_queries) > 1:
+                    valid_queries = [q for q in rewritten_queries if q and isinstance(q, str) and q.strip()]
+                    # Limit to 4 expansion queries maximum
+                    self.handler.rewritten_queries = valid_queries[:4]
+                    logger.info(f"Generated {len(self.handler.rewritten_queries)} expansion queries: {self.handler.rewritten_queries}")
+
+            # Notify the client about expansion queries
+            if self.handler.rewritten_queries:
                 message = {
                     "message_type": "query_rewrite",
                     "original_query": self.handler.decontextualized_query,
                     "rewritten_queries": self.handler.rewritten_queries,
+                    "needs_expansion": needs_expansion,
                 }
                 asyncio.create_task(self.handler.send_message(message))
-                
+
         except Exception as e:
-            logger.error(f"Error during query rewrite: {e}")
-            # On error, fall back to using the original query
-            self.handler.rewritten_queries = [self.handler.decontextualized_query]
-            
+            logger.error(f"Error during query expansion: {e}")
+            self.handler.rewritten_queries = []
+            self.handler.needs_query_expansion = False
+
         finally:
             # Always mark the step as done
             await self.handler.state.precheck_step_done(self.STEP_NAME)

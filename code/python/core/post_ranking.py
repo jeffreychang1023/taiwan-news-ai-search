@@ -21,7 +21,7 @@ class PostRanking:
             # nothing to do
             return
 
-        if (self.handler.generate_mode == "summarize"):
+        if self.handler.generate_mode in ("summarize", "unified"):
             await SummarizeResults(self.handler).do()
             return
         
@@ -109,7 +109,12 @@ class SummarizeResults(PromptRunner):
         if (not response):
             return
         self.handler.summary = response["summary"]
-        message = {"message_type": "result", "@type": "Summary", "content": self.handler.summary}
-        asyncio.create_task(self.handler.send_message(message))
+        msg_type = "summary" if self.handler.generate_mode == 'unified' else "result"
+        message = {"message_type": msg_type, "@type": "Summary", "content": self.handler.summary}
+        if self.handler.generate_mode == 'unified':
+            # Await for ordering guarantee in unified mode
+            await self.handler.send_message(message)
+        else:
+            asyncio.create_task(self.handler.send_message(message))
         # Use proper state update
         await self.handler.state.precheck_step_done("post_ranking")

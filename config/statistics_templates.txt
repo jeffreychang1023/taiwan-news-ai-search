@@ -1,8 +1,0 @@
-
-1. What is the <variable> in <place> {"place": "name of place", "variable": "variable being asked for"} [highlight]
-2. Which <place-type> has the highest <variable> {"place-type": "type of place", "variable": "variable being asked for"} [ranking(variable, place-type)]
-3. What is the correlation between <variable1> and <variable2> across <place-type> {"variable1": "first variable", "variable2": "second variable", "place-type": "the collection of places"} [scatter]
-4. How does <variable> in <county A> compare to <county B>? {"county_a": "count_a name", "county_b": "county_b name", "variable": "variable"} [bar(variable, county_a, county_b)]
-5. What is <variable> across <containing-place> <place-type> {"containing-place": "containing place", "place-type": "type of place", "variable": "variable being asked for"} [map(containing-place, place-type, variable)]
-6. How has <variable> changed in <place> {"place": "place", "variable": "variable"} [line(variable, place)]
-7. Which <place-type> has the highest <variable> in <place> {"place-type": "type of place", "variable": "variable being asked for", "place": "place"} [ranking(variable, place-type, place)]

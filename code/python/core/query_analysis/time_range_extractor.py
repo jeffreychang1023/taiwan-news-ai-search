@@ -24,6 +24,30 @@ from core.llm import ask_llm
 
 logger = get_configured_logger("time_range_extractor")
 
+# Chinese number mapping for temporal expressions (e.g., "近三天", "過去兩年")
+CHINESE_NUMBERS = {
+    '一': 1, '二': 2, '兩': 2, '三': 3, '四': 4, '五': 5,
+    '六': 6, '七': 7, '八': 8, '九': 9, '十': 10
+}
+
+
+def parse_number(s):
+    """解析阿拉伯數字或中文數字（含組合如十五、二十、二十五）"""
+    if s.isdigit():
+        return int(s)
+    if s in CHINESE_NUMBERS:
+        return CHINESE_NUMBERS[s]
+    # 組合數字：十五=15, 二十=20, 二十五=25
+    if '十' in s:
+        parts = s.split('十')
+        tens = CHINESE_NUMBERS.get(parts[0], 1) if parts[0] else 1
+        ones = CHINESE_NUMBERS.get(parts[1], 0) if len(parts) > 1 and parts[1] else 0
+        return tens * 10 + ones
+    try:
+        return int(s)  # fallback for unrecognised patterns
+    except (ValueError, TypeError):
+        return 1  # safe default if unparseable
+
 
 class TimeRangeExtractor:
     """
@@ -37,24 +61,24 @@ class TimeRangeExtractor:
     # Regex patterns for common temporal expressions (bilingual)
     REGEX_PATTERNS = {
         # Chinese - Relative time (days)
-        'past_x_days_zh': r'過去\s*(\d+)\s*天',
-        'last_x_days_zh': r'最近\s*(\d+)\s*天',
+        'past_x_days_zh': r'(?:過去|近)\s*([一二兩三四五六七八九十\d]+)\s*天',
+        'last_x_days_zh': r'(?:最近|近)\s*([一二兩三四五六七八九十\d]+)\s*天',
         'yesterday_zh': r'昨天',
         'today_zh': r'今天',
 
         # Chinese - Relative time (weeks)
-        'past_x_weeks_zh': r'過去\s*(\d+)\s*(?:週|周|星期)',
-        'last_x_weeks_zh': r'最近\s*(\d+)\s*(?:週|周|星期)',
+        'past_x_weeks_zh': r'(?:過去|近)\s*([一二兩三四五六七八九十\d]+)\s*(?:週|周|星期)',
+        'last_x_weeks_zh': r'(?:最近|近)\s*([一二兩三四五六七八九十\d]+)\s*(?:週|周|星期)',
         'this_week_zh': r'(?:本週|這週|本周|這周)',
 
         # Chinese - Relative time (months)
-        'past_x_months_zh': r'過去\s*(\d+)\s*(?:個月|月)',
-        'last_x_months_zh': r'(?:近|最近)\s*(\d+)\s*(?:個月|月)',
+        'past_x_months_zh': r'(?:過去|近)\s*([一二兩三四五六七八九十\d]+)\s*(?:個月|月)',
+        'last_x_months_zh': r'(?:近|最近)\s*([一二兩三四五六七八九十\d]+)\s*(?:個月|月)',
         'this_month_zh': r'(?:本月|這個月)',
 
         # Chinese - Relative time (years) - NEW
-        'past_x_years_zh': r'過去\s*(\d+)\s*年',
-        'last_x_years_zh': r'(?:近|最近)\s*(\d+)\s*年',
+        'past_x_years_zh': r'(?:過去|近)\s*([一二兩三四五六七八九十\d]+)\s*年',
+        'last_x_years_zh': r'(?:近|最近)\s*([一二兩三四五六七八九十\d]+)\s*年',
         'this_year_zh': r'(?:今年|本年)',
         'last_year_zh': r'去年',
 
@@ -193,20 +217,20 @@ class TimeRangeExtractor:
                 try:
                     # Parse based on pattern type
                     if 'past_x_days' in pattern_name or 'last_x_days' in pattern_name:
-                        days = int(match.group(1))
+                        days = parse_number(match.group(1))
                         start_date = today - timedelta(days=days)
                         return self._build_result('regex', True, start_date, today, days,
                                                  match.group(0), confidence=1.0)
 
                     elif 'past_x_weeks' in pattern_name or 'last_x_weeks' in pattern_name:
-                        weeks = int(match.group(1))
+                        weeks = parse_number(match.group(1))
                         days = weeks * 7
                         start_date = today - timedelta(days=days)
                         return self._build_result('regex', True, start_date, today, days,
                                                  match.group(0), confidence=1.0)
 
                     elif 'past_x_months' in pattern_name or 'last_x_months' in pattern_name:
-                        months = int(match.group(1))
+                        months = parse_number(match.group(1))
                         days = months * 30  # Approximate
                         start_date = today - timedelta(days=days)
                         return self._build_result('regex', True, start_date, today, days,
@@ -214,7 +238,7 @@ class TimeRangeExtractor:
 
                     elif 'past_x_years' in pattern_name or 'last_x_years' in pattern_name:
                         # Handle "近兩年", "過去3年", "last 2 years" etc.
-                        years = int(match.group(1))
+                        years = parse_number(match.group(1))
                         days = years * 365  # Approximate (ignoring leap years)
                         start_date = today - timedelta(days=days)
                         return self._build_result('regex', True, start_date, today, days,

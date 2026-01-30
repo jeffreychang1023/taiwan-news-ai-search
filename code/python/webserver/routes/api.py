@@ -1,8 +1,10 @@
 """Core API routes for aiohttp server"""
 
 from aiohttp import web
+import asyncio
 import logging
 import json
+import time as time_mod
 from typing import Dict, Any
 from core.whoHandler import WhoHandler
 from methods.generate_answer import GenerateAnswer
@@ -21,6 +23,9 @@ def setup_api_routes(app: web.Application):
     app.router.add_post('/ask', ask_handler)
     app.router.add_get('/api/deep_research', deep_research_handler)
     app.router.add_post('/api/deep_research', deep_research_handler)
+
+    # Feedback endpoint
+    app.router.add_post('/api/feedback', feedback_handler)
 
     # Info endpoints
     app.router.add_get('/who', who_handler)
@@ -89,6 +94,63 @@ async def handle_streaming_ask(request: web.Request, query_params: Dict[str, Any
             from methods.deep_research import DeepResearchHandler
             handler = DeepResearchHandler(query_params, wrapper)
             await handler.runQuery()
+        elif generate_mode == 'unified':
+            # Unified mode: single SSE stream for articles + summary + AI answer
+            unified_start_time = time_mod.time()
+            unified_error = False
+
+            from core.baseHandler import NLWebHandler
+            handler = NLWebHandler(query_params, wrapper)
+            handler.skip_end_response = True  # api.py controls end timing
+
+            try:
+                await handler.runQuery()  # retrieval + ranking + PostRanking
+
+                await asyncio.sleep(0)  # flush pending create_tasks
+
+                # Check connection before synthesis
+                if not handler.connection_alive_event.is_set():
+                    logger.info("Client disconnected before synthesis, skipping")
+                else:
+                    # Inject conversation_id into query_params for GenerateAnswer (Issue #2)
+                    query_params['conversation_id'] = handler.conversation_id
+                    gen_handler = GenerateAnswer(query_params, wrapper)
+
+                    # Inject state from first handler
+                    gen_handler.final_ranked_answers = handler.final_ranked_answers
+                    gen_handler.items = [
+                        [r.get('url', ''), json.dumps(r.get('schema_object', {})), r.get('name', ''), r.get('site', '')]
+                        for r in handler.final_ranked_answers
+                    ]
+                    gen_handler.decontextualized_query = handler.decontextualized_query
+                    gen_handler.connection_alive_event = handler.connection_alive_event
+                    gen_handler.query_id = handler.query_id  # Issue #3: same query
+
+                    await gen_handler.synthesizeAnswer()
+            except Exception as e:
+                unified_error = True
+                logger.error(f"Error in unified mode: {e}", exc_info=True)
+            finally:
+                # Always send end response (api.py controls timing)
+                await handler.message_sender.send_end_response(error=unified_error)
+
+            # Issue #4: Log unified analytics with full latency
+            try:
+                unified_total_ms = (time_mod.time() - unified_start_time) * 1000
+                from core.query_logger import get_query_logger
+                query_logger = get_query_logger()
+                num_results = len(handler.final_ranked_answers) if hasattr(handler, 'final_ranked_answers') else 0
+                query_logger.log_query_complete(
+                    query_id=handler.query_id,
+                    latency_total_ms=unified_total_ms,
+                    num_results_retrieved=getattr(handler, 'num_retrieved', 0),
+                    num_results_ranked=getattr(handler, 'num_ranked', 0),
+                    num_results_returned=num_results,
+                    cost_usd=getattr(handler, 'estimated_cost', 0),
+                    error_occurred=unified_error
+                )
+            except Exception as e:
+                logger.warning(f"Failed to log unified analytics: {e}")
         else:
             # Use base NLWebHandler for other modes (summarize, none)
             from core.baseHandler import NLWebHandler
@@ -396,4 +458,36 @@ async def deep_research_handler(request: web.Request) -> web.Response:
             pass
         return web.json_response(error_data, status=500)
 
+
+async def feedback_handler(request: web.Request) -> web.Response:
+    """Handle POST /api/feedback — store user feedback (thumbs up/down + comment)."""
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "Invalid JSON"}, status=400)
+
+    rating = body.get("rating", "")
+    if rating not in ("positive", "negative"):
+        return web.json_response({"error": "rating must be 'positive' or 'negative'"}, status=400)
+
+    query = body.get("query", "")
+    answer_snippet = body.get("answer_snippet", "")
+    comment = body.get("comment", "")[:2000] if body.get("comment") else ""
+    session_id = body.get("session_id", "")
+
+    try:
+        from core.query_logger import get_query_logger
+        ql = get_query_logger()
+        ql.log_feedback(
+            query=query,
+            answer_snippet=answer_snippet,
+            rating=rating,
+            comment=comment,
+            session_id=session_id
+        )
+        logger.info(f"[Feedback] Stored: rating={rating}, query='{query[:50]}'")
+        return web.json_response({"status": "ok"})
+    except Exception as e:
+        logger.error(f"[Feedback] Failed to store feedback: {e}", exc_info=True)
+        return web.json_response({"error": "Failed to store feedback"}, status=500)
 
