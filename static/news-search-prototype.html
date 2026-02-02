@@ -41,13 +41,13 @@
     </header>
 
     <!-- 左側邊欄展開按鈕（固定在左側邊緣，header 下方） -->
-    <button class="left-sidebar-expand-btn" id="btnExpandSidebar" title="展開對話紀錄">
+    <button class="left-sidebar-expand-btn hidden" id="btnExpandSidebar" title="展開對話紀錄">
         <span>▶▶▶</span>
         <span>展開對話紀錄</span>
     </button>
 
     <!-- ==================== 左側邊欄 ==================== -->
-    <div class="left-sidebar" id="leftSidebar">
+    <div class="left-sidebar visible" id="leftSidebar">
         <!-- 頂部：收回按鈕 -->
         <div class="left-sidebar-header">
             <button class="left-sidebar-collapse-btn" id="btnCollapseSidebar">
@@ -364,6 +364,34 @@
                 <div class="loading-text">🤖 正在分析您的問題...</div>
             </div>
 
+            <!-- Chat Container for Free Conversation Mode (independent of resultsSection) -->
+            <div class="chat-container" id="chatContainer">
+                <!-- Pinned Messages Banner (Line-style) -->
+                <div class="pinned-banner" id="pinnedBanner" style="display: none;">
+                    <div class="pinned-banner-current" id="pinnedBannerCurrent">
+                        <span class="pinned-banner-icon">📌</span>
+                        <span class="pinned-banner-text" id="pinnedBannerText"></span>
+                        <button class="pinned-banner-toggle" id="pinnedBannerToggle">
+                            <span class="pinned-banner-count" id="pinnedBannerCount">1</span>
+                            <span class="pinned-banner-arrow">▼</span>
+                        </button>
+                    </div>
+                    <div class="pinned-banner-dropdown" id="pinnedBannerDropdown">
+                        <!-- Pinned items will be populated dynamically -->
+                    </div>
+                </div>
+                <div class="chat-messages" id="chatMessages">
+                    <!-- Chat messages will be populated dynamically -->
+                </div>
+                <div class="chat-loading" id="chatLoading">
+                    <div class="chat-loading-spinner"></div>
+                    <div>AI 思考中...</div>
+                </div>
+                <div class="chat-input-container" id="chatInputContainer" style="display: none;">
+                    <!-- Input will be moved here in chat mode -->
+                </div>
+            </div>
+
             <!-- Results Section -->
             <div class="results-section" id="resultsSection">
                 <!-- Knowledge Graph Display (Phase KG Enhanced) -->
@@ -400,34 +428,6 @@
                         <div class="kg-display-empty" id="kgDisplayEmpty" style="display: none;">
                             ℹ️ 此查詢不適合生成知識圖譜（例如：純粹的意見問答或單一數據查詢）
                         </div>
-                    </div>
-                </div>
-
-                <!-- Chat Container for Free Conversation Mode -->
-                <div class="chat-container" id="chatContainer">
-                    <!-- Pinned Messages Banner (Line-style) -->
-                    <div class="pinned-banner" id="pinnedBanner" style="display: none;">
-                        <div class="pinned-banner-current" id="pinnedBannerCurrent">
-                            <span class="pinned-banner-icon">📌</span>
-                            <span class="pinned-banner-text" id="pinnedBannerText"></span>
-                            <button class="pinned-banner-toggle" id="pinnedBannerToggle">
-                                <span class="pinned-banner-count" id="pinnedBannerCount">1</span>
-                                <span class="pinned-banner-arrow">▼</span>
-                            </button>
-                        </div>
-                        <div class="pinned-banner-dropdown" id="pinnedBannerDropdown">
-                            <!-- Pinned items will be populated dynamically -->
-                        </div>
-                    </div>
-                    <div class="chat-messages" id="chatMessages">
-                        <!-- Chat messages will be populated dynamically -->
-                    </div>
-                    <div class="chat-loading" id="chatLoading">
-                        <div class="chat-loading-spinner"></div>
-                        <div>AI 思考中...</div>
-                    </div>
-                    <div class="chat-input-container" id="chatInputContainer" style="display: none;">
-                        <!-- Input will be moved here in chat mode -->
                     </div>
                 </div>
 

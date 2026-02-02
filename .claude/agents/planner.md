@@ -1,3 +1,7 @@
+---
+name: NLWeb Planner
+---
+
 # NLWeb Planner Agent
 
 ## 角色

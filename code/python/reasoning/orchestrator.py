@@ -21,6 +21,11 @@ from reasoning.schemas import WriterComposeOutput
 logger = get_configured_logger("reasoning.orchestrator")
 
 
+class ResearchCancelledError(Exception):
+    """Raised when client disconnects during Deep Research."""
+    pass
+
+
 class ProgressConfig:
     """進度條配置，用於SSE串流。"""
 
@@ -283,6 +288,27 @@ class DeepResearchOrchestrator:
             # Progress messages are non-critical - log but don't crash
             self.logger.warning(f"Progress message send failed (non-critical): {e}")
 
+        # Bridge: detect disconnect after send attempt
+        wrapper = getattr(self.handler, 'request_handler', None)
+        if wrapper and not wrapper.connection_alive:
+            raise ResearchCancelledError("Client disconnected (detected in _send_progress)")
+
+
+    def _check_connection(self):
+        """Check if client is still connected; raise ResearchCancelledError if not."""
+        wrapper = getattr(self.handler, 'request_handler', None)
+        event = getattr(self.handler, 'connection_alive_event', None)
+
+        # Check wrapper's connection_alive flag
+        if wrapper and not wrapper.connection_alive:
+            # Bridge: also clear the event so downstream checks work
+            if event and event.is_set():
+                event.clear()
+            raise ResearchCancelledError("Client disconnected (wrapper)")
+
+        # Check handler's connection_alive_event
+        if event and not event.is_set():
+            raise ResearchCancelledError("Client disconnected (event)")
 
     def _setup_research_session(
         self,
@@ -477,6 +503,7 @@ class DeepResearchOrchestrator:
             reject_count = 0
 
             while iteration < max_iterations:
+                self._check_connection()  # Checkpoint 1: loop start
                 self.logger.info(f"Starting iteration {iteration + 1}/{max_iterations}")
 
                 # Tracing: Iteration start
@@ -502,6 +529,7 @@ class DeepResearchOrchestrator:
                         "formatted_context": self.formatted_context
                     }
 
+                    self._check_connection()  # Checkpoint 2: before analyst.revise()
                     if tracer:
                         with tracer.agent_span("analyst", "revise", analyst_input) as span:
                             response = await self.analyst.revise(
@@ -535,6 +563,7 @@ class DeepResearchOrchestrator:
                         "temporal_context": temporal_context
                     }
 
+                    self._check_connection()  # Checkpoint 3: before analyst.research()
                     if tracer:
                         with tracer.agent_span("analyst", "research", analyst_input) as span:
                             response = await self.analyst.research(
@@ -593,6 +622,7 @@ class DeepResearchOrchestrator:
                     # Execute secondary search for each new query
                     secondary_results = []
 
+                    self._check_connection()  # Checkpoint 4: before secondary searches
                     for new_query in response.new_queries:
                         try:
                             # Call retriever with same parameters as original search
@@ -678,6 +708,7 @@ class DeepResearchOrchestrator:
                         self.logger.info(f"  Gap {i}: type={gap.gap_type}, resolution={gap.resolution}, reason={gap.reason}")
                     self.logger.info("="*80)
 
+                    self._check_connection()  # Checkpoint 5: before gap resolutions
                     context_before = len(current_context)
                     await self._process_gap_resolutions(
                         response=response,
@@ -710,6 +741,7 @@ class DeepResearchOrchestrator:
                         "enable_web_search": False  # Don't trigger another round of web search
                     }
 
+                    self._check_connection()  # Checkpoint 6: before analyst re-run with enriched data
                     # Format context for re-analysis with enriched data
                     formatted_context_enriched = "\n".join([
                         f"[{i+1}] {doc.get('title', 'Unknown')} ({doc.get('site', 'Unknown')})"
@@ -760,6 +792,7 @@ class DeepResearchOrchestrator:
                     "stage": "critic_reviewing"
                 })
 
+                self._check_connection()  # Checkpoint 7: before critic.review()
                 self.logger.info("Critic reviewing draft")
                 critic_input = {
                     "draft": draft,
@@ -854,6 +887,7 @@ class DeepResearchOrchestrator:
             # Check if plan-and-write is enabled (Phase 3)
             enable_plan_and_write = CONFIG.reasoning_params.get("features", {}).get("plan_and_write", False)
 
+            self._check_connection()  # Checkpoint 8: before writer phase
             plan = None
             if enable_plan_and_write:
                 # Step 1: Plan
@@ -1046,6 +1080,11 @@ class DeepResearchOrchestrator:
                 )
 
             return result
+
+        except ResearchCancelledError:
+            self.logger.info("Deep Research cancelled: client disconnected")
+            print("[CANCEL] Deep Research cancelled - client disconnected, no further LLM calls")
+            return []
 
         except NoValidSourcesError as e:
             self.logger.error(f"No valid sources after filtering: {e}")

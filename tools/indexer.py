@@ -32,7 +32,7 @@ if sys.platform == "win32":
 
 # 設定
 DB_NAME = "project_index.db"
-INCLUDE_EXTENSIONS = {".py", ".yaml", ".yml", ".md"}
+INCLUDE_EXTENSIONS = {".py", ".yaml", ".yml", ".md", ".js", ".css", ".html"}
 EXCLUDE_DIRS = {
     ".git",
     "__pycache__",

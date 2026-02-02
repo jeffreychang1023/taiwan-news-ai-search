@@ -30,15 +30,34 @@ class AioHttpStreamingWrapper:
         self.query_params = query_params
         self.connection_alive = True
         self.heartbeat_task: Optional[asyncio.Task] = None
-        
+        self._on_disconnect = None
+
         # Extract compatibility attributes from request
         self.method = request.method
         self.path = request.path
         self.headers = dict(request.headers)
         self.body = None  # Will be set if needed
-        
+
         # For compatibility with existing handlers
         self.generate_mode = query_params.get('generate_mode', 'none')
+
+    def set_on_disconnect(self, callback):
+        """Register a callback to be invoked when client disconnects."""
+        self._on_disconnect = callback
+
+    def _mark_disconnected(self):
+        """Centralized disconnect handling: set flag and invoke callback."""
+        if not self.connection_alive:
+            return  # Already marked
+        self.connection_alive = False
+        logger.info("Client disconnected - SSE connection closed")
+        print("[CANCEL] Client disconnected - SSE connection closed")
+        if self._on_disconnect:
+            try:
+                self._on_disconnect()
+                print("[CANCEL] Handler notified of disconnection")
+            except Exception as e:
+                logger.debug(f"Disconnect callback error: {e}")
         
     async def start_heartbeat(self):
         """Start sending SSE keepalive messages"""
@@ -56,11 +75,11 @@ class AioHttpStreamingWrapper:
         """Send SSE keepalive comment"""
         if not self.connection_alive:
             return
-            
+
         try:
             await self.response.write(b": keepalive\n\n")
         except Exception:
-            self.connection_alive = False
+            self._mark_disconnected()
     
     async def write_stream(self, message: Dict[str, Any], end_response: bool = False):
         """
@@ -76,24 +95,24 @@ class AioHttpStreamingWrapper:
         try:
             # Check if connection is still alive
             if self.request.transport and self.request.transport.is_closing():
-                self.connection_alive = False
+                self._mark_disconnected()
                 return
-            
+
             # Format as SSE
             data = f"data: {json.dumps(message)}\n\n"
             await self.response.write(data.encode())
-            
+
             # Yield control
             await asyncio.sleep(0)
-            
+
             if end_response:
                 self.connection_alive = False
                 if self.heartbeat_task:
                     self.heartbeat_task.cancel()
-                    
+
         except Exception as e:
             logger.debug(f"Error writing to stream: {e}")
-            self.connection_alive = False
+            self._mark_disconnected()
             if self.heartbeat_task:
                 self.heartbeat_task.cancel()
     

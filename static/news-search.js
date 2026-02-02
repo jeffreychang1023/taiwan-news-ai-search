@@ -186,6 +186,8 @@
         function hideAdvancedPopup() {
             advancedSearchPopup.classList.remove('visible');
             popupOverlay.classList.remove('visible');
+            // 關閉 popup 時標記已確認（因為一定有預設值 discovery）
+            advancedSearchConfirmed = true;
         }
 
         // 點擊 popup 外部關閉
@@ -253,9 +255,7 @@
                     btnSearch.textContent = '發送';
                     searchInput.placeholder = '研究助理會參考摘要內容及您釘選的文章來回答...';
 
-                    // 必須無條件顯示 resultsSection，因為 chatContainer 是它的子元素
-                    // B1（空結果）已由 resetToHome() 清空 listView/timelineView 處理
-                    resultsSection.classList.add('active');
+                    // chatContainer 已獨立於 resultsSection，不需要顯示 resultsSection
                     chatContainer.classList.add('active');
                     chatInputContainer.appendChild(searchContainer);
                     chatInputContainer.style.display = 'block';
@@ -1373,6 +1373,7 @@
             if (currentMode === 'deep_research') {
                 // 如果未確認進階搜尋設定，先彈出 popup
                 if (!advancedSearchConfirmed) {
+                    setProcessingState(false);
                     showAdvancedPopup();
                     return;
                 }
@@ -1387,6 +1388,10 @@
 
             try {
                 const prevQueriesForThisTurn = [...conversationHistory];
+
+                // Save session immediately on query submit (before waiting for results)
+                conversationHistory.push(query);
+                saveCurrentSession();
 
                 // Single unified POST SSE call
                 const body = {
@@ -1433,8 +1438,7 @@
                     console.log(`Accumulated ${newArticles.length} new articles, total: ${accumulatedArticles.length}`);
                 }
 
-                // Add current query to history for NEXT turn
-                conversationHistory.push(query);
+                // Trim history if too long
                 if (conversationHistory.length > 10) {
                     conversationHistory.shift();
                     sessionHistory.shift();
@@ -1475,12 +1479,16 @@
             searchInput.value = '';
             setProcessingState(true); // Bug #23
 
+            // Save session immediately on first query submit (skip for clarification re-submit)
+            if (!skipClarification) {
+                conversationHistory.push(query);
+                saveCurrentSession();
+            }
+
             // Enable chat container for conversational clarification
             const chatContainer = document.getElementById('chatContainer');
             const chatMessagesEl = document.getElementById('chatMessages');
             if (chatContainer) {
-                // Show results section (parent of chat container)
-                resultsSection.classList.add('active');
                 chatContainer.classList.add('active');
                 console.log('[Deep Research] Chat container activated');
 
@@ -1497,9 +1505,6 @@
                     console.log('[Deep Research] User message added to chat');
                 }
             }
-
-            // Show loading
-            loadingState.classList.add('active');
 
             try {
                 const base = window.location.origin;
@@ -1568,6 +1573,13 @@
 
                 // Bug #23: Cancel any previous active requests before starting DR
                 cancelAllActiveRequests();
+
+                // Show loading AFTER cancelAllActiveRequests (which removes .active)
+                loadingState.classList.add('active');
+
+                // Clean up any stale progress container from previous requests
+                const oldProgress = document.getElementById('reasoning-progress');
+                if (oldProgress) oldProgress.remove();
 
                 // Use SSE streaming to get progress updates
                 const eventSource = new EventSource(deepResearchUrl.toString());
@@ -1741,11 +1753,6 @@
             // Display Reasoning Chain if available (Phase 4) - AFTER report is added
             displayReasoningChain(schemaObj?.argument_graph || metadata?.argument_graph,
                                  schemaObj?.reasoning_chain_analysis || metadata?.reasoning_chain_analysis);
-
-            // Add to conversation history (use savedQuery parameter)
-            if (savedQuery) {
-                conversationHistory.push(savedQuery);
-            }
 
             // Remove progress indicator
             const progressContainer = document.getElementById('reasoning-progress');
@@ -2480,12 +2487,28 @@
             // Add user message to chat
             addChatMessage('user', query);
 
+            // Save session immediately on query submit (before waiting for response)
+            saveCurrentSession();
+
             // Clear input
             searchInput.value = '';
 
-            // Show loading in chatbox (not global loading)
-            chatLoading.classList.add('active');
-            resultsSection.classList.add('active');
+            // Show typing indicator in chat flow
+            const typingDiv = document.createElement('div');
+            typingDiv.className = 'chat-message assistant';
+            typingDiv.id = 'chatTypingIndicator';
+            typingDiv.innerHTML = `
+                <div class="chat-message-header">AI 助理</div>
+                <div class="chat-message-bubble">
+                    <div class="chat-typing-indicator">
+                        <div class="dot"></div>
+                        <div class="dot"></div>
+                        <div class="dot"></div>
+                    </div>
+                </div>
+            `;
+            chatMessagesEl.appendChild(typingDiv);
+            chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
 
             try {
                 const base = window.location.origin;
@@ -2551,14 +2574,16 @@
                 let chatData = await handlePostStreamingRequest('/ask', requestBody, query, currentFreeConvAbortController.signal);
                 currentFreeConvAbortController = null;
 
+                // Remove typing indicator
+                const typingEl = document.getElementById('chatTypingIndicator');
+                if (typingEl) typingEl.remove();
+
                 // Add assistant response to chat
                 if (chatData.answer) {
                     addChatMessage('assistant', chatData.answer, referenceContext);
                 } else {
                     addChatMessage('assistant', '抱歉，我無法回答這個問題。');
                 }
-
-                chatLoading.classList.remove('active');
                 setProcessingState(false); // Bug #23
                 chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
 
@@ -2567,13 +2592,15 @@
             } catch (error) {
                 currentFreeConvAbortController = null;
                 setProcessingState(false); // Bug #23
+                // Remove typing indicator on error
+                const typingElErr = document.getElementById('chatTypingIndicator');
+                if (typingElErr) typingElErr.remove();
+
                 if (error.name === 'AbortError') {
                     console.log('[Free Conversation] Request aborted by user');
-                    chatLoading.classList.remove('active');
                     return;
                 }
                 console.error('Chat failed:', error);
-                chatLoading.classList.remove('active');
                 addChatMessage('assistant', '抱歉，發生錯誤。請稍後再試。');
             }
         }
@@ -3191,6 +3218,20 @@
             console.log('[Clarification] Original query:', originalQuery);
             console.log('[Clarification] Extra focus:', extraFocus, 'Force comprehensive:', forceAllComprehensive);
 
+            // Prevent duplicate submissions: find and disable all clarification buttons
+            const clarificationCards = document.querySelectorAll('.clarification-card');
+            clarificationCards.forEach(card => {
+                card.querySelectorAll('button').forEach(btn => {
+                    btn.disabled = true;
+                    btn.style.opacity = '0.5';
+                    btn.style.pointerEvents = 'none';
+                });
+                card.querySelectorAll('input').forEach(inp => {
+                    inp.disabled = true;
+                    inp.style.opacity = '0.5';
+                });
+            });
+
             // Close event source
             if (eventSource) {
                 eventSource.close();
@@ -3526,19 +3567,16 @@
             // Render pinned news list (outside of chat block since news cards are separate)
             renderPinnedNewsList();
 
-            // Show results section and hide initial state
+            // Hide initial state (session has content)
             initialState.style.display = 'none';
             resultsSection.style.display = '';  // Clear inline style so CSS class takes effect
-            resultsSection.classList.add('active');
+            // resultsSection.active is already set in the sessionHistory block above (if needed)
             // 確保資料夾頁面關閉（不走 hideFolderPage 以免覆蓋我們剛設好的狀態）
             const _fp = document.getElementById('folderPage');
             if (_fp) _fp.style.display = 'none';
             _preFolderState = null;
             // 確保搜尋容器可見
             searchContainer.style.display = 'block';
-
-            // Scroll to results
-            resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
 
         // ===== Export/Share Functions =====

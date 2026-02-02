@@ -88,11 +88,13 @@ async def handle_streaming_ask(request: web.Request, query_params: Dict[str, Any
 
         if generate_mode == 'generate':
             handler = GenerateAnswer(query_params, wrapper)
+            wrapper.set_on_disconnect(lambda: handler.connection_alive_event.clear())
             await handler.runQuery()
         elif generate_mode == 'deep_research':
             # Deep research mode with multi-agent reasoning
             from methods.deep_research import DeepResearchHandler
             handler = DeepResearchHandler(query_params, wrapper)
+            wrapper.set_on_disconnect(lambda: handler.connection_alive_event.clear())
             await handler.runQuery()
         elif generate_mode == 'unified':
             # Unified mode: single SSE stream for articles + summary + AI answer
@@ -101,6 +103,7 @@ async def handle_streaming_ask(request: web.Request, query_params: Dict[str, Any
 
             from core.baseHandler import NLWebHandler
             handler = NLWebHandler(query_params, wrapper)
+            wrapper.set_on_disconnect(lambda: handler.connection_alive_event.clear())
             handler.skip_end_response = True  # api.py controls end timing
 
             try:
@@ -155,6 +158,7 @@ async def handle_streaming_ask(request: web.Request, query_params: Dict[str, Any
             # Use base NLWebHandler for other modes (summarize, none)
             from core.baseHandler import NLWebHandler
             handler = NLWebHandler(query_params, wrapper)
+            wrapper.set_on_disconnect(lambda: handler.connection_alive_event.clear())
             await handler.runQuery()
         
         # Send completion message
@@ -399,6 +403,7 @@ async def deep_research_handler(request: web.Request) -> web.Response:
         # Import and create Deep Research handler
         from methods.deep_research import DeepResearchHandler
         handler = DeepResearchHandler(query_params, wrapper)
+        wrapper.set_on_disconnect(lambda: handler.connection_alive_event.clear())
 
         # Send begin-nlweb-response so frontend can capture conversation_id
         begin_message = {
@@ -441,8 +446,16 @@ async def deep_research_handler(request: web.Request) -> web.Response:
 
         # Close the stream
         await wrapper.write_stream({"message_type": "complete"})
-        await response.write_eof()
+        await wrapper.finish_response()
 
+        return response
+
+    except ConnectionResetError as e:
+        logger.info(f"Deep Research client disconnected: {e}")
+        try:
+            await wrapper.finish_response()
+        except Exception:
+            pass
         return response
 
     except Exception as e:
@@ -453,10 +466,10 @@ async def deep_research_handler(request: web.Request) -> web.Response:
         }
         try:
             await wrapper.write_stream(error_data)
-            await response.write_eof()
-        except:
+            await wrapper.finish_response()
+        except Exception:
             pass
-        return web.json_response(error_data, status=500)
+        return response
 
 
 async def feedback_handler(request: web.Request) -> web.Response:

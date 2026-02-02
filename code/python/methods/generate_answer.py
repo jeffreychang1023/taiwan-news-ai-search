@@ -533,6 +533,7 @@ class GenerateAnswer(NLWebHandler):
         """
         if not self.connection_alive_event.is_set():
             logger.warning("Connection lost, skipping free conversation synthesis")
+            print("[CANCEL] Skipping free conversation synthesis - client disconnected")
             return
 
         try:
@@ -768,9 +769,10 @@ class GenerateAnswer(NLWebHandler):
                     pass
             raise
 
-    async def synthesizeAnswer(self): 
+    async def synthesizeAnswer(self):
         if not self.connection_alive_event.is_set():
             logger.warning("Connection lost, skipping answer synthesis")
+            print("[CANCEL] Skipping answer synthesis - client disconnected")
             return
             
         try:
