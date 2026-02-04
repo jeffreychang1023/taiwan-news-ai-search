@@ -304,6 +304,10 @@ class IndexingDashboardAPI:
                     date_to=date_to,
                     limit=limit
                 )
+            elif mode == "list_page":
+                # List page crawl (for sites without sitemap, like CNA)
+                limit = params.get("limit", 0)
+                result = await engine.run_list_page(limit=limit)
             else:
                 task.status = CrawlerTaskStatus.FAILED
                 task.error = f"Unknown mode: {mode}"

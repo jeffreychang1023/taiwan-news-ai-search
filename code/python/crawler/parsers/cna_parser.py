@@ -43,6 +43,18 @@ class CnaParser(BaseParser):
         self.logger.debug(f"Using default category 'aall' for ID {article_id}")
         return default_url
 
+    def get_list_page_config(self) -> Optional[Dict[str, Any]]:
+        """取得列表頁爬取配置"""
+        # CNA 的主要分類列表頁
+        categories = ['aipl', 'aopl', 'acn', 'aie', 'afe', 'aspt', 'ahel', 'aloc', 'acul', 'amov']
+        list_urls = [f'https://www.cna.com.tw/list/{cat}.aspx' for cat in categories]
+
+        return {
+            'list_urls': list_urls,
+            'article_url_pattern': r'href=\"/news/([^/]+)/(\d+)\.aspx\"',
+            'base_url': 'https://www.cna.com.tw',
+        }
+
     async def parse(self, html: str, url: str) -> Optional[Dict[str, Any]]:
         """解析中央社文章 HTML"""
         try:

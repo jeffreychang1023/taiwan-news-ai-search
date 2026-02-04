@@ -1175,6 +1175,141 @@ class CrawlerEngine:
 
         return filtered
 
+    async def run_list_page(
+        self,
+        list_urls: Optional[List[str]] = None,
+        limit: int = 0
+    ) -> Dict[str, Any]:
+        """
+        從列表頁爬取文章。
+
+        適用於沒有 sitemap 的網站（如 CNA），從分類列表頁獲取文章 URLs。
+
+        Args:
+            list_urls: 列表頁 URLs（可選，會從 parser 的 get_list_page_config() 獲取）
+            limit: 最大爬取數量，0 表示不限
+
+        Returns:
+            爬取結果統計
+        """
+        import re
+
+        # 獲取 parser 的列表頁配置
+        list_config = self.parser.get_list_page_config()
+        if not list_config and not list_urls:
+            self.logger.error(f"No list page config available for {self.parser.source_name}")
+            return {'error': f'No list page config for {self.parser.source_name}'}
+
+        # 使用提供的 URLs 或 parser 配置
+        urls_to_scan = list_urls or list_config.get('list_urls', [])
+        article_pattern = list_config.get('article_url_pattern') if list_config else None
+        base_url = list_config.get('base_url', '') if list_config else ''
+
+        self.logger.info(f"Starting list page crawl for {self.parser.source_name}")
+        self.logger.info(f"  List pages to scan: {len(urls_to_scan)}")
+        if limit > 0:
+            self.logger.info(f"  Limit: {limit}")
+
+        # 重置統計
+        self.stats = {
+            'total': 0,
+            'success': 0,
+            'failed': 0,
+            'skipped': 0,
+            'not_found': 0,
+            'blocked': 0,
+            'list_pages_processed': 0,
+            'early_stopped': False,
+            'early_stop_reason': None,
+        }
+
+        # 創建 session
+        need_close = self.session is None
+        if need_close:
+            self.session = await self._create_session()
+
+        try:
+            total_urls_to_crawl = []
+            seen_urls = set()
+
+            # 掃描所有列表頁
+            for list_url in urls_to_scan:
+                try:
+                    async with self.session.get(
+                        list_url,
+                        headers=self._get_headers(),
+                        timeout=aiohttp.ClientTimeout(total=30)
+                    ) as response:
+                        if response.status != 200:
+                            self.logger.warning(f"Failed to fetch list page {list_url}: HTTP {response.status}")
+                            continue
+
+                        content = await response.text()
+
+                    # 使用配置的 pattern 或通用 pattern
+                    if article_pattern:
+                        # Pattern 返回 (category, article_id) tuple
+                        matches = re.findall(article_pattern, content)
+                        article_urls = [f"{base_url}/news/{cat}/{aid}.aspx" for cat, aid in matches]
+                    else:
+                        # 通用 pattern
+                        pattern = r'href=\"([^\"]+\.aspx)\"'
+                        matches = re.findall(pattern, content)
+                        article_urls = [f"{base_url}{m}" if m.startswith('/') else m for m in matches]
+
+                    # 去重和過濾已爬取
+                    new_urls = []
+                    for url in article_urls:
+                        if url not in seen_urls and not self._is_crawled(url):
+                            seen_urls.add(url)
+                            new_urls.append(url)
+
+                    total_urls_to_crawl.extend(new_urls)
+                    self.stats['list_pages_processed'] += 1
+                    self.logger.info(f"List page {self.stats['list_pages_processed']}/{len(urls_to_scan)}: "
+                                   f"{len(article_urls)} URLs, {len(new_urls)} new")
+
+                except Exception as e:
+                    self.logger.warning(f"Error fetching list page {list_url}: {e}")
+                    continue
+
+                # 檢查是否達到 limit
+                if limit > 0 and len(total_urls_to_crawl) >= limit:
+                    total_urls_to_crawl = total_urls_to_crawl[:limit]
+                    self.logger.info(f"Reached limit of {limit} URLs")
+                    break
+
+            self.logger.info(f"Total URLs to crawl: {len(total_urls_to_crawl)}")
+
+            if not total_urls_to_crawl:
+                self.logger.info("No new URLs to crawl")
+                return self.stats
+
+            # 爬取文章
+            self.stats['total'] = len(total_urls_to_crawl)
+
+            semaphore = asyncio.Semaphore(self.concurrent_limit)
+
+            async def process_with_semaphore(url: str):
+                async with semaphore:
+                    await self._random_delay()
+                    return await self._process_url(url, self.session)
+
+            batch_size = 100
+            for i in range(0, len(total_urls_to_crawl), batch_size):
+                batch = total_urls_to_crawl[i:i + batch_size]
+                tasks = [process_with_semaphore(url) for url in batch]
+                await asyncio.gather(*tasks, return_exceptions=True)
+
+                self.logger.info(f"Progress: {min(i + batch_size, len(total_urls_to_crawl))}/{len(total_urls_to_crawl)}")
+
+        finally:
+            if need_close:
+                await self.close()
+
+        self._log_stats()
+        return self.stats
+
     def _log_stats(self) -> None:
         """輸出統計資訊"""
         self.logger.info("=" * 50)

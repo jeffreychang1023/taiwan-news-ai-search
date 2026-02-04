@@ -215,3 +215,23 @@ class BaseParser(ABC):
         """
         return None
 
+    def get_list_page_config(self) -> Optional[Dict[str, Any]]:
+        """
+        取得列表頁爬取配置
+
+        用途：讓 CrawlerEngine 知道如何從列表頁獲取文章 URLs
+
+        Returns:
+            配置字典，或 None（如果不支援列表頁爬取）
+
+        配置格式:
+            {
+                'list_urls': ['https://example.com/list/cat1', ...],  # 列表頁 URLs
+                'article_url_pattern': r'href=\"(/news/[^\"]+)\"',  # 文章 URL pattern
+                'base_url': 'https://example.com',  # 用於補全相對路徑
+            }
+
+        預設回傳 None，子類別可覆寫此方法來啟用列表頁爬取。
+        """
+        return None
+
