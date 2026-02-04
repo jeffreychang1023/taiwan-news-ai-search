@@ -368,7 +368,8 @@ class IndexingDashboardAPI:
         sitemap_urls = {
             "udn": "https://udn.com/sitemapxml/news/mapindex.xml",
             "ltn": "https://news.ltn.com.tw/sitemap.xml",
-            # CNA has no sitemap (returns 404)
+            "esg_businesstoday": "https://esg.businesstoday.com.tw/sitemap.xml",
+            # CNA has no sitemap (returns 404), use list_page mode
         }
         return sitemap_urls.get(source)
 

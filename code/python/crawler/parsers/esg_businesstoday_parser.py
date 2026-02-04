@@ -83,6 +83,14 @@ class EsgBusinessTodayParser(BaseParser):
         # 3. 備用方案：使用 "全部" 分類
         return f"{self.BASE_URL}/article/category/180686/post/{article_id}"
 
+    def get_sitemap_config(self) -> Optional[Dict[str, Any]]:
+        """取得 sitemap 相關配置"""
+        return {
+            'index_url': self.SITEMAP_URL,
+            'is_index': False,  # Single sitemap with ~1000 articles
+            'article_url_pattern': r'<loc>(https?://esg\.businesstoday\.com\.tw/article/[^<]+)</loc>',
+        }
+
     def get_discovered_ids(self) -> List[int]:
         """回傳已發現的 ID 列表"""
         return self._discovered_ids
