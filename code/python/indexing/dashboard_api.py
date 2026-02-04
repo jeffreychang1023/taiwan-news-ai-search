@@ -49,10 +49,14 @@ class CrawlerTask:
 class IndexingDashboardAPI:
     """API handlers for Indexing Dashboard"""
 
+    # 持久化檔案路徑
+    TASKS_FILE = "data/crawler/crawler_tasks.json"
+
     def __init__(self):
         self._crawler_tasks: Dict[str, CrawlerTask] = {}
         self._task_counter = 0
         self._websockets: list = []
+        self._load_tasks()  # 啟動時載入歷史 tasks
 
     # ==================== Statistics APIs ====================
 
@@ -199,6 +203,7 @@ class IndexingDashboardAPI:
         )
 
         self._crawler_tasks[task_id] = task
+        self._save_tasks()  # 保存新任務
 
         # Start crawler in background
         asyncio_task = asyncio.create_task(
@@ -373,6 +378,62 @@ class IndexingDashboardAPI:
         }
         return sitemap_urls.get(source)
 
+    def _load_tasks(self) -> None:
+        """從檔案載入歷史 tasks"""
+        import json
+        from pathlib import Path
+
+        tasks_path = Path(self.TASKS_FILE)
+        if not tasks_path.exists():
+            logger.info("No saved tasks found")
+            return
+
+        try:
+            with open(tasks_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+
+            for task_data in data.get('tasks', []):
+                task = CrawlerTask(
+                    task_id=task_data['task_id'],
+                    source=task_data['source'],
+                    mode=task_data['mode'],
+                    count=task_data['count'],
+                    status=CrawlerTaskStatus(task_data['status']),
+                    progress=task_data.get('progress', 0),
+                    total=task_data.get('total', 0),
+                    started_at=task_data.get('started_at', 0),
+                    finished_at=task_data.get('finished_at', 0),
+                    error=task_data.get('error'),
+                    early_stop_reason=task_data.get('early_stop_reason'),
+                    stats=task_data.get('stats', {}),
+                )
+                self._crawler_tasks[task.task_id] = task
+
+            self._task_counter = data.get('task_counter', 0)
+            logger.info(f"Loaded {len(self._crawler_tasks)} tasks from {self.TASKS_FILE}")
+
+        except Exception as e:
+            logger.warning(f"Failed to load tasks: {e}")
+
+    def _save_tasks(self) -> None:
+        """將 tasks 保存到檔案"""
+        import json
+        from pathlib import Path
+
+        tasks_path = Path(self.TASKS_FILE)
+        tasks_path.parent.mkdir(parents=True, exist_ok=True)
+
+        try:
+            data = {
+                'tasks': [self._task_to_dict(t) for t in self._crawler_tasks.values()],
+                'task_counter': self._task_counter,
+            }
+            with open(tasks_path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+
+        except Exception as e:
+            logger.warning(f"Failed to save tasks: {e}")
+
     async def get_crawler_status(self, request: web.Request) -> web.Response:
         """
         GET /api/indexing/crawler/status
@@ -507,6 +568,9 @@ class IndexingDashboardAPI:
                 logger.warning(f"Failed to send WebSocket message: {e}")
                 if ws in self._websockets:
                     self._websockets.remove(ws)
+
+        # 持久化 tasks（每次狀態變更時保存）
+        self._save_tasks()
 
     # ==================== Failed URLs / Errors APIs ====================
 
