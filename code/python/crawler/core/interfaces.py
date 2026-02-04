@@ -171,4 +171,47 @@ class BaseParser(ABC):
         """
         pass
 
+    def extract_id_from_url(self, url: str) -> Optional[int]:
+        """
+        從 URL 提取文章 ID
+
+        用途：
+        1. 用於 backfill 時找出最老的已爬取文章
+        2. 用於統計分析
+
+        Args:
+            url: 文章 URL
+
+        Returns:
+            文章 ID（整數），或 None（如果無法提取）
+
+        預設實作嘗試從 URL 中提取數字，子類別可覆寫此方法。
+        """
+        import re
+        # 預設實作：嘗試從 URL 提取最後一組數字
+        match = re.search(r'/(\d{6,})(?:[/?]|$)', url)
+        if match:
+            return int(match.group(1))
+        return None
+
+    def get_sitemap_config(self) -> Optional[Dict[str, Any]]:
+        """
+        取得 sitemap 相關配置
+
+        用途：讓 CrawlerEngine 知道如何處理此來源的 sitemap
+
+        Returns:
+            配置字典，或 None（如果不支援 sitemap）
+
+        配置格式:
+            {
+                'index_url': 'https://example.com/sitemap.xml',  # sitemap URL
+                'is_index': True,  # True = sitemap index, False = single sitemap
+                'article_url_pattern': r'<loc>(https?://...)</loc>',  # 文章 URL pattern
+                'sitemap_date_pattern': r'...',  # (optional) 從 sitemap filename 提取日期的 pattern
+            }
+
+        預設回傳 None，子類別可覆寫此方法來啟用 sitemap 支援。
+        """
+        return None
 

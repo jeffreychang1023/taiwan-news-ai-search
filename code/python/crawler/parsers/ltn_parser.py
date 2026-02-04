@@ -57,6 +57,16 @@ class LtnParser(BaseParser):
         """根據文章 ID 構建 URL"""
         return f"https://news.ltn.com.tw/news/life/breakingnews/{article_id}"
 
+    def get_sitemap_config(self) -> Optional[Dict[str, Any]]:
+        """取得 sitemap 相關配置"""
+        return {
+            'index_url': 'https://news.ltn.com.tw/sitemap.xml',
+            'is_index': False,  # LTN sitemap is a single file with latest 1000 articles
+            'article_url_pattern': r'<loc>(https?://news\.ltn\.com\.tw/news/[^<]+)</loc>',
+            # LTN sitemap doesn't have date-based filenames, date filtering not applicable
+            'sitemap_date_pattern': None,
+        }
+
     async def parse(self, html: str, url: str) -> Optional[Dict[str, Any]]:
         """解析自由時報文章 HTML"""
         try:
