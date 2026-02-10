@@ -174,6 +174,59 @@ class UserQdrantProvider:
 
         return results
 
+    async def delete_source_vectors(self, source_id: str) -> int:
+        """
+        Delete all vectors associated with a source_id.
+
+        Args:
+            source_id: Source identifier whose vectors should be deleted
+
+        Returns:
+            Number of points deleted (estimated via count before deletion)
+        """
+        try:
+            client = await get_qdrant_client()
+
+            # Count points before deletion for logging
+            count_result = await client.count(
+                collection_name=self.collection_name,
+                count_filter=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="source_id",
+                            match=models.MatchValue(value=source_id)
+                        )
+                    ]
+                )
+            )
+            count = count_result.count
+
+            if count == 0:
+                logger.info(f"No vectors found for source_id={source_id}, nothing to delete")
+                return 0
+
+            # Delete all points matching source_id
+            await client.delete(
+                collection_name=self.collection_name,
+                points_selector=models.FilterSelector(
+                    filter=models.Filter(
+                        must=[
+                            models.FieldCondition(
+                                key="source_id",
+                                match=models.MatchValue(value=source_id)
+                            )
+                        ]
+                    )
+                )
+            )
+
+            logger.info(f"Deleted {count} vectors for source_id={source_id}")
+            return count
+
+        except Exception as e:
+            logger.exception(f"Error deleting vectors for source_id={source_id}: {str(e)}")
+            raise
+
     async def get_document_chunks(
         self,
         user_id: str,

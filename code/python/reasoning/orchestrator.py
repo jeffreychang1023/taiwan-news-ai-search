@@ -131,55 +131,72 @@ class DeepResearchOrchestrator:
 
         Returns:
             Tuple of (formatted_string, source_map)
-                - formatted_string: Context with [1], [2], [3] markers
-                - source_map: Dict mapping citation ID to source item
+                - formatted_string: Context with [1], [2], [3] markers (token-budgeted for AI)
+                - source_map: Dict mapping citation ID to source item (complete, for frontend)
 
-        Token Budget Control:
-            - Max 20,000 chars (~10k tokens) to prevent context explosion
-            - Dynamically reduces snippet length if over budget
+        Design:
+            - source_map: Contains ALL items (no limit) - managed by code, not LLM
+            - formatted_context: Token-budgeted for LLM consumption
+            - Citation numbers are consistent between both
         """
-        MAX_TOTAL_CHARS = 20000  # ~10k tokens budget
+        MAX_TOTAL_CHARS = 20000  # ~10k tokens budget for formatted_context
         MAX_SNIPPET_LENGTH = 500
+        OVERHEAD_PER_ITEM = 100  # Citation marker + source + title + newlines
+
         source_map = {}
         formatted_parts = []
 
-        # First pass: Calculate total length with max snippet size
-        # Include overhead: "[{idx}] {source} - {title}\n{snippet}\n\n" (~50-100 chars per item)
-        OVERHEAD_PER_ITEM = 100  # Conservative estimate for citation marker + source + title + newlines
+        # ===== Step 1: Build COMPLETE source_map (no limit) =====
+        # This is the ground truth for citation -> item mapping
+        # Frontend will use this to display all citation references
+        for idx, item in enumerate(items, 1):
+            source_map[idx] = item
 
+        # ===== Step 2: Calculate how many items fit in token budget =====
+        # Dynamically determine items_in_budget based on actual content size
+        cumulative_chars = 0
+        items_in_budget = 0
+
+        for item in items:
+            if isinstance(item, dict):
+                desc_len = len(item.get("description", ""))
+            else:
+                desc_len = 0
+            item_chars = min(desc_len, MAX_SNIPPET_LENGTH) + OVERHEAD_PER_ITEM
+
+            if cumulative_chars + item_chars > MAX_TOTAL_CHARS:
+                break
+            cumulative_chars += item_chars
+            items_in_budget += 1
+
+        # Ensure at least some items are included
+        items_in_budget = max(items_in_budget, min(10, len(items)))
+
+        # ===== Step 3: Calculate snippet length for budgeted items =====
         total_estimated = sum(
-            min(len(item.get("description", "")), MAX_SNIPPET_LENGTH) + OVERHEAD_PER_ITEM
-            for item in items[:50]
+            min(len(item.get("description", "") if isinstance(item, dict) else ""), MAX_SNIPPET_LENGTH) + OVERHEAD_PER_ITEM
+            for item in items[:items_in_budget]
         )
 
-        # Adjust snippet length if over budget
         if total_estimated > MAX_TOTAL_CHARS:
-            # Calculate reduction needed
             reduction_ratio = MAX_TOTAL_CHARS / total_estimated
-            snippet_length = int(MAX_SNIPPET_LENGTH * reduction_ratio)
-            # Ensure minimum snippet length
-            snippet_length = max(snippet_length, 100)
+            snippet_length = max(int(MAX_SNIPPET_LENGTH * reduction_ratio), 100)
             self.logger.warning(
-                f"Context too large ({total_estimated} chars), "
+                f"Context too large ({total_estimated} chars for {items_in_budget} items), "
                 f"reducing snippet length to {snippet_length} chars (ratio: {reduction_ratio:.2f})"
             )
         else:
             snippet_length = MAX_SNIPPET_LENGTH
 
-        # Second pass: Format with adjusted snippet length
-        for idx, item in enumerate(items[:50], 1):
-            source_map[idx] = item
-
+        # ===== Step 4: Format context for AI (only budgeted items) =====
+        for idx, item in enumerate(items[:items_in_budget], 1):
             # Handle both dict and tuple/list formats
             if isinstance(item, dict):
-                # New dict format from Qdrant
                 title = item.get("title") or item.get("name", "No title")
                 description = item.get("description", "")
                 source = item.get("site", "Unknown")
             elif isinstance(item, (list, tuple)):
-                # Legacy tuple format: (url, schema_json, name, site, [vector])
                 title = item[2] if len(item) > 2 else "No title"
-                # Extract description from schema_json
                 try:
                     schema_json = item[1] if len(item) > 1 else "{}"
                     schema_obj = json.loads(schema_json) if isinstance(schema_json, str) else schema_json
@@ -188,16 +205,13 @@ class DeepResearchOrchestrator:
                     description = ""
                 source = item[3] if len(item) > 3 else "Unknown"
             else:
-                # Fallback
                 title = "No title"
                 description = ""
                 source = "Unknown"
 
-            # Tier prefix already in description (from SourceTierFilter)
             snippet = description[:snippet_length] + (
                 "..." if len(description) > snippet_length else ""
             )
-
             formatted_parts.append(f"[{idx}] {source} - {title}\n{snippet}\n")
 
         formatted_string = "\n".join(formatted_parts)
@@ -208,8 +222,8 @@ class DeepResearchOrchestrator:
             formatted_string = current_time_header + formatted_string
 
         self.logger.info(
-            f"Formatted context: {len(source_map)} sources, "
-            f"{len(formatted_string)} chars"
+            f"Formatted context: {items_in_budget}/{len(items)} sources in AI context, "
+            f"{len(source_map)} total in source_map, {len(formatted_string)} chars"
         )
 
         # Check if context is empty

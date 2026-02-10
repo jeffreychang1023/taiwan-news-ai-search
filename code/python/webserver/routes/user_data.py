@@ -11,6 +11,7 @@ import traceback
 from aiohttp import web
 from core.user_data_manager import get_user_data_manager
 from core.user_data_processor import get_user_data_processor
+from retrieval_providers.user_qdrant_provider import get_user_qdrant_provider
 from misc.logger.logging_config_helper import get_configured_logger
 
 logger = get_configured_logger("user_data_routes")
@@ -309,6 +310,14 @@ async def delete_source_handler(request: web.Request) -> web.Response:
             if source_id in active_tasks:
                 active_tasks[source_id].cancel()
                 del active_tasks[source_id]
+
+            # Clean up Qdrant vectors (best-effort, don't block deletion)
+            try:
+                provider = get_user_qdrant_provider()
+                deleted_count = await provider.delete_source_vectors(source_id)
+                logger.info(f"Cleaned up {deleted_count} Qdrant vectors for source_id={source_id}")
+            except Exception as e:
+                logger.warning(f"Failed to clean up Qdrant vectors for source_id={source_id}: {str(e)}")
 
             return web.json_response({
                 'success': True,
