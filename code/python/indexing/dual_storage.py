@@ -7,7 +7,8 @@ Dual-Tier Storage for M0 Indexing Module.
 
 import json
 import sqlite3
-from dataclasses import dataclass
+import threading
+from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -72,18 +73,20 @@ class VaultStorage:
 
         self.config = config
         self._conn: Optional[sqlite3.Connection] = None
+        self._conn_lock = threading.Lock()
         self._decompressor = zstd.ZstdDecompressor() if ZSTD_AVAILABLE else None
 
     def _get_connection(self) -> sqlite3.Connection:
-        """Get or create database connection."""
-        if self._conn is None:
-            # Ensure directory exists
-            self.config.db_path.parent.mkdir(parents=True, exist_ok=True)
-            # check_same_thread=False for async compatibility
-            self._conn = sqlite3.connect(str(self.config.db_path), check_same_thread=False)
-            self._conn.execute("PRAGMA journal_mode=WAL")
-            self._conn.executescript(self.SCHEMA)
-        return self._conn
+        """Get or create database connection (thread-safe)."""
+        with self._conn_lock:
+            if self._conn is None:
+                # Ensure directory exists
+                self.config.db_path.parent.mkdir(parents=True, exist_ok=True)
+                # check_same_thread=False for async compatibility
+                self._conn = sqlite3.connect(str(self.config.db_path), check_same_thread=False)
+                self._conn.execute("PRAGMA journal_mode=WAL")
+                self._conn.executescript(self.SCHEMA)
+            return self._conn
 
     def _get_compression_level(self, text_length: int) -> int:
         """Get adaptive compression level based on text length."""
@@ -208,6 +211,63 @@ class VaultStorage:
 
         return [self._decompress(row[0]) for row in cursor.fetchall()]
 
+    def iter_chunk_ids(self, site: Optional[str] = None, batch_size: int = 10000):
+        """
+        Generator that yields batches of chunk_ids from the vault.
+
+        Args:
+            site: Optional site filter (filters by article_url domain pattern)
+            batch_size: Number of chunk_ids per batch
+
+        Yields:
+            set[str] of chunk_ids per batch
+        """
+        conn = self._get_connection()
+        query = "SELECT chunk_id FROM article_chunks WHERE is_deleted = 0"
+        params = []
+
+        if site:
+            # Filter by site pattern in article_url (e.g. 'ltn' matches ltn.com.tw)
+            query += " AND article_url LIKE ?"
+            params.append(f"%{site}%")
+
+        query += " ORDER BY chunk_id"
+
+        cursor = conn.execute(query, params)
+        while True:
+            rows = cursor.fetchmany(batch_size)
+            if not rows:
+                break
+            yield {row[0] for row in rows}
+
+    def get_chunks_by_ids(self, chunk_ids: set) -> list:
+        """
+        Retrieve full Chunk-like data for a set of chunk_ids.
+
+        Returns list of dicts with chunk_id, article_url, chunk_index, full_text.
+        """
+        conn = self._get_connection()
+        results = []
+        chunk_ids_list = list(chunk_ids)
+
+        # Query in batches of 500 to avoid SQLite variable limit
+        for i in range(0, len(chunk_ids_list), 500):
+            batch = chunk_ids_list[i:i + 500]
+            placeholders = ",".join("?" * len(batch))
+            cursor = conn.execute(f"""
+                SELECT chunk_id, article_url, chunk_index, full_text_compressed
+                FROM article_chunks
+                WHERE chunk_id IN ({placeholders}) AND is_deleted = 0
+            """, batch)
+            for row in cursor:
+                results.append({
+                    'chunk_id': row[0],
+                    'article_url': row[1],
+                    'chunk_index': row[2],
+                    'full_text': self._decompress(row[3]),
+                })
+        return results
+
     def soft_delete_chunks(self, chunk_ids: list[str]) -> None:
         """Soft delete chunks by setting is_deleted flag."""
         conn = self._get_connection()
@@ -229,37 +289,85 @@ class VaultStorage:
 
 @dataclass
 class MapPayload:
-    """Payload structure for Qdrant."""
-    url: str           # chunk_id
-    name: str          # summary
+    """Payload structure for Qdrant (Version 2).
+
+    Retriever/Ranking/Reasoning 相容欄位:
+        url: article URL (citation link, dedup key)
+        name: chunk summary (BM25 + display)
+        site: source identifier
+        schema_json: article-level metadata (NOT chunk metadata)
+
+    Chunk-specific fields at top level for Qdrant native filtering.
+    """
+    url: str           # article URL (NOT chunk_id)
+    name: str          # chunk summary
     site: str
-    schema_json: str   # JSON with chunk metadata
+    schema_json: str   # article-level metadata JSON
+    chunk_id: str
+    article_url: str
+    chunk_index: int
+    char_start: int
+    char_end: int
+    keywords: list
+    indexed_at: str
+    task_id: str
+    version: int = 2
 
     @classmethod
-    def from_chunk(cls, chunk: Chunk, site: str) -> 'MapPayload':
-        """Create payload from a Chunk."""
+    def from_chunk(
+        cls,
+        chunk: Chunk,
+        site: str,
+        headline: str = "",
+        date_published: str = "",
+        author: str = "",
+        publisher: str = "",
+        keywords: list = None,
+        description: str = "",
+        task_id: str = "",
+    ) -> 'MapPayload':
+        """Create payload from a Chunk with article-level metadata.
+
+        Args:
+            chunk: Chunk object
+            site: source identifier (e.g. 'ltn', 'udn')
+            headline: article headline
+            date_published: ISO 8601 date string
+            author: article author
+            publisher: publisher name
+            keywords: keyword list
+            description: first ~200 chars of article body
+            task_id: originating task ID
+        """
+        if keywords is None:
+            keywords = []
+
         schema = {
-            'article_url': chunk.article_url,
-            'chunk_index': chunk.chunk_index,
-            'char_start': chunk.char_start,
-            'char_end': chunk.char_end,
-            '@type': 'ArticleChunk',
-            'version': 2,
-            'indexed_at': datetime.utcnow().isoformat()
+            '@type': 'NewsArticle',
+            'headline': headline,
+            'datePublished': date_published,
+            'author': author,
+            'publisher': publisher,
+            'keywords': keywords,
+            'description': description,
         }
 
         return cls(
-            url=chunk.chunk_id,
+            url=chunk.article_url,
             name=chunk.summary,
             site=site,
-            schema_json=json.dumps(schema, ensure_ascii=False)
+            schema_json=json.dumps(schema, ensure_ascii=False),
+            chunk_id=chunk.chunk_id,
+            article_url=chunk.article_url,
+            chunk_index=chunk.chunk_index,
+            char_start=chunk.char_start,
+            char_end=chunk.char_end,
+            keywords=keywords,
+            indexed_at=datetime.utcnow().isoformat(),
+            task_id=task_id,
+            version=2,
         )
 
     def to_dict(self) -> dict:
-        """Convert to dictionary for Qdrant."""
-        return {
-            'url': self.url,
-            'name': self.name,
-            'site': self.site,
-            'schema_json': self.schema_json
-        }
+        """Convert to dictionary for Qdrant payload."""
+        return asdict(self)

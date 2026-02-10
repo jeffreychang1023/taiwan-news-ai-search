@@ -24,10 +24,11 @@ class Chunk:
     article_url: str
     chunk_index: int
     sentences: list[str]
-    full_text: str
+    full_text: str             # original text without overlap
     summary: str               # headline + representative sentences
     char_start: int
     char_end: int
+    embedding_text: str = ""   # text with overlap for embedding (set by add_overlap)
 
 
 def make_chunk_id(article_url: str, chunk_index: int) -> str:
@@ -68,6 +69,7 @@ class ChunkingEngine:
         self.short_article_threshold = 200
         self.summary_max_length = 400
         self.extractive_sentences = 3
+        self.overlap_chars = 30  # overlap for embedding optimization
 
         if not config_path.exists():
             return
@@ -81,13 +83,15 @@ class ChunkingEngine:
         self.short_article_threshold = chunk_config.get('short_article_threshold', self.short_article_threshold)
         self.summary_max_length = chunk_config.get('summary_max_length', self.summary_max_length)
         self.extractive_sentences = chunk_config.get('extractive_summary_sentences', self.extractive_sentences)
+        self.overlap_chars = chunk_config.get('overlap_chars', self.overlap_chars)
 
-    def chunk_article(self, cdm: CanonicalDataModel) -> list[Chunk]:
+    def chunk_article(self, cdm: CanonicalDataModel, add_overlap: bool = True) -> list[Chunk]:
         """
         Chunk an article using length-based strategy.
 
         Args:
             cdm: CanonicalDataModel to chunk
+            add_overlap: Whether to add overlap text for embedding (default True)
 
         Returns:
             List of Chunk objects
@@ -96,13 +100,16 @@ class ChunkingEngine:
 
         # Short article: entire text as one chunk
         if len(text) < self.short_article_threshold:
-            return [self._create_chunk(
+            chunks = [self._create_chunk(
                 cdm=cdm,
                 sentences=[text],
                 chunk_index=0,
                 char_start=0,
                 char_end=len(text)
             )]
+            if add_overlap:
+                self._add_overlap(chunks)
+            return chunks
 
         # Split into sentences
         sentences = self._split_sentences(text)
@@ -157,6 +164,10 @@ class ChunkingEngine:
                     char_start=char_position - current_length,
                     char_end=char_position
                 ))
+
+        # Add overlap for embedding optimization
+        if add_overlap:
+            self._add_overlap(chunks)
 
         return chunks
 
@@ -231,3 +242,47 @@ class ChunkingEngine:
             summary = summary[:self.summary_max_length - 3] + "..."
 
         return summary
+
+    def _add_overlap(self, chunks: list[Chunk]) -> None:
+        """
+        Add overlap text to chunks for better embedding quality.
+
+        The overlap text is stored in embedding_text field, which includes:
+        - Previous chunk's last N characters (prefix)
+        - Current chunk's full text
+        - Next chunk's first N characters (suffix)
+
+        Edge cases:
+        - First chunk: no prefix
+        - Last chunk: no suffix
+        - Single chunk: no overlap (embedding_text = full_text)
+
+        Note: char_start/char_end remain unchanged (original positions).
+        """
+        if not chunks:
+            return
+
+        overlap = self.overlap_chars
+
+        for i, chunk in enumerate(chunks):
+            prefix = ""
+            suffix = ""
+
+            # Not first chunk: get last N chars from previous chunk
+            if i > 0:
+                prev_text = chunks[i - 1].full_text
+                if len(prev_text) >= overlap:
+                    prefix = prev_text[-overlap:]
+                else:
+                    prefix = prev_text
+
+            # Not last chunk: get first N chars from next chunk
+            if i < len(chunks) - 1:
+                next_text = chunks[i + 1].full_text
+                if len(next_text) >= overlap:
+                    suffix = next_text[:overlap]
+                else:
+                    suffix = next_text
+
+            # Combine: prefix + original text + suffix
+            chunk.embedding_text = prefix + chunk.full_text + suffix
