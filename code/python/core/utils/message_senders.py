@@ -9,11 +9,14 @@ extracted from NLWebHandler to improve code organization and maintainability.
 """
 
 import asyncio
+import logging
 import time
 from datetime import datetime
 from typing import Dict, Any, Optional, Union, List
 from core.config import CONFIG
 from core.schemas import Message, SenderType, MessageType
+
+logger = logging.getLogger(__name__)
 
 API_VERSION = "0.1"
 
@@ -119,32 +122,59 @@ class MessageSender:
         try:
             await self.handler.http_handler.write_stream(begin_message)
         except Exception as e:
-            pass
+            logger.warning(f"Failed to send begin-response: {e}")
     
     async def send_end_response(self, error=False):
         """
         Send end-nlweb-response message at the end of query processing.
-        
+
         Args:
             error: If True, indicates the query ended with an error
         """
         if not (self.handler.streaming and self.handler.http_handler is not None):
             return
-            
+
         end_message = {
             "message_type": "end-nlweb-response",
             "conversation_id": self.handler.conversation_id,
             "timestamp": int(time.time() * 1000)
         }
-        
+
         if error:
             end_message["error"] = True
-        
+
         try:
             await self.handler.http_handler.write_stream(end_message)
-        except Exception:
-            pass
-    
+        except Exception as e:
+            logger.warning(f"Failed to send end-response: {e}")
+
+    async def send_progress(self, stage: str, message: str, percent: int = None):
+        """
+        Send progress update message during query processing.
+
+        Args:
+            stage: Internal stage identifier (e.g., 'analyzing', 'searching', 'ranking')
+            message: User-friendly message in Chinese
+            percent: Optional progress percentage (0-100)
+        """
+        if not (self.handler.streaming and self.handler.http_handler is not None):
+            return
+
+        progress_message = {
+            "message_type": "progress",
+            "stage": stage,
+            "message": message,
+            "timestamp": int(time.time() * 1000)
+        }
+
+        if percent is not None:
+            progress_message["percent"] = percent
+
+        try:
+            await self.handler.http_handler.write_stream(progress_message)
+        except Exception as e:
+            logger.warning(f"Failed to send progress (stage={stage}): {e}")
+
     async def send_config_headers(self):
         """Send headers from configuration as messages."""
         return

@@ -262,7 +262,10 @@ class NLWebHandler:
         try:
             # Send begin-nlweb-response message at the start
             await self.message_sender.send_begin_response()
-            
+
+            # Progress: Analyzing query
+            await self.message_sender.send_progress("analyzing", "分析查詢中...", 5)
+
             await self.prepare()
             if (self.query_done):
                 return self.return_value
@@ -284,6 +287,9 @@ class NLWebHandler:
                     cache.store(cache_key, self.final_ranked_answers, self.query)
                 except Exception as e:
                     logger.warning(f"Failed to cache results: {e}")
+
+            # Progress: Generating AI answer
+            await self.message_sender.send_progress("generating", "生成 AI 回答中...", 70)
 
             await post_ranking.PostRanking(self).do()
 
@@ -440,6 +446,9 @@ class NLWebHandler:
 
                 self.retrieval_done_event.set()
             else:
+                # Progress: Searching database
+                await self.message_sender.send_progress("searching", "搜尋資料庫中...", 15)
+
                 # Get parsed time range (TimeRangeExtractor runs in parallel during prepare())
                 temporal_range = getattr(self, 'temporal_range', None)
 
@@ -607,6 +616,9 @@ class NLWebHandler:
     
     async def get_ranked_answers(self):
         try:
+            # Progress: Ranking results
+            await self.message_sender.send_progress("ranking", "排序結果中...", 40)
+
             await ranking.Ranking(self, self.final_retrieved_items, ranking.Ranking.REGULAR_TRACK).do()
             return self.return_value
         except Exception as e:

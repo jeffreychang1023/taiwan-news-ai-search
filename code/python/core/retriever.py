@@ -567,40 +567,155 @@ class VectorDBClient:
     
     def _deduplicate_by_url(self, results: List[List[str]]) -> List[List[str]]:
         """
-        Deduplicate search results by URL, keeping the entry with longer content.
-        
+        Deduplicate and merge search results by URL (B+ merge).
+
+        When multiple chunks from the same article URL appear in results,
+        they are merged into a single result:
+        - Best chunk (highest score) is used as the base
+        - Summaries are merged with dedup (headline kept once, sentences deduped)
+        - Metadata (_chunk_ids, _chunk_count, _best_chunk_name) is preserved
+
         Args:
             results: List of search results from multiple endpoints
-            
+
         Returns:
-            Deduplicated list of results
+            Deduplicated and merged list of results
         """
-        url_to_result = {}
-        
+        # Group results by URL
+        url_groups: dict = {}  # url -> list of results
+        url_order: list = []   # preserve first-seen order
+
         for result in results:
-            # Handle both Dict and Tuple formats
             if isinstance(result, dict):
                 url = result.get('url', '')
-                content = result.get('description', '') or result.get('schema_json', '')
-            elif len(result) >= 3:
+            elif isinstance(result, (list, tuple)) and len(result) >= 1:
                 url = result[0]
-                content = result[2] if len(result) > 2 else ""
             else:
                 continue
 
-            # If URL not seen before or current content is longer, keep it
-            if url:
-                if isinstance(result, dict):
-                    # For Dict format, compare content length
-                    if url not in url_to_result or len(content) > len(url_to_result.get(url, {}).get('description', '')):
-                        url_to_result[url] = result
-                else:
-                    # For Tuple format, use original logic
-                    if url not in url_to_result or len(content) > len(url_to_result[url][2]):
-                        url_to_result[url] = result
-        
-        # Return deduplicated results
-        return list(url_to_result.values())
+            if not url:
+                continue
+
+            if url not in url_groups:
+                url_groups[url] = []
+                url_order.append(url)
+            url_groups[url].append(result)
+
+        # Merge each group
+        merged_results = []
+        for url in url_order:
+            group = url_groups[url]
+            if len(group) == 1:
+                merged_results.append(group[0])
+                continue
+
+            # Multiple chunks from the same article — merge (B+)
+            merged = self._merge_chunk_group(group)
+            merged_results.append(merged)
+
+        return merged_results
+
+    @staticmethod
+    def _merge_chunk_group(group: list) -> Any:
+        """Merge a group of chunks from the same article URL (B+ strategy).
+
+        Strategy:
+        - Use the chunk with the longest name/content as the base
+        - Merge summaries: keep headline once, deduplicate sentences
+        - Preserve _chunk_ids, _chunk_count, _best_chunk_name
+        """
+        # Determine format (dict vs tuple)
+        is_dict = isinstance(group[0], dict)
+
+        if is_dict:
+            # Find best chunk (longest name/title)
+            best = max(group, key=lambda r: len(r.get('title', '') or r.get('name', '')))
+            best = dict(best)  # copy
+
+            # Collect all names for merging
+            all_names = [r.get('title', '') or r.get('name', '') for r in group]
+            merged_name = VectorDBClient._merge_summaries(all_names, max_length=500)
+
+            # Fallback if all chunks have empty title/name
+            if not merged_name:
+                url = best.get('url', '')
+                from urllib.parse import urlparse
+                path = urlparse(url).path
+                merged_name = path.split('/')[-1] or url[:100] or 'Untitled'
+                logger.warning(f"All chunks have empty title, using fallback: {merged_name[:50]}")
+
+            best_original_name = best.get('title', '') or best.get('name', '')
+            best['title'] = merged_name
+            best['name'] = merged_name
+            best['_best_chunk_name'] = best_original_name
+            best['_chunk_ids'] = [r.get('chunk_id', '') for r in group if r.get('chunk_id')]
+            best['_chunk_count'] = len(group)
+        else:
+            # Tuple/list format: [url, json, name, site, ...]
+            best_idx = max(
+                range(len(group)),
+                key=lambda i: len(group[i][2]) if len(group[i]) > 2 else 0
+            )
+            best = list(group[best_idx])  # copy
+
+            all_names = [r[2] if len(r) > 2 else "" for r in group]
+            merged_name = VectorDBClient._merge_summaries(all_names, max_length=500)
+
+            # Fallback if all chunks have empty names
+            if not merged_name and len(best) > 0:
+                merged_name = best[0][:100] if best[0] else 'Untitled'
+
+            if len(best) > 2:
+                best[2] = merged_name
+
+        return best
+
+    @staticmethod
+    def _merge_summaries(summaries: List[str], max_length: int = 500) -> str:
+        """Merge chunk summaries with B+ dedup strategy.
+
+        - All chunk summaries start with the headline — keep it once
+        - Collect representative sentences from each chunk, deduplicate
+        - Cap at max_length characters
+        """
+        if not summaries:
+            return ""
+        if len(summaries) == 1:
+            return summaries[0]
+
+        # Extract headline from the first summary (text before first period)
+        first = summaries[0]
+        headline = ""
+        headline_end = first.find("。")
+        if headline_end > 0:
+            headline = first[:headline_end + 1]
+
+        # Collect unique sentences from all summaries
+        unique_sentences = []
+        seen = set()
+
+        for summary in summaries:
+            # Remove headline prefix if present
+            text = summary
+            if headline and text.startswith(headline):
+                text = text[len(headline):]
+
+            # Split into sentences
+            for sent in text.split("。"):
+                sent = sent.strip()
+                if sent and len(sent) > 5 and sent not in seen:
+                    seen.add(sent)
+                    unique_sentences.append(sent)
+
+        # Build merged summary
+        merged = headline
+        for sent in unique_sentences:
+            candidate = merged + sent + "。"
+            if len(candidate) > max_length:
+                break
+            merged = candidate
+
+        return merged
     
     def _aggregate_results(self, endpoint_results: Dict[str, List[List[str]]]) -> List[List[str]]:
         """

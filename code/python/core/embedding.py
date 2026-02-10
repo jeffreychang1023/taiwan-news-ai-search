@@ -89,7 +89,6 @@ async def get_embedding(
         # Use a timeout wrapper for all embedding calls
         if provider == "openai":
             logger.debug("Getting OpenAI embeddings")
-            # Import here to avoid potential circular imports
             from embedding_providers.openai_embedding import get_openai_embeddings
             result = await asyncio.wait_for(
                 get_openai_embeddings(text, model=model_id),
@@ -100,13 +99,22 @@ async def get_embedding(
 
         if provider == "gemini":
             logger.debug("Getting Gemini embeddings")
-            # Import here to avoid potential circular imports
             from embedding_providers.gemini_embedding import get_gemini_embeddings
             result = await asyncio.wait_for(
                 get_gemini_embeddings(text, model=model_id),
                 timeout=timeout
             )
             logger.debug(f"Gemini embeddings received, dimension: {len(result)}")
+            return result
+
+        if provider == "huggingface":
+            logger.debug("Getting HuggingFace embeddings")
+            from embedding_providers.huggingface_embedding import get_huggingface_embedding
+            result = await asyncio.wait_for(
+                get_huggingface_embedding(text, model=model_id),
+                timeout=timeout
+            )
+            logger.debug(f"HuggingFace embeddings received, dimension: {len(result)}")
             return result
 
         # Removed providers: azure_openai, ollama, snowflake, elasticsearch
@@ -186,7 +194,6 @@ async def batch_get_embeddings(
     try:
         # Provider-specific batch implementations with timeout handling
         if provider == "openai":
-            # Use OpenAI's batch embedding API
             logger.debug("Getting OpenAI batch embeddings")
             from embedding_providers.openai_embedding import get_openai_batch_embeddings
             result = await asyncio.wait_for(
@@ -195,19 +202,27 @@ async def batch_get_embeddings(
             )
             logger.debug(f"OpenAI batch embeddings received, count: {len(result)}")
             return result
-            
+
         if provider == "gemini":
-            # Gemini might not have a native batch API, so process one by one
             logger.debug("Getting Gemini batch embeddings (sequential)")
             from embedding_providers.gemini_embedding import get_gemini_batch_embeddings
-            # Process texts one by one with individual timeouts
             result = await asyncio.wait_for(
                 get_gemini_batch_embeddings(texts, model=model_id),
-                timeout=30  # Individual timeout per text
+                timeout=timeout
             )
             logger.debug(f"Gemini batch embeddings received, count: {len(result)}")
             return result
-        
+
+        if provider == "huggingface":
+            logger.debug("Getting HuggingFace batch embeddings")
+            from embedding_providers.huggingface_embedding import get_huggingface_batch_embeddings
+            result = await asyncio.wait_for(
+                get_huggingface_batch_embeddings(texts, model=model_id),
+                timeout=timeout
+            )
+            logger.debug(f"HuggingFace batch embeddings received, count: {len(result)}")
+            return result
+
         # Removed batch providers: ollama, elasticsearch (unified on OpenAI / Gemini)
 
         # Default implementation if provider doesn't match any above

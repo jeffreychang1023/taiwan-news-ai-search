@@ -639,7 +639,6 @@ class QueryLogger:
 
         for attempt in range(max_retries):
             try:
-                print(f"[_write_to_db] Attempt {attempt + 1}/{max_retries} for table={table_name}")
                 conn = self.db.connect()
                 cursor = conn.cursor()
 
@@ -717,9 +716,7 @@ class QueryLogger:
 
         # Write synchronously to ensure queries table has the record BEFORE
         # any child tables (retrieved_documents, ranking_scores, etc.) are written
-        print(f"[QueryLogger] log_query_start: About to write query_id={query_id}")
         self._write_to_db("queries", data)
-        print(f"[QueryLogger] log_query_start: _write_to_db returned")
 
     def log_query_complete(
         self,
