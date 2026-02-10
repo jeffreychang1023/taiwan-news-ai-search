@@ -152,6 +152,11 @@
         // Store Deep Research report for free conversation follow-up
         let currentResearchReport = null;
 
+        // Store reasoning chain data for sharing/verification
+        let currentArgumentGraph = null;
+        let currentChainAnalysis = null;
+        let shareContentOverride = null;  // When non-null, share modal uses this content instead
+
         // ==================== 新版模式切換與 Popup 邏輯 ====================
 
         // 新版模式按鈕（搜尋框內）
@@ -431,6 +436,10 @@
                 `;
 
                 item.addEventListener('click', () => {
+                    // 切換前先保存當前對話（防止深度報告等狀態丟失）
+                    if (sessionHistory.length > 0 || currentResearchReport) {
+                        saveCurrentSession();
+                    }
                     loadSavedSession(session);
                     hideHistoryPopup();
                     // 關閉左側邊欄
@@ -448,6 +457,13 @@
                 ? savedSessions.findIndex(s => s.id === currentLoadedSessionId)
                 : -1;
 
+            // Prepare research report data with reasoning chain
+            const researchReportData = currentResearchReport ? {
+                ...currentResearchReport,
+                argumentGraph: currentArgumentGraph ? [...currentArgumentGraph] : null,
+                chainAnalysis: currentChainAnalysis ? { ...currentChainAnalysis } : null
+            } : null;
+
             if (existingSessionIndex !== -1) {
                 // 更新現有 session
                 savedSessions[existingSessionIndex] = {
@@ -459,7 +475,7 @@
                     accumulatedArticles: [...accumulatedArticles],
                     pinnedMessages: [...pinnedMessages],
                     pinnedNewsCards: [...pinnedNewsCards],
-                    researchReport: currentResearchReport ? { ...currentResearchReport } : null,
+                    researchReport: researchReportData,
                     createdAt: savedSessions[existingSessionIndex].createdAt,
                     updatedAt: Date.now()
                 };
@@ -474,7 +490,7 @@
                     accumulatedArticles: [...accumulatedArticles],
                     pinnedMessages: [...pinnedMessages],
                     pinnedNewsCards: [...pinnedNewsCards],
-                    researchReport: currentResearchReport ? { ...currentResearchReport } : null,
+                    researchReport: researchReportData,
                     createdAt: Date.now()
                 };
                 savedSessions.push(newSession);
@@ -559,7 +575,7 @@
             searchInput.value = '';
             initialState.style.display = 'block';
 
-            // 清空右側 Tab「問答紀錄」（conversationHistory 已被清空）
+            // 清空右側 Tab「搜尋紀錄」（conversationHistory 已被清空）
             renderConversationHistory();
 
             // 重置 AI 摘要
@@ -611,7 +627,7 @@
                 panel.classList.add('visible');
                 currentOpenTab = tabName;
 
-                // 如果是問答紀錄 Tab，重新載入當前 session 的查詢列表
+                // 如果是搜尋紀錄 Tab，重新載入當前 session 的查詢列表
                 if (tabName === 'history') {
                     renderConversationHistory();
                 }
@@ -638,7 +654,7 @@
         });
 
         // Function to render conversation history
-        // 渲染當前 session 的查詢歷史到右側 Tab「問答紀錄」
+        // 渲染當前 session 的查詢歷史到右側 Tab「搜尋紀錄」
         function renderConversationHistory() {
             const container = document.getElementById('savedSessionsListNew');
             if (!container) return;
@@ -768,7 +784,9 @@
 
         // Function to handle POST streaming requests (for large payloads like research reports)
         // Bug #23: Added abortSignal parameter for cancellation support
-        async function handlePostStreamingRequest(url, body, query, abortSignal = null) {
+        // Progressive rendering: Added callbacks parameter for real-time UI updates
+        async function handlePostStreamingRequest(url, body, query, abortSignal = null, callbacks = {}) {
+            const { onArticles, onSummary, onAnswer, onComplete, onProgress } = callbacks;
             const fetchOptions = {
                 method: 'POST',
                 headers: {
@@ -833,16 +851,24 @@
                                         showTimeFilterRelaxedWarning(data.content);
                                         break;
 
+                                    case 'progress':
+                                        console.log('[Progress]', data.stage, data.message);
+                                        if (onProgress) onProgress(data.stage, data.message, data.percent);
+                                        break;
+
                                     // Unified mode message types
                                     case 'articles':
                                         accumulatedData.content = data.content || [];
+                                        if (onArticles) onArticles(accumulatedData.content);
                                         break;
                                     case 'summary':
                                         accumulatedData.summary = { message: data.content };
+                                        if (onSummary) onSummary(accumulatedData.summary, accumulatedData.content?.length || 0);
                                         break;
                                     case 'answer':
                                         // Received twice (initial + enriched), idempotent overwrite
                                         accumulatedData.nlws = data.answer ? { answer: data.answer } : null;
+                                        if (onAnswer) onAnswer(accumulatedData.nlws, accumulatedData.content?.length || 0);
                                         break;
                                     case 'end-nlweb-response':
                                         // Explicit no-op — stream ends on 'complete'
@@ -850,6 +876,7 @@
 
                                     case 'complete':
                                         console.log('POST Stream complete. Accumulated data:', accumulatedData);
+                                        if (onComplete) onComplete(accumulatedData);
                                         return accumulatedData;
 
                                     default:
@@ -867,37 +894,20 @@
             return accumulatedData;
         }
 
-        // Function to update Deep Research progress display
+        // Function to update Deep Research progress display - Log Style
         function updateReasoningProgress(data) {
             console.log('[Progress] updateReasoningProgress called with stage:', data.stage);
             let container = document.getElementById('reasoning-progress');
 
             // Create container if doesn't exist
             if (!container) {
-                console.log('[Progress] Creating new progress container');
+                console.log('[Progress] Creating new log-style progress container');
                 container = document.createElement('div');
                 container.id = 'reasoning-progress';
                 container.className = 'reasoning-progress-container';
                 container.innerHTML = `
-                    <div class="progress-header">🔬 進階搜尋進度</div>
-                    <div class="progress-stages">
-                        <div class="stage" id="stage-analyst">
-                            <span class="icon">📊</span>
-                            <span class="label">Analyzing</span>
-                            <span class="status"></span>
-                        </div>
-                        <div class="stage" id="stage-critic">
-                            <span class="icon">🔍</span>
-                            <span class="label">Reviewing</span>
-                            <span class="status"></span>
-                        </div>
-                        <div class="stage" id="stage-writer">
-                            <span class="icon">✍️</span>
-                            <span class="label">Writing</span>
-                            <span class="status"></span>
-                        </div>
-                    </div>
-                    <div class="progress-details"></div>
+                    <div class="progress-header">Deep Research</div>
+                    <div class="progress-log" id="progress-log"></div>
                 `;
 
                 // Insert into loading state (which is visible during Deep Research)
@@ -913,114 +923,135 @@
                 }
             }
 
-            // Update stage status
+            const logContainer = document.getElementById('progress-log');
+            if (!logContainer) return;
+
             const stage = data.stage;
-            const details = container.querySelector('.progress-details');
 
-            // Use user_message from backend if available (Phase 1)
-            const userMessage = data.user_message || null;
-            const progress = data.progress || null;
+            // Helper to add a log entry
+            function addLogEntry(icon, text, cssClass = '', detail = '', stats = null) {
+                // Check if we should update an existing active entry instead of adding new
+                const existingActive = logContainer.querySelector('.log-entry.active');
+                if (existingActive && cssClass === 'complete') {
+                    // Update the active entry to complete
+                    existingActive.classList.remove('active');
+                    existingActive.classList.add('complete');
+                    existingActive.querySelector('.log-icon').textContent = icon;
+                    if (stats) {
+                        const statsHtml = Object.entries(stats).map(([label, value]) => {
+                            const statClass = value.class || '';
+                            return `<span class="stat ${statClass}">${label}: ${value.text}</span>`;
+                        }).join('');
+                        existingActive.querySelector('.log-text').innerHTML += `<span class="log-stats">${statsHtml}</span>`;
+                    }
+                    return;
+                }
 
-            if (stage === 'analyst_analyzing') {
-                const stageEl = document.getElementById('stage-analyst');
-                console.log('[Progress] stage-analyst element:', stageEl);
-                if (stageEl) {
-                    stageEl.classList.add('active');
-                    // Use user_message if available, otherwise fallback to English
-                    const message = userMessage || `Iteration ${data.iteration}/${data.total_iterations}: Analyzing sources...`;
-                    if (details) {
-                        details.textContent = message;
-                        if (progress !== null) details.textContent += ` (${progress}%)`;
+                const entry = document.createElement('div');
+                entry.className = `log-entry ${cssClass}`;
+                entry.innerHTML = `
+                    <span class="log-icon">${icon}</span>
+                    <span class="log-text">${text}</span>
+                `;
+                if (detail) {
+                    const detailEl = document.createElement('div');
+                    detailEl.className = 'log-detail';
+                    detailEl.textContent = detail;
+                    entry.appendChild(detailEl);
+                }
+                logContainer.appendChild(entry);
+
+                // Auto-scroll to bottom
+                container.scrollTop = container.scrollHeight;
+            }
+
+            // Helper to mark last active as complete
+            function completeLastActive(icon = '✓') {
+                const lastActive = logContainer.querySelector('.log-entry.active:last-of-type');
+                if (lastActive) {
+                    lastActive.classList.remove('active');
+                    lastActive.classList.add('complete');
+                    lastActive.querySelector('.log-icon').textContent = icon;
+                }
+            }
+
+            // Stage-specific handling
+            switch (stage) {
+                case 'analyst_analyzing':
+                    const iterInfo = data.iteration && data.total_iterations
+                        ? ` (${data.iteration}/${data.total_iterations})`
+                        : '';
+                    addLogEntry('○', `正在深度分析資料來源${iterInfo}...`, 'active');
+                    break;
+
+                case 'analyst_complete':
+                    completeLastActive('✓');
+                    const citationsCount = data.citations_count || 0;
+                    addLogEntry('✓', `分析完成，引用了 ${citationsCount} 個來源`, 'complete');
+                    break;
+
+                case 'gap_search_started':
+                    const queries = data.new_queries ? data.new_queries.slice(0, 2).join('、') : '';
+                    const reason = data.gap_reason || '發現資訊缺口';
+                    addLogEntry('↻', `偵測到資訊缺口，正在補充搜尋...`, 'active gap-search', `${reason}${queries ? ' → ' + queries : ''}`);
+                    break;
+
+                case 'cov_verifying':
+                    addLogEntry('○', '正在驗證事實宣稱...', 'active cov');
+                    break;
+
+                case 'cov_complete':
+                    completeLastActive('✓');
+                    const verified = data.verified_count || 0;
+                    const unverified = data.unverified_count || 0;
+                    const contradicted = data.contradicted_count || 0;
+                    let covText = `事實查核完成`;
+                    let covStats = [];
+                    if (verified > 0) covStats.push(`<span class="stat success">已驗證 ${verified}</span>`);
+                    if (unverified > 0) covStats.push(`<span class="stat warning">未驗證 ${unverified}</span>`);
+                    if (contradicted > 0) covStats.push(`<span class="stat error">矛盾 ${contradicted}</span>`);
+                    if (covStats.length > 0) {
+                        covText += `<span class="log-stats">${covStats.join('')}</span>`;
                     }
-                } else {
-                    console.error('[Progress] stage-analyst element not found!');
-                }
-            } else if (stage === 'analyst_complete') {
-                const stageEl = document.getElementById('stage-analyst');
-                if (stageEl) {
-                    stageEl.classList.remove('active');
-                    stageEl.classList.add('complete');
-                    const statusEl = stageEl.querySelector('.status');
-                    if (statusEl) statusEl.textContent = `✓ ${data.citations_count || 0} sources`;
-                }
-                // Update details with user_message if available
-                if (details && userMessage) {
-                    details.textContent = userMessage;
-                    if (progress !== null) details.textContent += ` (${progress}%)`;
-                }
-            } else if (stage === 'gap_search_started') {
-                // Phase 5: Gap Detection - Secondary search in progress
-                const stageEl = document.getElementById('stage-analyst');
-                if (stageEl && details) {
-                    stageEl.classList.add('active');
-                    stageEl.classList.remove('complete');
-                    const queryList = data.new_queries ? data.new_queries.map(q => `「${q}」`).join(', ') : '';
-                    details.innerHTML = `
-                        <div style="color: #f59e0b; font-weight: 500;">🔍 ${userMessage || '正在補充搜尋...'}</div>
-                        <div style="font-size: 11px; margin-top: 4px; color: #64748b;">
-                            ${data.gap_reason || '發現資訊缺口'}
-                        </div>
-                        ${queryList ? `<div style="font-size: 10px; margin-top: 2px; color: #94a3b8;">查詢：${queryList}</div>` : ''}
-                    `;
-                }
-            } else if (stage === 'critic_reviewing') {
-                const stageEl = document.getElementById('stage-critic');
-                if (stageEl) {
-                    stageEl.classList.add('active');
-                    // Use user_message if available, otherwise fallback to English
-                    const message = userMessage || 'Reviewing draft for quality and compliance...';
-                    if (details) {
-                        details.textContent = message;
-                        if (progress !== null) details.textContent += ` (${progress}%)`;
+                    addLogEntry('✓', covText, 'complete cov');
+                    break;
+
+                case 'critic_reviewing':
+                    addLogEntry('○', '正在檢查邏輯與來源可信度...', 'active');
+                    break;
+
+                case 'critic_complete':
+                    completeLastActive();
+                    const status = data.status || 'PASS';
+                    const statusIcon = status === 'PASS' ? '✓' : status === 'WARN' ? '⚠' : '✗';
+                    const statusClass = status === 'PASS' ? 'complete' : status === 'WARN' ? 'warning' : 'error';
+                    const statusText = status === 'PASS' ? '審查通過' : status === 'WARN' ? '審查通過（有警告）' : '需要修改';
+                    addLogEntry(statusIcon, statusText, statusClass);
+                    break;
+
+                case 'writer_planning':
+                    addLogEntry('○', '正在規劃報告結構...', 'active');
+                    break;
+
+                case 'writer_composing':
+                    completeLastActive('✓');
+                    addLogEntry('○', '正在撰寫最終報告...', 'active');
+                    break;
+
+                case 'writer_complete':
+                    completeLastActive('✓');
+                    addLogEntry('✓', '報告生成完成！', 'complete');
+                    // Change header indicator to done
+                    const header = container.querySelector('.progress-header');
+                    if (header) {
+                        header.style.setProperty('--blink-color', '#22c55e');
                     }
-                }
-            } else if (stage === 'critic_complete') {
-                const stageEl = document.getElementById('stage-critic');
-                if (stageEl) {
-                    stageEl.classList.remove('active');
-                    stageEl.classList.add('complete');
-                    const emoji = data.status === 'PASS' ? '✅' : data.status === 'WARN' ? '⚠️' : '❌';
-                    const statusEl = stageEl.querySelector('.status');
-                    if (statusEl) statusEl.textContent = `${emoji} ${data.status}`;
-                }
-                // Update details with user_message if available
-                if (details && userMessage) {
-                    details.textContent = userMessage;
-                    if (progress !== null) details.textContent += ` (${progress}%)`;
-                }
-            } else if (stage === 'writer_planning') {
-                // Phase 3: Writer planning stage
-                const stageEl = document.getElementById('stage-writer');
-                if (stageEl) {
-                    stageEl.classList.add('active');
-                    const message = userMessage || 'Planning report structure...';
-                    if (details) {
-                        details.textContent = message;
-                        if (progress !== null) details.textContent += ` (${progress}%)`;
-                    }
-                }
-            } else if (stage === 'writer_composing') {
-                const stageEl = document.getElementById('stage-writer');
-                if (stageEl) {
-                    stageEl.classList.add('active');
-                    // Use user_message if available, otherwise fallback to English
-                    const message = userMessage || 'Composing final report...';
-                    if (details) {
-                        details.textContent = message;
-                        if (progress !== null) details.textContent += ` (${progress}%)`;
-                    }
-                }
-            } else if (stage === 'writer_complete') {
-                const stageEl = document.getElementById('stage-writer');
-                if (stageEl) {
-                    stageEl.classList.remove('active');
-                    stageEl.classList.add('complete');
-                    const statusEl = stageEl.querySelector('.status');
-                    if (statusEl) statusEl.textContent = '✓ Done';
-                    // Use user_message if available, otherwise fallback to English
-                    const message = userMessage || '✅ Research complete!';
-                    if (details) details.textContent = message;
-                }
+                    break;
+
+                default:
+                    // Unknown stage - just log it
+                    console.log('[Progress] Unknown stage:', stage);
+                    break;
             }
         }
 
@@ -1239,6 +1270,236 @@
             });
         }
 
+        // === Progressive Rendering Functions ===
+
+        // Render skeleton placeholder cards
+        function renderSkeletonCards(count = 5) {
+            const listView = document.getElementById('listView');
+            if (!listView) return;
+
+            listView.innerHTML = '';
+            for (let i = 0; i < count; i++) {
+                const skeleton = document.createElement('div');
+                skeleton.className = 'skeleton-card';
+                skeleton.innerHTML = `
+                    <div class="skeleton-line skeleton-title"></div>
+                    <div class="skeleton-line skeleton-meta"></div>
+                    <div class="skeleton-line skeleton-excerpt"></div>
+                    <div class="skeleton-line skeleton-excerpt"></div>
+                `;
+                listView.appendChild(skeleton);
+            }
+            console.log(`[Progressive] Rendered ${count} skeleton cards`);
+        }
+
+        // Render skeleton + typing indicator for AI summary area
+        function renderSummarySkeleton() {
+            const aiSummarySection = document.getElementById('aiSummarySection');
+            const aiSummaryContent = document.getElementById('aiSummaryContent');
+            if (!aiSummarySection || !aiSummaryContent) return;
+
+            aiSummaryContent.innerHTML = `
+                <div class="skeleton-summary">
+                    <div class="skeleton-line skeleton-summary-header"></div>
+                    <div class="skeleton-line skeleton-summary-line"></div>
+                    <div class="skeleton-line skeleton-summary-line"></div>
+                    <div class="skeleton-line skeleton-summary-line"></div>
+                </div>
+                <div class="ai-typing-indicator" id="progressIndicator">
+                    <div class="ai-typing-dot"></div>
+                    <div class="ai-typing-dot"></div>
+                    <div class="ai-typing-dot"></div>
+                    <span id="progressMessage" style="margin-left: 8px; color: #666;">正在處理您的查詢...</span>
+                </div>
+            `;
+            aiSummarySection.style.display = 'block';
+            console.log('[Progressive] Rendered summary skeleton');
+        }
+
+        // Update progress indicator message
+        function updateProgressMessage(message) {
+            const progressMsg = document.getElementById('progressMessage');
+            if (progressMsg) {
+                progressMsg.textContent = message;
+                console.log('[Progressive] Updated progress message:', message);
+            }
+        }
+
+        // Create a single article card DOM element
+        function createArticleCard(article, index) {
+            const schema = article.schema_object || article;
+            let rawScore = article.score || article.metadata?.score || 0;
+
+            const relevancePercent = rawScore > 1 ? Math.round(rawScore) : Math.round(rawScore * 100);
+            const normalizedScore = rawScore > 1 ? rawScore / 100 : rawScore;
+            const stars = Math.min(5, Math.max(1, Math.round(normalizedScore * 5)));
+            const starsHTML = '\u2605'.repeat(stars) + '\u2606'.repeat(5 - stars);
+
+            const title = schema.headline || schema.name || '無標題';
+
+            let publisher = '未知來源';
+            if (schema.publisher?.name) {
+                publisher = schema.publisher.name;
+            } else if (schema.publisher && typeof schema.publisher === 'string') {
+                publisher = schema.publisher;
+            } else if (article.site) {
+                publisher = article.site.charAt(0).toUpperCase() + article.site.slice(1);
+            } else if (schema.author) {
+                if (Array.isArray(schema.author) && schema.author.length > 0) {
+                    publisher = schema.author[0].name || schema.author[0];
+                } else if (typeof schema.author === 'string') {
+                    publisher = schema.author;
+                }
+            }
+
+            const datePublished = schema.datePublished || new Date().toISOString();
+            const date = new Date(datePublished).toISOString().split('T')[0];
+            const description = schema.description || article.description || '';
+            const url = schema.url || '#';
+            const isPinned = pinnedNewsCards.some(p => p.url === url);
+
+            const card = document.createElement('div');
+            card.className = 'news-card progressive-fade-in';
+            card.setAttribute('data-url', url);
+            card.setAttribute('data-title', title);
+            card.setAttribute('data-description', description);
+
+            card.innerHTML = `
+                <div class="news-title">${escapeHTML(title)}</div>
+                <div class="news-meta">
+                    <span>\uD83C\uDFE2 ${escapeHTML(publisher)}</span>
+                    <span>\uD83D\uDCC5 ${date}</span>
+                    <div class="relevance">
+                        <span class="stars">${starsHTML}</span>
+                        <span>相關度 ${relevancePercent}%</span>
+                    </div>
+                </div>
+                ${description ? `<div class="news-excerpt">${escapeHTML(description)}</div>` : ''}
+                <div class="news-card-footer">
+                    <a href="${escapeHTML(url)}" class="btn-read-more" target="_blank">閱讀全文 \u2192</a>
+                    <button class="news-card-pin ${isPinned ? 'pinned' : ''}" title="${isPinned ? '取消釘選' : '釘選新聞'}">\uD83D\uDCCC</button>
+                </div>
+            `;
+
+            return { card, date, title, publisher, description, url, starsHTML, relevancePercent, isPinned };
+        }
+
+        // Progressively render articles replacing skeletons
+        function renderArticlesProgressive(articles) {
+            const listView = document.getElementById('listView');
+            const timelineView = document.getElementById('timelineView');
+            if (!listView) return;
+
+            // Clear skeleton cards
+            listView.innerHTML = '';
+            if (timelineView) timelineView.innerHTML = '';
+
+            if (!articles || articles.length === 0) {
+                listView.innerHTML = '<div class="news-card"><div class="news-title">沒有找到相關文章</div></div>';
+                console.warn('[Progressive] No articles to render');
+                return;
+            }
+
+            // Sort by score
+            articles.sort((a, b) => {
+                const scoreA = a.score || a.metadata?.score || 0;
+                const scoreB = b.score || b.metadata?.score || 0;
+                return scoreB - scoreA;
+            });
+
+            const articlesByDate = {};
+
+            articles.forEach((article, index) => {
+                const { card, date, title, publisher, description, url, starsHTML, relevancePercent, isPinned } = createArticleCard(article, index);
+                listView.appendChild(card);
+
+                // Group for timeline
+                if (!articlesByDate[date]) {
+                    articlesByDate[date] = [];
+                }
+                articlesByDate[date].push({ title, publisher, description, url, starsHTML, relevancePercent, isPinned });
+            });
+
+            // Populate timeline view
+            if (timelineView) {
+                const sortedDates = Object.keys(articlesByDate).sort().reverse();
+                sortedDates.forEach(date => {
+                    const dateArticles = articlesByDate[date];
+                    const timelineHTML = `
+                        <div class="timeline-date">
+                            <div class="timeline-dot"></div>
+                            <div class="date-label">${date}</div>
+                            ${dateArticles.map(art => `
+                                <div class="news-card progressive-fade-in" data-url="${escapeHTML(art.url)}" data-title="${escapeHTML(art.title)}">
+                                    <div class="news-title">${escapeHTML(art.title)}</div>
+                                    <div class="news-meta">
+                                        <span>\uD83C\uDFE2 ${escapeHTML(art.publisher)}</span>
+                                        <div class="relevance">
+                                            <span class="stars">${art.starsHTML}</span>
+                                            <span>相關度 ${art.relevancePercent}%</span>
+                                        </div>
+                                    </div>
+                                    ${art.description ? `<div class="news-excerpt">${escapeHTML(art.description)}</div>` : ''}
+                                    <div class="news-card-footer">
+                                        <a href="${escapeHTML(art.url)}" class="btn-read-more" target="_blank">閱讀全文 \u2192</a>
+                                        <button class="news-card-pin ${art.isPinned ? 'pinned' : ''}" title="${art.isPinned ? '取消釘選' : '釘選新聞'}">\uD83D\uDCCC</button>
+                                    </div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    `;
+                    timelineView.innerHTML += timelineHTML;
+                });
+            }
+
+            console.log(`[Progressive] Rendered ${articles.length} articles`);
+        }
+
+        // Progressively render AI answer (supports initial + enriched updates)
+        function renderAnswerProgressive(answerData, articleCount) {
+            const aiSummarySection = document.getElementById('aiSummarySection');
+            const aiSummaryContent = document.getElementById('aiSummaryContent');
+            if (!aiSummarySection || !aiSummaryContent) return;
+
+            if (!answerData || !answerData.answer) {
+                aiSummarySection.style.display = 'none';
+                return;
+            }
+
+            const formattedAnswer = convertMarkdownToHtml(answerData.answer);
+            const isUpdate = aiSummaryContent.querySelector('.summary-content') !== null &&
+                             !aiSummaryContent.querySelector('.skeleton-summary');
+
+            aiSummaryContent.innerHTML = `
+                <div class="summary-section ${isUpdate ? 'content-updated' : 'progressive-fade-in'}">
+                    <div class="summary-content">${formattedAnswer}</div>
+                </div>
+                <div class="summary-footer">
+                    <div class="source-info">\u26A0\uFE0F 資料來源：基於 ${articleCount} 則報導生成</div>
+                    <div class="feedback-buttons">
+                        <button class="btn-feedback" data-rating="positive">\uD83D\uDC4D 有幫助</button>
+                        <button class="btn-feedback" data-rating="negative">\uD83D\uDC4E 不準確</button>
+                    </div>
+                </div>
+            `;
+            aiSummarySection.style.display = 'block';
+
+            console.log(`[Progressive] Rendered AI answer (update: ${isUpdate})`);
+        }
+
+        // Clear all loading states
+        function clearLoadingStates() {
+            const loadingState = document.getElementById('loadingState');
+            if (loadingState) loadingState.classList.remove('active');
+
+            // Remove any remaining skeleton elements
+            document.querySelectorAll('.skeleton-card, .skeleton-summary, .ai-typing-indicator').forEach(el => el.remove());
+
+            console.log('[Progressive] Cleared all loading states');
+        }
+
+        // === End Progressive Rendering Functions ===
+
         // Helper function to escape HTML
         function escapeHTML(str) {
             if (!str) return '';
@@ -1382,9 +1643,13 @@
                 return;
             }
 
-            // Search mode - unified SSE flow (single request for articles + summary + AI answer)
+            // Search mode - unified SSE flow with progressive rendering
+            // Phase 3: Immediately show skeleton placeholders
             loadingState.classList.add('active');
-            resultsSection.classList.remove('active');
+            resultsSection.classList.add('active');
+            renderSkeletonCards(5);
+            renderSummarySkeleton();
+            resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
             try {
                 const prevQueriesForThisTurn = [...conversationHistory];
@@ -1405,8 +1670,34 @@
                     body.prev = JSON.stringify(prevQueriesForThisTurn);
                 }
 
+                // Phase 4: Progressive rendering callbacks
+                const callbacks = {
+                    onProgress: (stage, message, percent) => {
+                        if (mySearchGeneration !== searchGenerationId) return;
+                        updateProgressMessage(message);
+                    },
+                    onArticles: (articles) => {
+                        if (mySearchGeneration !== searchGenerationId) return;
+                        console.log('[Progressive] Articles received:', articles.length);
+                        renderArticlesProgressive(articles);
+                        loadingState.classList.remove('active');
+                    },
+                    onAnswer: (answerData, articleCount) => {
+                        if (mySearchGeneration !== searchGenerationId) return;
+                        if (answerData?.answer) {
+                            console.log('[Progressive] Answer received');
+                            renderAnswerProgressive(answerData, articleCount);
+                        }
+                    },
+                    onComplete: () => {
+                        if (mySearchGeneration !== searchGenerationId) return;
+                        console.log('[Progressive] Stream complete');
+                        clearLoadingStates();
+                    }
+                };
+
                 const combinedData = await handlePostStreamingRequest(
-                    '/ask', body, query, currentSearchAbortController.signal
+                    '/ask', body, query, currentSearchAbortController.signal, callbacks
                 );
 
                 // Stale check
@@ -1417,8 +1708,8 @@
 
                 console.log('Unified Combined Data:', combinedData);
 
-                // Parse and populate the UI
-                populateResultsFromAPI(combinedData, query);
+                // Note: UI is already populated progressively via callbacks
+                // populateResultsFromAPI is no longer needed for Search mode
 
                 // Store complete session data for this query
                 sessionHistory.push({
@@ -1447,19 +1738,21 @@
                 renderConversationHistory();
                 saveCurrentSession();
 
-                loadingState.classList.remove('active');
                 setProcessingState(false);
-                resultsSection.classList.add('active');
-                resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                // resultsSection already active from skeleton phase
             } catch (error) {
                 setProcessingState(false);
+                clearLoadingStates();
                 if (error.name === 'AbortError' || mySearchGeneration !== searchGenerationId) {
                     console.log('[Search] Search cancelled or superseded');
                     return;
                 }
                 console.error('Search failed:', error);
-                loadingState.classList.remove('active');
-                alert('搜尋失敗，請稍後再試。Error: ' + error.message);
+                // Show error in list view instead of alert for better UX
+                const listView = document.getElementById('listView');
+                if (listView) {
+                    listView.innerHTML = `<div class="news-card"><div class="news-title">搜尋失敗</div><div class="news-excerpt">${escapeHTML(error.message)}</div></div>`;
+                }
             }
         }
 
@@ -1693,13 +1986,84 @@
             });
         }
 
+        /**
+         * Generate a citation reference list to append at the end of the report
+         * @param {string[]} sources - Array of source URLs
+         * @returns {string} HTML string with the reference list
+         */
+        function generateCitationReferenceList(sources) {
+            if (!sources || sources.length === 0) {
+                return '';
+            }
+
+            // Filter out empty URLs and count valid references
+            const validSources = sources.map((url, index) => ({
+                index: index + 1,
+                url: url || ''
+            })).filter(item => item.url && item.url.trim() !== '');
+
+            if (validSources.length === 0) {
+                return '';
+            }
+
+            let html = '<div class="citation-reference-section">';
+            html += '<h3 class="citation-reference-title">參考資料來源</h3>';
+            html += '<div class="citation-reference-list">';
+
+            validSources.forEach(item => {
+                const url = item.url;
+                // Determine the type of source
+                let sourceType = '新聞';
+                let displayUrl = url;
+                let isClickable = true;
+
+                if (url.startsWith('urn:llm:knowledge:')) {
+                    sourceType = 'AI 背景知識';
+                    displayUrl = url.replace('urn:llm:knowledge:', '');
+                    isClickable = false;
+                } else if (url.startsWith('private://')) {
+                    sourceType = '私人文件';
+                    displayUrl = url.replace('private://', '');
+                    isClickable = false;
+                } else {
+                    // Try to extract domain for display
+                    try {
+                        const urlObj = new URL(url);
+                        displayUrl = urlObj.hostname.replace('www.', '');
+                    } catch (e) {
+                        displayUrl = url.length > 50 ? url.substring(0, 50) + '...' : url;
+                    }
+                }
+
+                if (isClickable) {
+                    html += `<div class="citation-reference-item">
+                        <span class="citation-reference-number">[${item.index}]</span>
+                        <a href="${escapeHTML(url)}" target="_blank" class="citation-reference-link" title="${escapeHTML(url)}">
+                            <span class="citation-reference-domain">${escapeHTML(displayUrl)}</span>
+                        </a>
+                    </div>`;
+                } else {
+                    html += `<div class="citation-reference-item">
+                        <span class="citation-reference-number">[${item.index}]</span>
+                        <span class="citation-reference-text" title="${escapeHTML(url)}">
+                            <span class="citation-reference-type">${sourceType}</span>
+                            <span class="citation-reference-domain">${escapeHTML(displayUrl)}</span>
+                        </span>
+                    </div>`;
+                }
+            });
+
+            html += '</div></div>';
+            return html;
+        }
+
         function displayDeepResearchResults(report, metadata, savedQuery) {
             console.log('[Deep Research] Displaying results');
             console.log('[Deep Research] Metadata received:', metadata);
             console.log('[Deep Research] Sources array:', metadata?.sources);
             console.log('[Deep Research] Sources count:', metadata?.sources?.length);
 
-            // Store report for free conversation follow-up
+            // Store report for free conversation follow-up (include argument graph for session restore)
             currentResearchReport = {
                 report: report || '',
                 sources: metadata?.sources || [],
@@ -1728,8 +2092,15 @@
             // Display Knowledge Graph if available (Phase KG)
             displayKnowledgeGraph(schemaObj?.knowledge_graph || metadata?.knowledge_graph);
 
-            // Clear and display report in listView (MUST be before displayReasoningChain!)
-            listView.innerHTML = '';
+            // Get research view container
+            const researchViewEl = document.getElementById('researchView');
+            if (!researchViewEl) {
+                console.error('[Deep Research] researchView element not found!');
+                return;
+            }
+
+            // Clear research view
+            researchViewEl.innerHTML = '';
 
             // Create report container
             const reportContainer = document.createElement('div');
@@ -1747,12 +2118,27 @@
                 console.warn('[Deep Research] No sources available for citation links');
             }
 
-            reportContainer.innerHTML = reportHTML;
-            listView.appendChild(reportContainer);
+            // Apply collapsible sections to h2 headings
+            reportHTML = addCollapsibleSections(reportHTML);
 
-            // Display Reasoning Chain if available (Phase 4) - AFTER report is added
-            displayReasoningChain(schemaObj?.argument_graph || metadata?.argument_graph,
-                                 schemaObj?.reasoning_chain_analysis || metadata?.reasoning_chain_analysis);
+            // Append citation reference list at the end of report
+            if (metadata && metadata.sources && metadata.sources.length > 0) {
+                reportHTML += generateCitationReferenceList(metadata.sources);
+            }
+
+            reportContainer.innerHTML = reportHTML;
+            researchViewEl.appendChild(reportContainer);
+
+            // Bind collapsible section handlers
+            bindCollapsibleHandlers(researchViewEl);
+
+            // Add toggle-all toolbar
+            addToggleAllToolbar(reportContainer);
+
+            // Display Reasoning Chain in research view (Phase 4)
+            const argGraph = schemaObj?.argument_graph || metadata?.argument_graph;
+            const chainAnalysis = schemaObj?.reasoning_chain_analysis || metadata?.reasoning_chain_analysis;
+            displayReasoningChainInContainer(argGraph, chainAnalysis, researchViewEl);
 
             // Remove progress indicator
             const progressContainer = document.getElementById('reasoning-progress');
@@ -1760,7 +2146,209 @@
                 progressContainer.remove();
             }
 
-            console.log('[Deep Research] Results displayed successfully');
+            // Auto-switch to research tab
+            const researchTab = document.querySelector('.tab[data-view="research"]');
+            if (researchTab) {
+                researchTab.click();
+            }
+
+            // Move search input to bottom of chat area (like Free Conversation mode)
+            // This allows users to continue asking follow-up questions
+            const chatInputContainer = document.getElementById('chatInputContainer');
+            const searchContainer = document.getElementById('searchContainer');
+            if (chatInputContainer && searchContainer) {
+                chatInputContainer.appendChild(searchContainer);
+                chatInputContainer.style.display = 'block';
+                // Update button text and placeholder for follow-up mode
+                const btnSearch = document.getElementById('btnSearch');
+                const searchInput = document.getElementById('searchInput');
+                if (btnSearch) btnSearch.textContent = '發送';
+                if (searchInput) searchInput.placeholder = '基於報告繼續提問...';
+                console.log('[Deep Research] Search input moved to bottom for follow-up questions');
+            }
+
+            console.log('[Deep Research] Results displayed successfully in research view');
+
+            // 立即保存，防止關閉瀏覽器/刷新時丟失報告
+            saveCurrentSession();
+        }
+
+        /**
+         * Add collapsible sections to h2 headings
+         */
+        function addCollapsibleSections(html) {
+            // Wrap h2 and following content into collapsible sections
+            // This is a simplified approach that wraps each h2 with a section
+            const tempDiv = document.createElement('div');
+            tempDiv.innerHTML = html;
+
+            const h2Elements = tempDiv.querySelectorAll('h2');
+            h2Elements.forEach((h2, index) => {
+                // Create content wrapper first to check if content is meaningful
+                const content = document.createElement('div');
+                content.className = 'research-section-content';
+
+                // Move following siblings until next h2 or end
+                let sibling = h2.nextElementSibling;
+                while (sibling && sibling.tagName !== 'H2') {
+                    const next = sibling.nextElementSibling;
+                    content.appendChild(sibling);
+                    sibling = next;
+                }
+
+                // Check if this is an empty "Finding X" section with only "完整報告" text
+                const titleText = h2.textContent.trim();
+                const contentText = content.textContent.trim();
+                const isFindingSection = /^Finding\s*\d+/i.test(titleText);
+                const isEmptyContent = contentText === '完整報告' || contentText === '' || contentText.length < 20;
+
+                if (isFindingSection && isEmptyContent) {
+                    // Skip this empty section - just remove the h2 and move on
+                    h2.remove();
+                    return;
+                }
+
+                // Create section wrapper
+                const section = document.createElement('div');
+                section.className = 'research-section';
+                section.setAttribute('data-section-id', `section-${index}`);
+
+                // Create header
+                const header = document.createElement('div');
+                header.className = 'research-section-header';
+                header.innerHTML = `
+                    <span class="collapse-icon">▼</span>
+                    <span class="section-title">${h2.innerHTML}</span>
+                `;
+
+                section.appendChild(header);
+                section.appendChild(content);
+
+                // Replace h2 with section
+                h2.parentNode.replaceChild(section, h2);
+            });
+
+            return tempDiv.innerHTML;
+        }
+
+        /**
+         * Bind click handlers for collapsible sections
+         */
+        function bindCollapsibleHandlers(container) {
+            container.querySelectorAll('.research-section-header').forEach(header => {
+                header.addEventListener('click', () => {
+                    const section = header.closest('.research-section');
+                    const icon = header.querySelector('.collapse-icon');
+                    const content = section.querySelector('.research-section-content');
+
+                    section.classList.toggle('collapsed');
+                    if (section.classList.contains('collapsed')) {
+                        icon.textContent = '▶';
+                        content.style.maxHeight = '0';
+                        content.style.overflow = 'hidden';
+                    } else {
+                        icon.textContent = '▼';
+                        content.style.maxHeight = '';
+                        content.style.overflow = '';
+                    }
+                });
+            });
+        }
+
+        /**
+         * Add toggle-all toolbar before the report content
+         */
+        function addToggleAllToolbar(reportContainer) {
+            const toolbar = document.createElement('div');
+            toolbar.className = 'research-toggle-all-toolbar';
+            toolbar.innerHTML = `
+                <button class="btn-toggle-all" data-action="expand">全部展開</button>
+                <button class="btn-toggle-all" data-action="collapse">全部折疊</button>
+            `;
+
+            toolbar.querySelectorAll('.btn-toggle-all').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const collapse = btn.dataset.action === 'collapse';
+                    reportContainer.querySelectorAll('.research-section').forEach(section => {
+                        const icon = section.querySelector('.collapse-icon');
+                        const content = section.querySelector('.research-section-content');
+                        if (collapse) {
+                            section.classList.add('collapsed');
+                            if (icon) icon.textContent = '▶';
+                            if (content) { content.style.maxHeight = '0'; content.style.overflow = 'hidden'; }
+                        } else {
+                            section.classList.remove('collapsed');
+                            if (icon) icon.textContent = '▼';
+                            if (content) { content.style.maxHeight = ''; content.style.overflow = ''; }
+                        }
+                    });
+                });
+            });
+
+            reportContainer.insertBefore(toolbar, reportContainer.firstChild);
+        }
+
+        /**
+         * Display reasoning chain in a specific container (for research view)
+         */
+        function displayReasoningChainInContainer(argumentGraph, chainAnalysis, targetContainer) {
+            if (!argumentGraph || argumentGraph.length === 0) {
+                console.log('[Reasoning Chain] No argument graph data for container');
+                return;
+            }
+
+            // Store for sharing/verification
+            currentArgumentGraph = argumentGraph;
+            currentChainAnalysis = chainAnalysis;
+
+            console.log('[Reasoning Chain] Rendering', argumentGraph.length, 'nodes in container');
+
+            // Build node map
+            const nodeMap = {};
+            argumentGraph.forEach(node => {
+                nodeMap[node.node_id] = node;
+            });
+
+            // Get topological order
+            let orderedNodes = argumentGraph;
+            if (chainAnalysis?.topological_order && chainAnalysis.topological_order.length > 0) {
+                orderedNodes = chainAnalysis.topological_order
+                    .map(id => nodeMap[id])
+                    .filter(node => node !== undefined);
+            }
+
+            // Create collapsible container
+            const container = createReasoningChainContainer(orderedNodes, chainAnalysis);
+
+            // Render logic inconsistency warning
+            if (chainAnalysis?.logic_inconsistencies > 0) {
+                const warning = createLogicInconsistencyWarning(chainAnalysis.logic_inconsistencies);
+                container.querySelector('.reasoning-chain-content').prepend(warning);
+            }
+
+            // Render cycle warning
+            if (chainAnalysis?.has_cycles) {
+                const cycleAlert = createCycleWarning(chainAnalysis.cycle_details);
+                container.querySelector('.reasoning-chain-content').prepend(cycleAlert);
+            }
+
+            // Render critical nodes alert
+            if (chainAnalysis?.critical_nodes?.length > 0) {
+                const alert = createCriticalNodesAlert(chainAnalysis.critical_nodes, nodeMap);
+                container.querySelector('.reasoning-chain-content').prepend(alert);
+            }
+
+            // Render each node
+            orderedNodes.forEach((node, i) => {
+                const nodeEl = renderArgumentNode(node, i + 1, nodeMap, chainAnalysis);
+                container.querySelector('.reasoning-chain-content').appendChild(nodeEl);
+            });
+
+            // Setup hover interactions
+            setupHoverInteractions(container, nodeMap);
+
+            // Insert at beginning of target container
+            targetContainer.insertBefore(container, targetContainer.firstChild);
         }
 
         // Knowledge Graph Display Functions (Phase KG Enhanced with D3.js)
@@ -1822,8 +2410,14 @@
             // Store KG data globally
             currentKGData = kg;
 
-            // Show container
-            container.style.display = 'block';
+            // Respect user's KG hidden preference
+            if (container.dataset.userHidden === 'true') {
+                const restoreBar = document.getElementById('kgRestoreBar');
+                if (restoreBar) restoreBar.style.display = 'block';
+                // Still render data so it's ready when user restores
+            } else {
+                container.style.display = 'block';
+            }
 
             // Update metadata
             const entityCount = kg.entities?.length || 0;
@@ -2141,6 +2735,10 @@
                 return;
             }
 
+            // Store for sharing/verification
+            currentArgumentGraph = argumentGraph;
+            currentChainAnalysis = chainAnalysis;
+
             console.log('[Reasoning Chain] Rendering', argumentGraph.length, 'nodes');
 
             // Build node map
@@ -2219,14 +2817,19 @@
             header.style.cssText = 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; cursor: pointer;';
             header.innerHTML = `
                 <div style="font-size: 18px; font-weight: 700; color: #1a1a1a;">
-                    🧠 推論鏈追蹤
+                    🧠 推論過程
                     <span style="color: #666; font-size: 14px; font-weight: 400;">
                         (${nodes.length} 個推論步驟${chainAnalysis?.max_depth !== undefined ? `, 深度 ${chainAnalysis.max_depth}` : ''})
                     </span>
                 </div>
-                <button class="btn-toggle-chain" style="background: white; border: 1px solid #ddd; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 13px;">
-                    展開
-                </button>
+                <div style="display: flex; gap: 8px; align-items: center;">
+                    <button class="btn-share-reasoning" style="background: white; border: 1px solid #ddd; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 13px; transition: all 0.2s;">
+                        🔗 給其他 AI 驗證
+                    </button>
+                    <button class="btn-toggle-chain" style="background: white; border: 1px solid #ddd; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 13px;">
+                        展開
+                    </button>
+                </div>
             `;
 
             const content = document.createElement('div');
@@ -2235,10 +2838,20 @@
 
             // Toggle functionality
             const toggleBtn = header.querySelector('.btn-toggle-chain');
-            header.addEventListener('click', () => {
+            header.addEventListener('click', (e) => {
+                // Don't toggle if clicking the share button
+                if (e.target.closest('.btn-share-reasoning')) return;
                 const isHidden = content.style.display === 'none';
                 content.style.display = isHidden ? 'block' : 'none';
                 toggleBtn.textContent = isHidden ? '收起' : '展開';
+            });
+
+            // Share reasoning button
+            const shareBtn = header.querySelector('.btn-share-reasoning');
+            shareBtn.addEventListener('click', (e) => {
+                e.stopPropagation(); // Don't trigger toggle
+                shareContentOverride = formatReasoningForVerification();
+                modalOverlay.classList.add('active');
             });
 
             container.appendChild(header);
@@ -2464,6 +3077,78 @@
         function inferScore(confidence) {
             const mapping = { 'high': 8.0, 'medium': 5.0, 'low': 2.0 };
             return mapping[confidence] || 5.0;
+        }
+
+        /**
+         * Format reasoning chain for AI verification
+         */
+        function formatReasoningForVerification() {
+            if (!currentArgumentGraph || currentArgumentGraph.length === 0) {
+                return '無推論鏈資料可供驗證。';
+            }
+
+            const query = currentResearchReport?.query || conversationHistory[0] || '(未知查詢)';
+            let content = '';
+
+            // Opening prompt
+            content += `我請其他 Agent 做「${query}」的研究，他的推論過程如下，請幫我檢查是否合理：\n\n`;
+            content += `${'='.repeat(50)}\n\n`;
+
+            // Reasoning steps
+            content += `【推論步驟】（共 ${currentArgumentGraph.length} 步）\n\n`;
+
+            currentArgumentGraph.forEach((node, index) => {
+                const typeLabel = {deduction: '演繹', induction: '歸納', abduction: '溯因'}[node.reasoning_type] || node.reasoning_type;
+                const score = node.confidence_score ?? inferScore(node.confidence);
+
+                content += `步驟 ${index + 1}：${typeLabel}\n`;
+                content += `主張：「${node.claim}」\n`;
+                content += `信心度：${score.toFixed(1)}/10\n`;
+
+                if (node.evidence_ids && node.evidence_ids.length > 0) {
+                    content += `證據來源：[${node.evidence_ids.join('], [')}]\n`;
+                } else {
+                    content += `證據來源：無直接引用\n`;
+                }
+
+                if (node.depends_on && node.depends_on.length > 0) {
+                    const depLabels = node.depends_on.map(depId => {
+                        const depIndex = currentArgumentGraph.findIndex(n => n.node_id === depId);
+                        return depIndex >= 0 ? `步驟 ${depIndex + 1}` : depId;
+                    });
+                    content += `依賴：${depLabels.join(', ')}\n`;
+                }
+
+                if (node.logic_warnings && node.logic_warnings.length > 0) {
+                    content += `警告：${node.logic_warnings.join('; ')}\n`;
+                }
+
+                content += `\n`;
+            });
+
+            // Analysis summary
+            if (currentChainAnalysis) {
+                content += `${'='.repeat(50)}\n\n`;
+                content += `【分析摘要】\n`;
+                content += `- 推論步驟數：${currentArgumentGraph.length}\n`;
+                if (currentChainAnalysis.max_depth !== undefined) {
+                    content += `- 推論深度：${currentChainAnalysis.max_depth}\n`;
+                }
+                if (currentChainAnalysis.logic_inconsistencies > 0) {
+                    content += `- 邏輯不一致數：${currentChainAnalysis.logic_inconsistencies}\n`;
+                }
+                if (currentChainAnalysis.has_cycles) {
+                    content += `- 存在循環依賴\n`;
+                }
+                if (currentChainAnalysis.critical_nodes?.length > 0) {
+                    content += `- 關鍵薄弱環節：${currentChainAnalysis.critical_nodes.length} 個\n`;
+                }
+            }
+
+            content += `\n${'='.repeat(50)}\n`;
+            content += `\n請檢查上述推論鏈的邏輯是否正確、證據是否充分、結論是否合理。`;
+
+            return content;
         }
 
         // KG Toggle Button Handler (Bug #17: operate on kgContentWrapper, not individual elements)
@@ -3021,7 +3706,8 @@
                     <div class="question-block" data-question-id="${question.question_id}">
                         <div class="question-label">
                             <span class="question-icon">${icon}</span>
-                            <span class="question-text">${question.question}${requiredMark}</span>
+                            <span class="question-text">${escapeHTML(question.question)}${requiredMark}</span>
+                            <span class="multi-select-hint">(可多選)</span>
                         </div>
                         <div class="options-group">
                 `;
@@ -3063,25 +3749,28 @@
                 contentHTML += '</div></div>';
             });
 
-            // Global extra focus section (Bug #4: 自由聚焦選項)
+            // Global extra focus section (Bug #4: 自由聚焦選項) - redesigned as inline input + confirm
             contentHTML += `
                 <div class="clarification-extra-section" style="margin-top: 16px; padding-top: 12px; border-top: 1px solid #e0e0e0;">
-                    <div class="extra-focus-label" style="font-size: 0.9em; color: #555; margin-bottom: 6px;">
-                        有沒有其他你想更具體聚焦的內容？
+                    <div style="font-size: 0.9em; color: #555; margin-bottom: 6px;">
+                        或直接輸入您的研究重點：
                     </div>
-                    <input type="text" class="clarification-extra-focus"
-                           placeholder="例如：特定事件、人物、時間段..."
-                           style="width: 100%; padding: 8px 12px; border: 1px solid #ddd; border-radius: 8px; font-size: 0.9em; box-sizing: border-box;">
+                    <div class="custom-input-group" style="display: flex; gap: 6px; align-items: center;">
+                        <input type="text" class="clarification-extra-focus"
+                               placeholder="例如：特定事件、人物、時間段..."
+                               style="flex: 1; padding: 6px 10px; border: 1px solid #ddd; border-radius: 16px; font-size: 0.9em;">
+                        <button class="option-chip free-start-confirm"
+                                style="padding: 6px 12px; background: #e0e0e0;">
+                            開始研究
+                        </button>
+                    </div>
                 </div>
             `;
 
-            // Submit buttons: skip + submit
+            // Submit button: full width (skip button removed)
             contentHTML += `
-                <div class="clarification-actions" style="display: flex; gap: 8px; margin-top: 12px;">
-                    <button class="skip-clarification" style="flex: 1; padding: 10px; border: 1px solid #ddd; border-radius: 8px; background: #f5f5f5; cursor: pointer; font-size: 0.9em;">
-                        沒有，直接開始研究
-                    </button>
-                    <button class="submit-clarification" disabled style="flex: 1;">
+                <div class="clarification-actions" style="margin-top: 12px;">
+                    <button class="submit-clarification" disabled style="width: 100%;">
                         ${clarificationData.submit_label || '開始搜尋'}
                     </button>
                 </div>
@@ -3102,50 +3791,83 @@
         // Attach event listeners for multi-question clarification
         function attachClarificationListeners(container, clarificationData, originalQuery, eventSource) {
             const questions = clarificationData.questions;
-            const selectedAnswers = {}; // {question_id: {label, query_modifier, is_comprehensive}}
+            const selectedAnswers = {}; // {question_id: [{label, query_modifier, is_comprehensive, time_range}]}
 
             // Helper to check if all questions answered and enable submit
             function updateSubmitButton() {
                 const submitBtn = container.querySelector('.submit-clarification');
-                const allAnswered = questions.every(q => selectedAnswers[q.question_id]);
+                const allAnswered = questions.every(q => selectedAnswers[q.question_id] && selectedAnswers[q.question_id].length > 0);
                 submitBtn.disabled = !allAnswered;
                 if (allAnswered) {
                     console.log('[Clarification] All questions answered, submit enabled');
                 }
             }
 
-            // Option chip click handler
+            // Option chip click handler (multi-select: toggle each chip)
             container.querySelectorAll('.option-chip:not(.custom-input-confirm)').forEach(chip => {
                 chip.addEventListener('click', function() {
                     const questionBlock = this.closest('.question-block');
                     const questionId = questionBlock.dataset.questionId;
 
-                    // Toggle selection (single select per question)
-                    questionBlock.querySelectorAll('.option-chip').forEach(c => c.classList.remove('selected'));
-                    this.classList.add('selected');
+                    // Initialize array for this question if needed
+                    if (!selectedAnswers[questionId]) {
+                        selectedAnswers[questionId] = [];
+                    }
 
-                    // Clear custom input when selecting a chip
-                    const customInput = questionBlock.querySelector('.custom-option-input');
-                    if (customInput) customInput.value = '';
+                    // Toggle this chip's selection
+                    const optionId = this.dataset.optionId;
+                    const isCurrentlySelected = this.classList.contains('selected');
 
-                    // Parse time_range from data attribute if present
-                    let timeRange = null;
-                    const timeRangeJson = this.dataset.timeRange;
-                    if (timeRangeJson) {
-                        try {
-                            timeRange = JSON.parse(timeRangeJson);
-                        } catch (e) {
-                            console.warn('[Clarification] Failed to parse time_range:', e);
+                    if (isCurrentlySelected) {
+                        // Deselect: remove from array
+                        this.classList.remove('selected');
+                        selectedAnswers[questionId] = selectedAnswers[questionId].filter(a => a.option_id !== optionId);
+                    } else {
+                        // Select: add to array
+                        this.classList.add('selected');
+
+                        // Parse time_range from data attribute if present
+                        let timeRange = null;
+                        const timeRangeJson = this.dataset.timeRange;
+                        if (timeRangeJson) {
+                            try {
+                                timeRange = JSON.parse(timeRangeJson);
+                            } catch (e) {
+                                console.warn('[Clarification] Failed to parse time_range:', e);
+                            }
+                        }
+
+                        selectedAnswers[questionId].push({
+                            option_id: optionId,
+                            label: this.dataset.label,
+                            query_modifier: this.dataset.queryModifier,
+                            is_comprehensive: this.dataset.isComprehensive === 'true',
+                            time_range: timeRange
+                        });
+
+                        // Mutual exclusion: when comprehensive is clicked, deselect all other options
+                        if (this.dataset.isComprehensive === 'true') {
+                            questionBlock.querySelectorAll('.option-chip:not(.custom-input-confirm)').forEach(otherChip => {
+                                if (otherChip === this) return;
+                                otherChip.classList.remove('selected');
+                            });
+                            // Keep only the comprehensive option selected
+                            selectedAnswers[questionId] = [{
+                                option_id: optionId,
+                                label: this.dataset.label,
+                                query_modifier: this.dataset.queryModifier,
+                                is_comprehensive: true,
+                                time_range: timeRange
+                            }];
                         }
                     }
 
-                    // Store selection with time_range
-                    selectedAnswers[questionId] = {
-                        label: this.dataset.label,
-                        query_modifier: this.dataset.queryModifier,
-                        is_comprehensive: this.dataset.isComprehensive === 'true',
-                        time_range: timeRange  // NEW: structured time range
-                    };
+                    // Clear custom input when selecting chips
+                    const customInput = questionBlock.querySelector('.custom-option-input');
+                    if (customInput) customInput.value = '';
+                    // Remove custom confirm highlight
+                    const confirmBtn = questionBlock.querySelector('.custom-input-confirm');
+                    if (confirmBtn) confirmBtn.classList.remove('selected');
 
                     console.log('[Clarification] Selected:', questionId, selectedAnswers[questionId]);
                     updateSubmitButton();
@@ -3165,18 +3887,19 @@
                         return;
                     }
 
-                    // Deselect all chips
+                    // Deselect all preset chips (custom input replaces chip selections)
                     questionBlock.querySelectorAll('.option-chip:not(.custom-input-confirm)').forEach(c => c.classList.remove('selected'));
 
                     // Highlight confirm button as selected
                     this.classList.add('selected');
 
-                    // Store custom input as the answer
-                    selectedAnswers[questionId] = {
+                    // Store custom input as the only answer for this question
+                    selectedAnswers[questionId] = [{
+                        option_id: '_custom',
                         label: customValue,
                         query_modifier: customValue,
                         is_comprehensive: false
-                    };
+                    }];
 
                     console.log('[Clarification] Custom input:', questionId, selectedAnswers[questionId]);
                     updateSubmitButton();
@@ -3194,12 +3917,12 @@
                 });
             });
 
-            // Skip clarification button handler (Bug #4: 直接開始研究)
-            const skipBtn = container.querySelector('.skip-clarification');
-            if (skipBtn) {
-                skipBtn.addEventListener('click', () => {
-                    const extraFocusInput = container.querySelector('.clarification-extra-focus');
-                    const extraFocus = extraFocusInput ? extraFocusInput.value.trim() : '';
+            // Free start button handler (opens research with extra focus text, skipping selections)
+            const freeStartBtn = container.querySelector('.free-start-confirm');
+            if (freeStartBtn) {
+                freeStartBtn.addEventListener('click', () => {
+                    const extraInput = container.querySelector('.clarification-extra-focus');
+                    const extraFocus = extraInput ? extraInput.value.trim() : '';
                     submitClarification(selectedAnswers, originalQuery, eventSource, questions, extraFocus, true);
                 });
             }
@@ -3249,28 +3972,35 @@
             let userTimeLabel = null;  // NEW: user's label for the time selection
 
             questions.forEach(q => {
-                const answer = selectedAnswers[q.question_id];
-                if (!answer) return;
+                const answers = selectedAnswers[q.question_id];
+                if (!answers || answers.length === 0) return;
 
-                // Check if user chose comprehensive option
-                if (!answer.is_comprehensive) {
-                    allComprehensive = false;
-                }
+                // Check if all selected options are comprehensive
+                answers.forEach(answer => {
+                    if (!answer.is_comprehensive) {
+                        allComprehensive = false;
+                    }
+                });
+
+                // Merge modifiers from multiple selections
+                const modifiers = answers.map(a => a.query_modifier).filter(Boolean);
+                const mergedModifier = modifiers.join('、');
 
                 // Collect modifiers by type
-                if (answer.query_modifier) {
+                if (mergedModifier) {
                     if (q.clarification_type === 'time') {
-                        timeModifier = answer.query_modifier;
-                        // Extract structured time_range if available
-                        if (answer.time_range) {
-                            userTimeRange = answer.time_range;
-                            userTimeLabel = answer.label;
+                        timeModifier = mergedModifier;
+                        // Extract structured time_range from last selected time option
+                        const lastWithTimeRange = [...answers].reverse().find(a => a.time_range);
+                        if (lastWithTimeRange) {
+                            userTimeRange = lastWithTimeRange.time_range;
+                            userTimeLabel = lastWithTimeRange.label;
                             console.log('[Clarification] User selected time range:', userTimeRange, 'label:', userTimeLabel);
                         }
                     } else if (q.clarification_type === 'scope') {
-                        scopeModifier = answer.query_modifier;
+                        scopeModifier = mergedModifier;
                     } else if (q.clarification_type === 'entity') {
-                        entityModifier = answer.query_modifier;
+                        entityModifier = mergedModifier;
                     }
                 }
             });
@@ -3310,7 +4040,7 @@
             const userMessageDiv = document.createElement('div');
             userMessageDiv.className = 'chat-message user';
 
-            const selections = Object.values(selectedAnswers).map(a => a.label);
+            const selections = Object.values(selectedAnswers).flatMap(arr => arr.map(a => a.label));
             if (extraFocus) selections.push(extraFocus);
             if (forceAllComprehensive && selections.length === 0) selections.push('直接開始研究');
             const selectionText = selections.join(' + ');
@@ -3328,6 +4058,7 @@
 
         // View tabs
         const tabs = document.querySelectorAll('.tab');
+        const researchView = document.getElementById('researchView');
         tabs.forEach(tab => {
             tab.addEventListener('click', () => {
                 const view = tab.dataset.view;
@@ -3336,15 +4067,22 @@
                 tabs.forEach(t => t.classList.remove('active'));
                 tab.classList.add('active');
 
-                // Switch views
+                // Switch views (three-way: list / timeline / research)
                 if (view === 'list') {
                     listView.style.display = 'flex';
                     timelineView.classList.remove('active');
+                    if (researchView) researchView.classList.remove('active');
                     summaryToggle.classList.add('active');
-                } else {
+                } else if (view === 'timeline') {
                     listView.style.display = 'none';
                     timelineView.classList.add('active');
-                    summaryToggle.classList.add('active'); // Keep toggle visible in timeline view too
+                    if (researchView) researchView.classList.remove('active');
+                    summaryToggle.classList.add('active');
+                } else if (view === 'research') {
+                    listView.style.display = 'none';
+                    timelineView.classList.remove('active');
+                    if (researchView) researchView.classList.add('active');
+                    summaryToggle.classList.remove('active'); // Hide summary toggle in research view
                 }
             });
         });
@@ -3389,11 +4127,13 @@
 
         btnCloseModal.addEventListener('click', () => {
             modalOverlay.classList.remove('active');
+            shareContentOverride = null; // Clear override when closing
         });
 
         modalOverlay.addEventListener('click', (e) => {
             if (e.target === modalOverlay) {
                 modalOverlay.classList.remove('active');
+                shareContentOverride = null; // Clear override when closing
             }
         });
 
@@ -3478,6 +4218,17 @@
             currentResearchReport = session.researchReport ? { ...session.researchReport } : null;
             if (currentResearchReport) {
                 console.log('[Session] Restored research report:', currentResearchReport.report?.substring(0, 100) + '...');
+
+                // Restore reasoning chain data for sharing
+                currentArgumentGraph = session.researchReport?.argumentGraph ? [...session.researchReport.argumentGraph] : null;
+                currentChainAnalysis = session.researchReport?.chainAnalysis ? { ...session.researchReport.chainAnalysis } : null;
+                if (currentArgumentGraph) {
+                    console.log('[Session] Restored argument graph with', currentArgumentGraph.length, 'nodes');
+                }
+            } else {
+                // Clear reasoning chain data if no report
+                currentArgumentGraph = null;
+                currentChainAnalysis = null;
             }
 
             // 先重置 UI 到首頁狀態
@@ -3567,6 +4318,53 @@
             // Render pinned news list (outside of chat block since news cards are separate)
             renderPinnedNewsList();
 
+            // Restore Deep Research report in research view if available
+            if (currentResearchReport && currentResearchReport.report) {
+                const researchViewEl = document.getElementById('researchView');
+                if (researchViewEl) {
+                    console.log('[Session] Restoring research report to research view');
+                    researchViewEl.innerHTML = '';
+
+                    // Create report container
+                    const reportContainer = document.createElement('div');
+                    reportContainer.className = 'deep-research-report';
+                    reportContainer.style.cssText = 'padding: 20px; max-width: 900px; margin: 0 auto;';
+
+                    // Convert markdown to HTML
+                    let reportHTML = marked.parse(currentResearchReport.report);
+
+                    // Add citation links if sources are available
+                    if (currentResearchReport.sources && currentResearchReport.sources.length > 0) {
+                        reportHTML = addCitationLinks(reportHTML, currentResearchReport.sources);
+                    }
+
+                    // Apply collapsible sections
+                    reportHTML = addCollapsibleSections(reportHTML);
+
+                    reportContainer.innerHTML = reportHTML;
+                    researchViewEl.appendChild(reportContainer);
+
+                    // Bind collapsible handlers
+                    bindCollapsibleHandlers(researchViewEl);
+
+                    // Add toggle-all toolbar
+                    addToggleAllToolbar(reportContainer);
+
+                    // Restore reasoning chain if available
+                    if (currentArgumentGraph && currentArgumentGraph.length > 0) {
+                        displayReasoningChainInContainer(currentArgumentGraph, currentChainAnalysis, researchViewEl);
+                        console.log('[Session] Restored reasoning chain in research view');
+                    }
+
+                    // Show results section and switch to research tab
+                    resultsSection.classList.add('active');
+                    const researchTab = document.querySelector('.tab[data-view="research"]');
+                    if (researchTab) {
+                        researchTab.click();
+                    }
+                }
+            }
+
             // Hide initial state (session has content)
             initialState.style.display = 'none';
             resultsSection.style.display = '';  // Clear inline style so CSS class takes effect
@@ -3577,6 +4375,9 @@
             _preFolderState = null;
             // 確保搜尋容器可見
             searchContainer.style.display = 'block';
+
+            // Refresh sidebar to sync active session highlight
+            renderLeftSidebarSessions();
         }
 
         // ===== Export/Share Functions =====
@@ -3848,27 +4649,27 @@
         const btnCopyNotebookLM = document.getElementById('btnCopyNotebookLM');
 
         btnCopyPlainText.addEventListener('click', () => {
-            const content = formatPlainText();
+            const content = shareContentOverride || formatPlainText();
             copyAndOpen(content, null, btnCopyPlainText);
         });
 
         btnCopyChatGPT.addEventListener('click', () => {
-            const content = formatForAIChatbot();
+            const content = shareContentOverride || formatForAIChatbot();
             copyAndOpen(content, 'https://chat.openai.com/', btnCopyChatGPT);
         });
 
         btnCopyClaude.addEventListener('click', () => {
-            const content = formatForAIChatbot();
+            const content = shareContentOverride || formatForAIChatbot();
             copyAndOpen(content, 'https://claude.ai/', btnCopyClaude);
         });
 
         btnCopyGemini.addEventListener('click', () => {
-            const content = formatForAIChatbot();
+            const content = shareContentOverride || formatForAIChatbot();
             copyAndOpen(content, 'https://gemini.google.com/', btnCopyGemini);
         });
 
         btnCopyNotebookLM.addEventListener('click', () => {
-            const content = formatForNotebookLM();
+            const content = shareContentOverride || formatForNotebookLM();
             copyAndOpen(content, 'https://notebooklm.google.com/', btnCopyNotebookLM);
         });
 
@@ -3963,10 +4764,64 @@
             });
         }
 
-        // ==================== SITE FILTER FUNCTIONS ====================
+        // ==================== SOURCE TREE VIEW (VS Code Style) ====================
+
+        // Source folders data structure
+        // { id: string, name: string, isUncategorized: boolean, siteNames: string[] }
+        let sourceFolders = [];
+        const SOURCE_FOLDERS_KEY = 'nlweb_source_folders';
+        const UNCATEGORIZED_FOLDER_ID = '__uncategorized__';
+
+        // Load source folders from localStorage
+        function loadSourceFolders() {
+            try {
+                const stored = localStorage.getItem(SOURCE_FOLDERS_KEY);
+                if (stored) {
+                    sourceFolders = JSON.parse(stored);
+                    // Ensure uncategorized folder exists
+                    if (!sourceFolders.find(f => f.id === UNCATEGORIZED_FOLDER_ID)) {
+                        sourceFolders.unshift({
+                            id: UNCATEGORIZED_FOLDER_ID,
+                            name: '未分類',
+                            isUncategorized: true,
+                            siteNames: [],
+                            collapsed: false
+                        });
+                    }
+                } else {
+                    // Initialize with just uncategorized
+                    sourceFolders = [{
+                        id: UNCATEGORIZED_FOLDER_ID,
+                        name: '未分類',
+                        isUncategorized: true,
+                        siteNames: [],
+                        collapsed: false
+                    }];
+                }
+            } catch (e) {
+                console.error('Failed to load source folders:', e);
+                sourceFolders = [{
+                    id: UNCATEGORIZED_FOLDER_ID,
+                    name: '未分類',
+                    isUncategorized: true,
+                    siteNames: [],
+                    collapsed: false
+                }];
+            }
+        }
+
+        // Save source folders to localStorage
+        function saveSourceFolders() {
+            try {
+                localStorage.setItem(SOURCE_FOLDERS_KEY, JSON.stringify(sourceFolders));
+            } catch (e) {
+                console.error('Failed to save source folders:', e);
+            }
+        }
 
         // Load available sites from backend
         async function loadSiteFilters() {
+            loadSourceFolders();
             try {
                 const response = await fetch('/sites_config');
                 const data = await response.json();
@@ -3975,42 +4830,363 @@
                     availableSites = data.sites;
                     // By default, all sites are selected
                     selectedSites = availableSites.map(s => s.name);
-                    renderSiteFilters();
+
+                    // Distribute sites to folders
+                    distributeToFolders();
+                    renderSourceTreeView();
                 }
             } catch (error) {
                 console.error('Failed to load site filters:', error);
-                const filterEl = document.getElementById('siteFilterListNew') || document.getElementById('siteFilterList');
-                if (filterEl) {
-                    filterEl.innerHTML = '<div style="color: #dc2626; font-size: 13px; text-align: center; padding: 20px 0;">載入失敗</div>';
+                const container = document.getElementById('sourceTreeView');
+                if (container) {
+                    container.innerHTML = '<div class="tree-view-empty" style="color: #dc2626;">載入失敗</div>';
                 }
             }
         }
 
-        // Render site filter checkboxes
-        function renderSiteFilters() {
-            const container = document.getElementById('siteFilterListNew');
+        // Distribute sites to folders, putting uncategorized ones in the uncategorized folder
+        function distributeToFolders() {
+            const categorizedSites = new Set();
+            sourceFolders.forEach(folder => {
+                if (!folder.isUncategorized) {
+                    folder.siteNames.forEach(name => categorizedSites.add(name));
+                }
+            });
 
-            const emptyHtml = '<div style="color: #9ca3af; font-size: 13px; text-align: center; padding: 20px 0;">沒有可用的來源</div>';
+            // Put remaining sites in uncategorized
+            const uncategorizedFolder = sourceFolders.find(f => f.id === UNCATEGORIZED_FOLDER_ID);
+            if (uncategorizedFolder) {
+                uncategorizedFolder.siteNames = availableSites
+                    .map(s => s.name)
+                    .filter(name => !categorizedSites.has(name));
+            }
+        }
+
+        // Render source tree view
+        function renderSourceTreeView() {
+            const container = document.getElementById('sourceTreeView');
+            if (!container) return;
 
             if (availableSites.length === 0) {
-                if (container) container.innerHTML = emptyHtml;
+                container.innerHTML = '<div class="tree-view-empty">沒有可用的來源</div>';
                 return;
             }
 
-            const html = availableSites.map(site => `
-                <label class="site-filter-item">
-                    <input type="checkbox"
-                           value="${site.name}"
-                           ${selectedSites.includes(site.name) ? 'checked' : ''}
-                           onchange="toggleSiteFilter('${site.name}')">
-                    <div class="site-filter-item-info">
-                        <div class="site-filter-item-name">${site.name}</div>
-                        <div class="site-filter-item-desc">${site.description}</div>
-                    </div>
-                </label>
-            `).join('');
+            let html = '';
 
-            if (container) container.innerHTML = html;
+            // Render each folder
+            sourceFolders.forEach(folder => {
+                const sites = folder.siteNames
+                    .map(name => availableSites.find(s => s.name === name))
+                    .filter(Boolean);
+
+                const isCollapsed = folder.collapsed ? 'collapsed' : '';
+                const folderIconClass = folder.collapsed ? 'closed' : 'open';
+
+                html += `
+                <div class="tree-folder ${isCollapsed}" data-folder-id="${folder.id}">
+                    <div class="tree-folder-header" data-folder-id="${folder.id}">
+                        <span class="tree-folder-chevron">
+                            <svg viewBox="0 0 16 16" fill="currentColor">
+                                <path fill-rule="evenodd" d="M4.646 1.646a.5.5 0 0 1 .708 0l6 6a.5.5 0 0 1 0 .708l-6 6a.5.5 0 0 1-.708-.708L10.293 8 4.646 2.354a.5.5 0 0 1 0-.708z"/>
+                            </svg>
+                        </span>
+                        <span class="tree-folder-icon ${folderIconClass}">
+                            <svg viewBox="0 0 16 16" fill="currentColor">
+                                <path d="M.54 3.87.5 3a2 2 0 0 1 2-2h3.672a2 2 0 0 1 1.414.586l.828.828A2 2 0 0 0 9.828 3H13.5a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-11a2 2 0 0 1-2-2V3.87z"/>
+                            </svg>
+                        </span>
+                        <span class="tree-folder-name ${folder.isUncategorized ? 'uncategorized' : ''}">${escapeHTML(folder.name)}</span>
+                        <span class="tree-folder-count">(${sites.length})</span>
+                        ${!folder.isUncategorized ? `
+                        <div class="tree-folder-actions">
+                            <div class="tree-folder-menu">
+                                <button class="tree-folder-menu-btn" title="更多選項">⋯</button>
+                                <div class="tree-folder-dropdown">
+                                    <button class="tree-folder-dropdown-item" data-action="rename" data-folder-id="${folder.id}">重新命名</button>
+                                    <button class="tree-folder-dropdown-item danger" data-action="delete" data-folder-id="${folder.id}">刪除資料夾</button>
+                                </div>
+                            </div>
+                        </div>
+                        ` : ''}
+                    </div>
+                    <div class="tree-folder-content">
+                        ${sites.map(site => {
+                            const fullText = site.description || site.name;
+                            const dashIndex = fullText.indexOf(' - ');
+                            const mainName = dashIndex > -1 ? fullText.substring(0, dashIndex) : fullText;
+                            const subInfo = dashIndex > -1 ? fullText.substring(dashIndex + 3) : '';
+                            return `
+                        <div class="tree-item tree-item-two-line" draggable="true" data-site-name="${site.name}" data-folder-id="${folder.id}">
+                            <input type="checkbox" class="tree-item-checkbox"
+                                   ${selectedSites.includes(site.name) ? 'checked' : ''}
+                                   data-site-name="${site.name}">
+                            <div class="tree-item-text">
+                                <span class="tree-item-main" title="${fullText}">${mainName}</span>
+                                ${subInfo ? `<span class="tree-item-sub">${subInfo}</span>` : ''}
+                            </div>
+                        </div>
+                            `;
+                        }).join('')}
+                    </div>
+                </div>
+                `;
+            });
+
+            container.innerHTML = html;
+            bindSourceTreeEvents(container);
+        }
+
+        // Bind events for source tree view
+        function bindSourceTreeEvents(container) {
+            // Folder toggle (collapse/expand)
+            container.querySelectorAll('.tree-folder-header').forEach(header => {
+                header.addEventListener('click', (e) => {
+                    // Don't toggle if clicking on actions or checkbox
+                    if (e.target.closest('.tree-folder-actions') || e.target.closest('.tree-folder-menu')) return;
+
+                    const folderId = header.dataset.folderId;
+                    const folder = sourceFolders.find(f => f.id === folderId);
+                    if (folder) {
+                        folder.collapsed = !folder.collapsed;
+                        saveSourceFolders();
+                        renderSourceTreeView();
+                    }
+                });
+
+                // Drag over folder header
+                header.addEventListener('dragover', (e) => {
+                    e.preventDefault();
+                    header.classList.add('drag-over');
+                });
+
+                header.addEventListener('dragleave', () => {
+                    header.classList.remove('drag-over');
+                });
+
+                header.addEventListener('drop', (e) => {
+                    e.preventDefault();
+                    header.classList.remove('drag-over');
+                    const siteName = e.dataTransfer.getData('text/site-name');
+                    const targetFolderId = header.dataset.folderId;
+                    if (siteName && targetFolderId) {
+                        moveSiteToFolder(siteName, targetFolderId);
+                    }
+                });
+            });
+
+            // Checkbox toggle
+            container.querySelectorAll('.tree-item-checkbox').forEach(checkbox => {
+                checkbox.addEventListener('change', (e) => {
+                    e.stopPropagation();
+                    const siteName = checkbox.dataset.siteName;
+                    toggleSiteFilter(siteName);
+                });
+
+                checkbox.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                });
+            });
+
+            // Item drag
+            container.querySelectorAll('.tree-item[draggable="true"]').forEach(item => {
+                item.addEventListener('dragstart', (e) => {
+                    e.dataTransfer.setData('text/site-name', item.dataset.siteName);
+                    e.dataTransfer.effectAllowed = 'move';
+                    item.classList.add('dragging');
+
+                    // Create custom drag preview
+                    const preview = document.createElement('div');
+                    preview.className = 'tree-drag-preview';
+                    preview.textContent = item.dataset.siteName;
+                    document.body.appendChild(preview);
+                    e.dataTransfer.setDragImage(preview, 0, 0);
+                    setTimeout(() => preview.remove(), 0);
+                });
+
+                item.addEventListener('dragend', () => {
+                    item.classList.remove('dragging');
+                });
+            });
+
+            // Folder menu dropdown
+            container.querySelectorAll('.tree-folder-menu-btn').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const dropdown = btn.nextElementSibling;
+
+                    // Close other dropdowns
+                    container.querySelectorAll('.tree-folder-dropdown.visible').forEach(d => {
+                        if (d !== dropdown) d.classList.remove('visible');
+                    });
+
+                    dropdown.classList.toggle('visible');
+                });
+            });
+
+            // Folder dropdown actions
+            container.querySelectorAll('.tree-folder-dropdown-item').forEach(item => {
+                item.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const action = item.dataset.action;
+                    const folderId = item.dataset.folderId;
+
+                    // Close dropdown
+                    item.closest('.tree-folder-dropdown').classList.remove('visible');
+
+                    if (action === 'rename') {
+                        startRenamingFolder(folderId);
+                    } else if (action === 'delete') {
+                        deleteSourceFolder(folderId);
+                    }
+                });
+            });
+
+            // Close dropdowns when clicking outside
+            document.addEventListener('click', () => {
+                container.querySelectorAll('.tree-folder-dropdown.visible').forEach(d => {
+                    d.classList.remove('visible');
+                });
+            });
+        }
+
+        // Move a site to a different folder
+        function moveSiteToFolder(siteName, targetFolderId) {
+            // Remove from current folder
+            sourceFolders.forEach(folder => {
+                const index = folder.siteNames.indexOf(siteName);
+                if (index > -1) {
+                    folder.siteNames.splice(index, 1);
+                }
+            });
+
+            // Add to target folder
+            const targetFolder = sourceFolders.find(f => f.id === targetFolderId);
+            if (targetFolder && !targetFolder.siteNames.includes(siteName)) {
+                targetFolder.siteNames.push(siteName);
+            }
+
+            saveSourceFolders();
+            renderSourceTreeView();
+            console.log(`[Tree] Moved "${siteName}" to folder "${targetFolder?.name}"`);
+        }
+
+        // Add new source folder
+        function addSourceFolder() {
+            const container = document.getElementById('sourceTreeView');
+            if (!container) return;
+
+            // Check if already adding
+            if (container.querySelector('.tree-new-folder-row')) return;
+
+            const row = document.createElement('div');
+            row.className = 'tree-new-folder-row';
+            row.innerHTML = `
+                <input type="text" class="tree-new-folder-input" placeholder="資料夾名稱" autofocus>
+                <button class="tree-new-folder-btn confirm">確定</button>
+                <button class="tree-new-folder-btn cancel">取消</button>
+            `;
+
+            container.insertBefore(row, container.firstChild);
+
+            const input = row.querySelector('.tree-new-folder-input');
+            input.focus();
+
+            const confirmAdd = () => {
+                const name = input.value.trim();
+                if (name) {
+                    const newFolder = {
+                        id: 'folder_' + Date.now(),
+                        name: name,
+                        isUncategorized: false,
+                        siteNames: [],
+                        collapsed: false
+                    };
+                    // Insert before uncategorized
+                    const uncatIndex = sourceFolders.findIndex(f => f.id === UNCATEGORIZED_FOLDER_ID);
+                    if (uncatIndex > -1) {
+                        sourceFolders.splice(uncatIndex, 0, newFolder);
+                    } else {
+                        sourceFolders.push(newFolder);
+                    }
+                    saveSourceFolders();
+                    console.log(`[Tree] Created new folder: "${name}"`);
+                }
+                row.remove();
+                renderSourceTreeView();
+            };
+
+            row.querySelector('.tree-new-folder-btn.confirm').addEventListener('click', confirmAdd);
+            row.querySelector('.tree-new-folder-btn.cancel').addEventListener('click', () => row.remove());
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') confirmAdd();
+                if (e.key === 'Escape') row.remove();
+            });
+        }
+
+        // Start renaming a folder
+        function startRenamingFolder(folderId) {
+            const folder = sourceFolders.find(f => f.id === folderId);
+            if (!folder || folder.isUncategorized) return;
+
+            const header = document.querySelector(`.tree-folder-header[data-folder-id="${folderId}"]`);
+            if (!header) return;
+
+            const nameEl = header.querySelector('.tree-folder-name');
+            const originalName = folder.name;
+
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.className = 'tree-folder-rename-input';
+            input.value = originalName;
+
+            nameEl.replaceWith(input);
+            input.focus();
+            input.select();
+
+            const finishRename = () => {
+                const newName = input.value.trim();
+                if (newName && newName !== originalName) {
+                    folder.name = newName;
+                    saveSourceFolders();
+                    console.log(`[Tree] Renamed folder to: "${newName}"`);
+                }
+                renderSourceTreeView();
+            };
+
+            input.addEventListener('blur', finishRename);
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    finishRename();
+                }
+                if (e.key === 'Escape') {
+                    e.preventDefault();
+                    renderSourceTreeView();
+                }
+            });
+        }
+
+        // Delete a source folder (move contents to uncategorized)
+        function deleteSourceFolder(folderId) {
+            const folder = sourceFolders.find(f => f.id === folderId);
+            if (!folder || folder.isUncategorized) return;
+
+            // Move all sites to uncategorized
+            const uncategorized = sourceFolders.find(f => f.id === UNCATEGORIZED_FOLDER_ID);
+            if (uncategorized) {
+                folder.siteNames.forEach(siteName => {
+                    if (!uncategorized.siteNames.includes(siteName)) {
+                        uncategorized.siteNames.push(siteName);
+                    }
+                });
+            }
+
+            // Remove folder
+            sourceFolders = sourceFolders.filter(f => f.id !== folderId);
+            saveSourceFolders();
+            renderSourceTreeView();
+            console.log(`[Tree] Deleted folder: "${folder.name}", moved ${folder.siteNames.length} sites to uncategorized`);
         }
 
         // Toggle individual site filter
@@ -4023,16 +5199,34 @@
             }
         }
 
-        // Select all sites
-        function selectAllSites() {
-            selectedSites = availableSites.map(s => s.name);
-            renderSiteFilters();
+        // Toggle all sites
+        function toggleAllSites() {
+            const allSelected = selectedSites.length === availableSites.length;
+            if (allSelected) {
+                selectedSites = [];
+            } else {
+                selectedSites = availableSites.map(s => s.name);
+            }
+            renderSourceTreeView();
         }
 
-        // Deselect all sites
-        function deselectAllSites() {
-            selectedSites = [];
-            renderSiteFilters();
+        // Expand all source folders
+        function expandAllSourceFolders() {
+            sourceFolders.forEach(f => f.collapsed = false);
+            saveSourceFolders();
+            renderSourceTreeView();
+        }
+
+        // Collapse all source folders
+        function collapseAllSourceFolders() {
+            sourceFolders.forEach(f => f.collapsed = true);
+            saveSourceFolders();
+            renderSourceTreeView();
+        }
+
+        // Legacy function for compatibility
+        function renderSiteFilters() {
+            renderSourceTreeView();
         }
 
         // Get selected sites as parameter value
@@ -4046,10 +5240,16 @@
 
         // Toggle private sources checkbox
         function togglePrivateSources() {
-            const checkbox = document.getElementById('includePrivateSourcesCheckboxNew');
+            const checkbox = document.getElementById('includePrivateSourcesCheckbox');
             includePrivateSources = checkbox.checked;
             console.log('Include private sources:', includePrivateSources);
         }
+
+        // Bind toolbar buttons for source tree
+        document.getElementById('btnAddSourceFolder')?.addEventListener('click', addSourceFolder);
+        document.getElementById('btnExpandAllSources')?.addEventListener('click', expandAllSourceFolders);
+        document.getElementById('btnCollapseAllSources')?.addEventListener('click', collapseAllSourceFolders);
+        document.getElementById('btnToggleAllSites')?.addEventListener('click', toggleAllSites);
 
         // Trigger file input click
         function triggerFileUpload() {
@@ -4136,8 +5336,81 @@
             event.target.value = '';
         }
 
+        // ==================== FILE TREE VIEW (VS Code Style) ====================
+
+        // File folders data structure
+        // { id: string, name: string, isUncategorized: boolean, fileIds: string[] }
+        let fileFolders = [];
+        const FILE_FOLDERS_KEY = 'nlweb_file_folders';
+        const UNCATEGORIZED_FILE_FOLDER_ID = '__uncategorized_files__';
+
+        // Selected files for context (checked files)
+        let selectedFileIds = new Set();
+        const SELECTED_FILES_KEY = 'nlweb_selected_files';
+
+        // Load file folders from localStorage
+        function loadFileFolders() {
+            try {
+                const stored = localStorage.getItem(FILE_FOLDERS_KEY);
+                if (stored) {
+                    fileFolders = JSON.parse(stored);
+                    if (!fileFolders.find(f => f.id === UNCATEGORIZED_FILE_FOLDER_ID)) {
+                        fileFolders.unshift({
+                            id: UNCATEGORIZED_FILE_FOLDER_ID,
+                            name: '未分類',
+                            isUncategorized: true,
+                            fileIds: [],
+                            collapsed: false
+                        });
+                    }
+                } else {
+                    fileFolders = [{
+                        id: UNCATEGORIZED_FILE_FOLDER_ID,
+                        name: '未分類',
+                        isUncategorized: true,
+                        fileIds: [],
+                        collapsed: false
+                    }];
+                }
+
+                // Load selected files
+                const selectedStored = localStorage.getItem(SELECTED_FILES_KEY);
+                if (selectedStored) {
+                    selectedFileIds = new Set(JSON.parse(selectedStored));
+                }
+            } catch (e) {
+                console.error('Failed to load file folders:', e);
+                fileFolders = [{
+                    id: UNCATEGORIZED_FILE_FOLDER_ID,
+                    name: '未分類',
+                    isUncategorized: true,
+                    fileIds: [],
+                    collapsed: false
+                }];
+            }
+        }
+
+        // Save file folders to localStorage
+        function saveFileFolders() {
+            try {
+                localStorage.setItem(FILE_FOLDERS_KEY, JSON.stringify(fileFolders));
+            } catch (e) {
+                console.error('Failed to save file folders:', e);
+            }
+        }
+
+        // Save selected files to localStorage
+        function saveSelectedFiles() {
+            try {
+                localStorage.setItem(SELECTED_FILES_KEY, JSON.stringify([...selectedFileIds]));
+            } catch (e) {
+                console.error('Failed to save selected files:', e);
+            }
+        }
+
         // Load user files list
         async function loadUserFiles() {
+            loadFileFolders();
             try {
                 const response = await fetch(`/api/user/sources?user_id=${TEMP_USER_ID}`);
                 if (!response.ok) {
@@ -4148,34 +5421,433 @@
                 userFiles = result.sources || [];
                 console.log('Loaded user files:', userFiles);
 
-                renderFileList();
+                // Distribute files to folders
+                distributeFilesToFolders();
+                renderFileTreeView();
             } catch (error) {
                 console.error('Error loading files:', error);
             }
         }
 
-        // Render file list
-        function renderFileList() {
-            const container = document.getElementById('fileListContainerNew');
+        // Distribute files to folders
+        function distributeFilesToFolders() {
+            const categorizedFileIds = new Set();
+            fileFolders.forEach(folder => {
+                if (!folder.isUncategorized) {
+                    folder.fileIds.forEach(id => categorizedFileIds.add(id));
+                }
+            });
 
-            if (userFiles.length === 0) {
-                container.innerHTML = '<div style="color: #9ca3af; font-size: 13px; text-align: center; padding: 20px 0;">尚未上傳文件</div>';
+            // Put remaining files in uncategorized
+            const uncategorizedFolder = fileFolders.find(f => f.id === UNCATEGORIZED_FILE_FOLDER_ID);
+            if (uncategorizedFolder) {
+                uncategorizedFolder.fileIds = userFiles
+                    .map(f => f.source_id)
+                    .filter(id => !categorizedFileIds.has(id));
+            }
+
+            // Clean up selected files that no longer exist
+            const existingIds = new Set(userFiles.map(f => f.source_id));
+            selectedFileIds = new Set([...selectedFileIds].filter(id => existingIds.has(id)));
+            saveSelectedFiles();
+        }
+
+        // Render file tree view
+        function renderFileTreeView() {
+            const container = document.getElementById('fileTreeView');
+            if (!container) return;
+
+            // Show empty state only if no folders (except uncategorized) AND no files
+            const hasCustomFolders = fileFolders.some(f => !f.isUncategorized);
+            if (userFiles.length === 0 && !hasCustomFolders) {
+                container.innerHTML = '<div class="tree-view-empty">尚未上傳文件</div>';
                 return;
             }
 
-            container.innerHTML = userFiles.map(file => {
-                const icon = getFileIcon(file.file_type);
-                const statusClass = file.status;
-                const statusText = getStatusText(file.status);
+            let html = '';
 
-                return `
-                    <div class="file-item">
-                        <span class="file-item-icon">${icon}</span>
-                        <span class="file-item-name" title="${file.name}">${file.name}</span>
-                        <span class="file-item-status ${statusClass}">${statusText}</span>
+            // Render each folder
+            fileFolders.forEach(folder => {
+                const files = folder.fileIds
+                    .map(id => userFiles.find(f => f.source_id === id))
+                    .filter(Boolean);
+
+                const isCollapsed = folder.collapsed ? 'collapsed' : '';
+                const folderIconClass = folder.collapsed ? 'closed' : 'open';
+
+                html += `
+                <div class="tree-folder ${isCollapsed}" data-folder-id="${folder.id}">
+                    <div class="tree-folder-header" data-folder-id="${folder.id}">
+                        <span class="tree-folder-chevron">
+                            <svg viewBox="0 0 16 16" fill="currentColor">
+                                <path fill-rule="evenodd" d="M4.646 1.646a.5.5 0 0 1 .708 0l6 6a.5.5 0 0 1 0 .708l-6 6a.5.5 0 0 1-.708-.708L10.293 8 4.646 2.354a.5.5 0 0 1 0-.708z"/>
+                            </svg>
+                        </span>
+                        <span class="tree-folder-icon ${folderIconClass}">
+                            <svg viewBox="0 0 16 16" fill="currentColor">
+                                <path d="M.54 3.87.5 3a2 2 0 0 1 2-2h3.672a2 2 0 0 1 1.414.586l.828.828A2 2 0 0 0 9.828 3H13.5a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-11a2 2 0 0 1-2-2V3.87z"/>
+                            </svg>
+                        </span>
+                        <span class="tree-folder-name ${folder.isUncategorized ? 'uncategorized' : ''}">${escapeHTML(folder.name)}</span>
+                        <span class="tree-folder-count">(${files.length})</span>
+                        ${!folder.isUncategorized ? `
+                        <div class="tree-folder-actions">
+                            <div class="tree-folder-menu">
+                                <button class="tree-folder-menu-btn" title="更多選項">⋯</button>
+                                <div class="tree-folder-dropdown">
+                                    <button class="tree-folder-dropdown-item" data-action="rename" data-folder-id="${folder.id}">重新命名</button>
+                                    <button class="tree-folder-dropdown-item danger" data-action="delete" data-folder-id="${folder.id}">刪除資料夾</button>
+                                </div>
+                            </div>
+                        </div>
+                        ` : ''}
                     </div>
+                    <div class="tree-folder-content">
+                        ${files.map(file => {
+                            const icon = getFileIcon(file.file_type);
+                            const statusText = getStatusText(file.status);
+                            const isSelected = selectedFileIds.has(file.source_id);
+                            const canDelete = file.status !== 'processing';
+
+                            return `
+                            <div class="tree-item" draggable="true" data-file-id="${file.source_id}" data-folder-id="${folder.id}">
+                                <input type="checkbox" class="tree-item-checkbox"
+                                       ${isSelected ? 'checked' : ''}
+                                       ${file.status !== 'ready' ? 'disabled' : ''}
+                                       data-file-id="${file.source_id}"
+                                       title="${file.status === 'ready' ? '勾選以包含在搜尋中' : '處理中，無法選取'}">
+                                <span class="tree-item-icon">${icon}</span>
+                                <span class="tree-item-name" title="${file.name}">${file.name}</span>
+                                <span class="tree-item-status ${file.status}">${statusText}</span>
+                                ${canDelete ? `
+                                <div class="tree-item-actions">
+                                    <button class="tree-item-action-btn delete" data-file-id="${file.source_id}" data-file-name="${file.name}" title="刪除檔案">🗑️</button>
+                                </div>
+                                ` : ''}
+                            </div>
+                            `;
+                        }).join('')}
+                    </div>
+                </div>
                 `;
-            }).join('');
+            });
+
+            container.innerHTML = html;
+            bindFileTreeEvents(container);
+        }
+
+        // Bind events for file tree view
+        function bindFileTreeEvents(container) {
+            // Folder toggle
+            container.querySelectorAll('.tree-folder-header').forEach(header => {
+                header.addEventListener('click', (e) => {
+                    if (e.target.closest('.tree-folder-actions') || e.target.closest('.tree-folder-menu')) return;
+
+                    const folderId = header.dataset.folderId;
+                    const folder = fileFolders.find(f => f.id === folderId);
+                    if (folder) {
+                        folder.collapsed = !folder.collapsed;
+                        saveFileFolders();
+                        renderFileTreeView();
+                    }
+                });
+
+                // Drag over folder header
+                header.addEventListener('dragover', (e) => {
+                    e.preventDefault();
+                    header.classList.add('drag-over');
+                });
+
+                header.addEventListener('dragleave', () => {
+                    header.classList.remove('drag-over');
+                });
+
+                header.addEventListener('drop', (e) => {
+                    e.preventDefault();
+                    header.classList.remove('drag-over');
+                    const fileId = e.dataTransfer.getData('text/file-id');
+                    const targetFolderId = header.dataset.folderId;
+                    if (fileId && targetFolderId) {
+                        moveFileToFolder(fileId, targetFolderId);
+                    }
+                });
+            });
+
+            // Checkbox toggle (select file for context)
+            container.querySelectorAll('.tree-item-checkbox').forEach(checkbox => {
+                checkbox.addEventListener('change', (e) => {
+                    e.stopPropagation();
+                    const fileId = checkbox.dataset.fileId;
+                    if (checkbox.checked) {
+                        selectedFileIds.add(fileId);
+                    } else {
+                        selectedFileIds.delete(fileId);
+                    }
+                    saveSelectedFiles();
+                    updateIncludePrivateSourcesState();
+                    console.log('[FileTree] Selected files:', [...selectedFileIds]);
+                });
+
+                checkbox.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                });
+            });
+
+            // Item drag
+            container.querySelectorAll('.tree-item[draggable="true"]').forEach(item => {
+                item.addEventListener('dragstart', (e) => {
+                    e.dataTransfer.setData('text/file-id', item.dataset.fileId);
+                    e.dataTransfer.effectAllowed = 'move';
+                    item.classList.add('dragging');
+
+                    const preview = document.createElement('div');
+                    preview.className = 'tree-drag-preview';
+                    const file = userFiles.find(f => f.source_id === item.dataset.fileId);
+                    preview.textContent = file?.name || item.dataset.fileId;
+                    document.body.appendChild(preview);
+                    e.dataTransfer.setDragImage(preview, 0, 0);
+                    setTimeout(() => preview.remove(), 0);
+                });
+
+                item.addEventListener('dragend', () => {
+                    item.classList.remove('dragging');
+                });
+            });
+
+            // Delete button
+            container.querySelectorAll('.tree-item-action-btn.delete').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const fileId = btn.dataset.fileId;
+                    const fileName = btn.dataset.fileName;
+                    deleteUserFile(fileId, fileName);
+                });
+            });
+
+            // Folder menu dropdown
+            container.querySelectorAll('.tree-folder-menu-btn').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const dropdown = btn.nextElementSibling;
+                    container.querySelectorAll('.tree-folder-dropdown.visible').forEach(d => {
+                        if (d !== dropdown) d.classList.remove('visible');
+                    });
+                    dropdown.classList.toggle('visible');
+                });
+            });
+
+            // Folder dropdown actions
+            container.querySelectorAll('.tree-folder-dropdown-item').forEach(item => {
+                item.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const action = item.dataset.action;
+                    const folderId = item.dataset.folderId;
+                    item.closest('.tree-folder-dropdown').classList.remove('visible');
+
+                    if (action === 'rename') {
+                        startRenamingFileFolder(folderId);
+                    } else if (action === 'delete') {
+                        deleteFileFolder(folderId);
+                    }
+                });
+            });
+
+            // Close dropdowns
+            document.addEventListener('click', () => {
+                container.querySelectorAll('.tree-folder-dropdown.visible').forEach(d => {
+                    d.classList.remove('visible');
+                });
+            });
+        }
+
+        // Update the includePrivateSources state based on selected files
+        function updateIncludePrivateSourcesState() {
+            includePrivateSources = selectedFileIds.size > 0;
+        }
+
+        // Get selected file IDs for search context
+        function getSelectedFileIds() {
+            return [...selectedFileIds];
+        }
+
+        // Move a file to a different folder
+        function moveFileToFolder(fileId, targetFolderId) {
+            fileFolders.forEach(folder => {
+                const index = folder.fileIds.indexOf(fileId);
+                if (index > -1) {
+                    folder.fileIds.splice(index, 1);
+                }
+            });
+
+            const targetFolder = fileFolders.find(f => f.id === targetFolderId);
+            if (targetFolder && !targetFolder.fileIds.includes(fileId)) {
+                targetFolder.fileIds.push(fileId);
+            }
+
+            saveFileFolders();
+            renderFileTreeView();
+            const file = userFiles.find(f => f.source_id === fileId);
+            console.log(`[FileTree] Moved "${file?.name}" to folder "${targetFolder?.name}"`);
+        }
+
+        // Add new file folder
+        function addFileFolder() {
+            const container = document.getElementById('fileTreeView');
+            if (!container) return;
+            if (container.querySelector('.tree-new-folder-row')) return;
+
+            const row = document.createElement('div');
+            row.className = 'tree-new-folder-row';
+            row.innerHTML = `
+                <input type="text" class="tree-new-folder-input" placeholder="資料夾名稱" autofocus>
+                <button class="tree-new-folder-btn confirm">確定</button>
+                <button class="tree-new-folder-btn cancel">取消</button>
+            `;
+
+            container.insertBefore(row, container.firstChild);
+
+            const input = row.querySelector('.tree-new-folder-input');
+            input.focus();
+
+            const confirmAdd = () => {
+                const name = input.value.trim();
+                if (name) {
+                    const newFolder = {
+                        id: 'file_folder_' + Date.now(),
+                        name: name,
+                        isUncategorized: false,
+                        fileIds: [],
+                        collapsed: false
+                    };
+                    const uncatIndex = fileFolders.findIndex(f => f.id === UNCATEGORIZED_FILE_FOLDER_ID);
+                    if (uncatIndex > -1) {
+                        fileFolders.splice(uncatIndex, 0, newFolder);
+                    } else {
+                        fileFolders.push(newFolder);
+                    }
+                    saveFileFolders();
+                    console.log(`[FileTree] Created new folder: "${name}"`);
+                }
+                row.remove();
+                renderFileTreeView();
+            };
+
+            row.querySelector('.tree-new-folder-btn.confirm').addEventListener('click', confirmAdd);
+            row.querySelector('.tree-new-folder-btn.cancel').addEventListener('click', () => row.remove());
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') confirmAdd();
+                if (e.key === 'Escape') row.remove();
+            });
+        }
+
+        // Start renaming a file folder
+        function startRenamingFileFolder(folderId) {
+            const folder = fileFolders.find(f => f.id === folderId);
+            if (!folder || folder.isUncategorized) return;
+
+            const header = document.querySelector(`#fileTreeView .tree-folder-header[data-folder-id="${folderId}"]`);
+            if (!header) return;
+
+            const nameEl = header.querySelector('.tree-folder-name');
+            const originalName = folder.name;
+
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.className = 'tree-folder-rename-input';
+            input.value = originalName;
+
+            nameEl.replaceWith(input);
+            input.focus();
+            input.select();
+
+            const finishRename = () => {
+                const newName = input.value.trim();
+                if (newName && newName !== originalName) {
+                    folder.name = newName;
+                    saveFileFolders();
+                    console.log(`[FileTree] Renamed folder to: "${newName}"`);
+                }
+                renderFileTreeView();
+            };
+
+            input.addEventListener('blur', finishRename);
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    finishRename();
+                }
+                if (e.key === 'Escape') {
+                    e.preventDefault();
+                    renderFileTreeView();
+                }
+            });
+        }
+
+        // Delete a file folder
+        function deleteFileFolder(folderId) {
+            const folder = fileFolders.find(f => f.id === folderId);
+            if (!folder || folder.isUncategorized) return;
+
+            const uncategorized = fileFolders.find(f => f.id === UNCATEGORIZED_FILE_FOLDER_ID);
+            if (uncategorized) {
+                folder.fileIds.forEach(fileId => {
+                    if (!uncategorized.fileIds.includes(fileId)) {
+                        uncategorized.fileIds.push(fileId);
+                    }
+                });
+            }
+
+            fileFolders = fileFolders.filter(f => f.id !== folderId);
+            saveFileFolders();
+            renderFileTreeView();
+            console.log(`[FileTree] Deleted folder: "${folder.name}"`);
+        }
+
+        // Expand all file folders
+        function expandAllFileFolders() {
+            fileFolders.forEach(f => f.collapsed = false);
+            saveFileFolders();
+            renderFileTreeView();
+        }
+
+        // Collapse all file folders
+        function collapseAllFileFolders() {
+            fileFolders.forEach(f => f.collapsed = true);
+            saveFileFolders();
+            renderFileTreeView();
+        }
+
+        // Legacy function for compatibility
+        function renderFileList() {
+            renderFileTreeView();
+        }
+
+        // Delete a user file
+        async function deleteUserFile(sourceId, fileName) {
+            if (!confirm(`確定要刪除「${fileName}」嗎？此操作無法復原。`)) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/user/sources/${sourceId}?user_id=${TEMP_USER_ID}`, {
+                    method: 'DELETE'
+                });
+
+                if (!response.ok) {
+                    const result = await response.json();
+                    throw new Error(result.error || 'Failed to delete file');
+                }
+
+                // Remove from selected files
+                selectedFileIds.delete(sourceId);
+                saveSelectedFiles();
+
+                console.log(`File deleted: ${fileName} (source_id=${sourceId})`);
+                loadUserFiles();
+            } catch (error) {
+                console.error('Error deleting file:', error);
+                alert('刪除失敗: ' + error.message);
+            }
         }
 
         // Get file icon based on type
@@ -4199,6 +5871,11 @@
             };
             return texts[status] || status;
         }
+
+        // Bind toolbar buttons for file tree
+        document.getElementById('btnAddFileFolder')?.addEventListener('click', addFileFolder);
+        document.getElementById('btnExpandAllFiles')?.addEventListener('click', expandAllFileFolders);
+        document.getElementById('btnCollapseAllFiles')?.addEventListener('click', collapseAllFileFolders);
 
         // ==================== LEFT SIDEBAR SESSION LIST ====================
 
@@ -4232,6 +5909,10 @@
                     const sessionId = parseInt(item.dataset.sidebarSessionId);
                     const session = savedSessions.find(s => s.id === sessionId);
                     if (session) {
+                        // 切換前先保存當前對話（防止深度報告等狀態丟失）
+                        if (sessionHistory.length > 0 || currentResearchReport) {
+                            saveCurrentSession();
+                        }
                         loadSavedSession(session);
                     }
                 });
@@ -4707,6 +6388,10 @@
                     const sessionId = parseInt(item.dataset.sessionId);
                     const session = savedSessions.find(s => s.id === sessionId);
                     if (session) {
+                        // 切換前先保存當前對話（防止深度報告等狀態丟失）
+                        if (sessionHistory.length > 0 || currentResearchReport) {
+                            saveCurrentSession();
+                        }
                         hideFolderPage();
                         loadSavedSession(session);
                     }
@@ -4809,6 +6494,71 @@
         }
 
         // ==================== END FOLDER/PROJECT SYSTEM ====================
+
+        // ==================== LARGE FONT MODE ====================
+        (function initLargeFontMode() {
+            document.addEventListener('DOMContentLoaded', () => {
+                const btn = document.getElementById('btnFontSize');
+                if (!btn) return;
+
+                // Restore preference
+                try {
+                    if (localStorage.getItem('nlweb-large-font') === 'true') {
+                        document.body.classList.add('large-font');
+                        btn.classList.add('active');
+                    }
+                } catch (e) { /* localStorage unavailable */ }
+
+                btn.addEventListener('click', () => {
+                    const isActive = document.body.classList.toggle('large-font');
+                    btn.classList.toggle('active', isActive);
+                    try {
+                        localStorage.setItem('nlweb-large-font', isActive ? 'true' : 'false');
+                    } catch (e) { /* localStorage unavailable */ }
+                });
+            });
+        })();
+
+        // ==================== KG VISIBILITY TOGGLE ====================
+        (function initKGVisibilityToggle() {
+            document.addEventListener('DOMContentLoaded', () => {
+                const hideBtn = document.getElementById('kgHideBtn');
+                const restoreBar = document.getElementById('kgRestoreBar');
+                const kgContainer = document.getElementById('kgDisplayContainer');
+                if (!hideBtn || !restoreBar || !kgContainer) return;
+
+                // Restore preference
+                let kgHidden = false;
+                try {
+                    kgHidden = localStorage.getItem('nlweb-kg-hidden') === 'true';
+                } catch (e) { /* localStorage unavailable */ }
+
+                // Apply stored preference: if hidden, ensure container stays hidden and bar is ready
+                if (kgHidden) {
+                    // The container starts display:none anyway; keep restoreBar ready
+                    // restoreBar will show when displayKnowledgeGraph is called
+                    kgContainer.dataset.userHidden = 'true';
+                }
+
+                hideBtn.addEventListener('click', () => {
+                    kgContainer.style.display = 'none';
+                    kgContainer.dataset.userHidden = 'true';
+                    restoreBar.style.display = 'block';
+                    try {
+                        localStorage.setItem('nlweb-kg-hidden', 'true');
+                    } catch (e) {}
+                });
+
+                restoreBar.addEventListener('click', () => {
+                    kgContainer.style.display = 'block';
+                    kgContainer.dataset.userHidden = 'false';
+                    restoreBar.style.display = 'none';
+                    try {
+                        localStorage.setItem('nlweb-kg-hidden', 'false');
+                    } catch (e) {}
+                });
+            });
+        })();
 
         // Initialize on page load
         document.addEventListener('DOMContentLoaded', () => {

@@ -32,6 +32,9 @@
                     🔍 台灣新聞搜尋
                 </div>
                 <div style="display: flex; gap: 8px; align-items: center;">
+                    <button class="btn-font-size" id="btnFontSize" title="大字體模式">
+                        Aa
+                    </button>
                     <button class="notification-btn" id="btnNotification" title="通知">
                         🔔
                     </button>
@@ -114,7 +117,7 @@
             </button>
             <button class="right-tab-label" data-tab="history">
                 <span class="right-tab-label-icon">📚</span>
-                <span>問答紀錄</span>
+                <span>搜尋紀錄</span>
             </button>
             <button class="right-tab-label" data-tab="pinned-news">
                 <span class="right-tab-label-icon">📌</span>
@@ -122,7 +125,7 @@
             </button>
         </div>
 
-        <!-- 來源篩選面板 -->
+        <!-- 來源篩選面板 (VS Code Explorer 風格 Tree View) -->
         <div class="right-tab-panel" id="tabPanelSources" data-tab="sources">
             <div class="right-tab-panel-header">
                 <div class="right-tab-panel-title">
@@ -132,19 +135,40 @@
                 <button class="right-tab-panel-close" data-close-tab>&times;</button>
             </div>
             <div class="right-tab-panel-content">
-                <div class="site-filter-actions">
-                    <button class="site-filter-btn" onclick="selectAllSites()">全選</button>
-                    <button class="site-filter-btn" onclick="deselectAllSites()">全不選</button>
+                <!-- Tree View 工具列 -->
+                <div class="tree-view-toolbar">
+                    <button class="tree-toolbar-btn" id="btnAddSourceFolder" title="新增分類資料夾">
+                        <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+                            <path d="M.54 3.87.5 3a2 2 0 0 1 2-2h3.672a2 2 0 0 1 1.414.586l.828.828A2 2 0 0 0 9.828 3H13.5a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-11a2 2 0 0 1-2-2V3.87z"/>
+                            <path d="M8 7a.5.5 0 0 1 .5.5V9H10a.5.5 0 0 1 0 1H8.5v1.5a.5.5 0 0 1-1 0V10H6a.5.5 0 0 1 0-1h1.5V7.5A.5.5 0 0 1 8 7z" fill="white"/>
+                        </svg>
+                    </button>
+                    <button class="tree-toolbar-btn" id="btnExpandAllSources" title="展開全部">
+                        <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+                            <path fill-rule="evenodd" d="M1.646 4.646a.5.5 0 0 1 .708 0L8 10.293l5.646-5.647a.5.5 0 0 1 .708.708l-6 6a.5.5 0 0 1-.708 0l-6-6a.5.5 0 0 1 0-.708z"/>
+                        </svg>
+                    </button>
+                    <button class="tree-toolbar-btn" id="btnCollapseAllSources" title="收合全部">
+                        <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+                            <path fill-rule="evenodd" d="M7.646 4.646a.5.5 0 0 1 .708 0l6 6a.5.5 0 0 1-.708.708L8 5.707l-5.646 5.647a.5.5 0 0 1-.708-.708l6-6z"/>
+                        </svg>
+                    </button>
+                    <div class="tree-toolbar-spacer"></div>
+                    <button class="tree-toolbar-btn" id="btnToggleAllSites" title="全選/全不選">
+                        <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+                            <path d="M14 1a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1h12zM2 0a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V2a2 2 0 0 0-2-2H2z"/>
+                            <path d="M10.97 4.97a.75.75 0 0 1 1.071 1.05l-3.992 4.99a.75.75 0 0 1-1.08.02L4.324 8.384a.75.75 0 1 1 1.06-1.06l2.094 2.093 3.473-4.425a.235.235 0 0 1 .02-.022z"/>
+                        </svg>
+                    </button>
                 </div>
-                <div class="site-filter-list" id="siteFilterListNew">
-                    <div style="color: #9ca3af; font-size: 13px; text-align: center; padding: 20px 0;">
-                        載入中...
-                    </div>
+                <!-- Tree View 容器 -->
+                <div class="tree-view-container" id="sourceTreeView">
+                    <div class="tree-view-loading">載入中...</div>
                 </div>
             </div>
         </div>
 
-        <!-- 我的檔案面板 -->
+        <!-- 我的檔案面板 (VS Code Explorer 風格 Tree View) -->
         <div class="right-tab-panel" id="tabPanelFiles" data-tab="files">
             <div class="right-tab-panel-header">
                 <div class="right-tab-panel-title">
@@ -154,23 +178,36 @@
                 <button class="right-tab-panel-close" data-close-tab>&times;</button>
             </div>
             <div class="right-tab-panel-content">
-                <div class="sidebar-toggle" onclick="togglePrivateSources()">
-                    <input type="checkbox" id="includePrivateSourcesCheckboxNew" checked>
-                    <span class="sidebar-toggle-text">包含我的文件</span>
+                <!-- Tree View 工具列 -->
+                <div class="tree-view-toolbar">
+                    <button class="tree-toolbar-btn" id="btnAddFileFolder" title="新增分類資料夾">
+                        <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+                            <path d="M.54 3.87.5 3a2 2 0 0 1 2-2h3.672a2 2 0 0 1 1.414.586l.828.828A2 2 0 0 0 9.828 3H13.5a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-11a2 2 0 0 1-2-2V3.87z"/>
+                            <path d="M8 7a.5.5 0 0 1 .5.5V9H10a.5.5 0 0 1 0 1H8.5v1.5a.5.5 0 0 1-1 0V10H6a.5.5 0 0 1 0-1h1.5V7.5A.5.5 0 0 1 8 7z" fill="white"/>
+                        </svg>
+                    </button>
+                    <button class="tree-toolbar-btn" id="btnExpandAllFiles" title="展開全部">
+                        <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+                            <path fill-rule="evenodd" d="M1.646 4.646a.5.5 0 0 1 .708 0L8 10.293l5.646-5.647a.5.5 0 0 1 .708.708l-6 6a.5.5 0 0 1-.708 0l-6-6a.5.5 0 0 1 0-.708z"/>
+                        </svg>
+                    </button>
+                    <button class="tree-toolbar-btn" id="btnCollapseAllFiles" title="收合全部">
+                        <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+                            <path fill-rule="evenodd" d="M7.646 4.646a.5.5 0 0 1 .708 0l6 6a.5.5 0 0 1-.708.708L8 5.707l-5.646 5.647a.5.5 0 0 1-.708-.708l6-6z"/>
+                        </svg>
+                    </button>
+                    <div class="tree-toolbar-spacer"></div>
+                    <button class="tree-toolbar-btn" id="btnUploadFile" title="上傳文件" onclick="triggerFileUpload()">
+                        <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+                            <path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5z"/>
+                            <path d="M7.646 1.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1-.708.708L8.5 2.707V11.5a.5.5 0 0 1-1 0V2.707L5.354 4.854a.5.5 0 1 1-.708-.708l3-3z"/>
+                        </svg>
+                    </button>
                 </div>
-                <div style="height: 1px; background: #e5e5e5; margin: 12px 0;"></div>
-                <div class="file-list">
-                    <div class="file-list-title" style="font-size: 13px; font-weight: 600; color: #374151; margin-bottom: 8px;">已上傳文件</div>
-                    <div id="fileListContainerNew">
-                        <div style="color: #9ca3af; font-size: 13px; text-align: center; padding: 20px 0;">
-                            尚未上傳文件
-                        </div>
-                    </div>
+                <!-- Tree View 容器 -->
+                <div class="tree-view-container" id="fileTreeView">
+                    <div class="tree-view-empty">尚未上傳文件</div>
                 </div>
-                <button class="upload-button" onclick="triggerFileUpload()" style="width: 100%; margin-top: 12px; padding: 10px; background: #2563eb; color: white; border: none; border-radius: 6px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px;">
-                    <span>+</span>
-                    <span>上傳文件</span>
-                </button>
             </div>
         </div>
 
@@ -179,7 +216,7 @@
             <div class="right-tab-panel-header">
                 <div class="right-tab-panel-title">
                     <span>📚</span>
-                    <span>問答紀錄</span>
+                    <span>搜尋紀錄</span>
                 </div>
                 <button class="right-tab-panel-close" data-close-tab>&times;</button>
             </div>
@@ -263,6 +300,12 @@
                                 <span>📎</span>
                                 <span>上傳檔案</span>
                             </button>
+                            <!-- 包含我的文件 checkbox -->
+                            <label class="user-files-toggle">
+                                <input type="checkbox" id="includePrivateSourcesCheckbox" checked
+                                       onchange="togglePrivateSources()">
+                                <span>包含我的文件</span>
+                            </label>
                         </div>
                         <div class="search-bottom-right">
                             <!-- 模式切換按鈕 -->
@@ -394,6 +437,11 @@
 
             <!-- Results Section -->
             <div class="results-section" id="resultsSection">
+                <!-- KG Restore Bar (shown when KG is hidden by user) -->
+                <div class="kg-restore-bar" id="kgRestoreBar">
+                    📊 知識圖譜已隱藏 — 點擊此處重新顯示
+                </div>
+
                 <!-- Knowledge Graph Display (Phase KG Enhanced) -->
                 <div class="kg-display-container" id="kgDisplayContainer" style="display: none;">
                     <div class="kg-display-header">
@@ -410,6 +458,9 @@
                             </div>
                             <button class="kg-toggle-button" id="kgToggleButton">
                                 <span id="kgToggleIcon">▼</span> 收起
+                            </button>
+                            <button class="kg-hide-btn" id="kgHideBtn" title="隱藏知識圖譜">
+                                ✕ 隱藏
                             </button>
                         </div>
                     </div>
@@ -443,8 +494,9 @@
 
                 <!-- View Tabs -->
                 <div class="view-tabs">
-                    <button class="tab active" data-view="list">列表視圖</button>
-                    <button class="tab" data-view="timeline">時間軸視圖</button>
+                    <button class="tab active" data-view="list">新聞列表</button>
+                    <button class="tab" data-view="timeline">新聞時間軸</button>
+                    <button class="tab" data-view="research">深度研究報告</button>
                 </div>
 
                 <!-- Summary Toggle (for both list and timeline views) -->
@@ -465,6 +517,11 @@
                 <!-- Timeline View -->
                 <div class="timeline-view" id="timelineView">
                     <!-- Timeline items will be populated dynamically from API -->
+                </div>
+
+                <!-- Research View (Deep Research Report) -->
+                <div class="research-view" id="researchView">
+                    <!-- Deep research report will be populated dynamically -->
                 </div>
 
             </div>
