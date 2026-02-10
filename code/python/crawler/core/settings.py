@@ -107,8 +107,8 @@ NEWS_SOURCES = {
     },
     "cna": {
         "name": "中央社",
-        "concurrent_limit": 3,
-        "delay_range": (1.0, 2.5),
+        "concurrent_limit": 4,
+        "delay_range": (0.8, 2.0),
     },
     "moea": {
         "name": "經濟部",
@@ -122,8 +122,13 @@ NEWS_SOURCES = {
     },
     "esg_businesstoday": {
         "name": "今周刊 ESG",
-        "concurrent_limit": 2,
-        "delay_range": (1.5, 3.5),
+        "concurrent_limit": 3,
+        "delay_range": (1.0, 2.5),
+    },
+    "chinatimes": {
+        "name": "中國時報",
+        "concurrent_limit": 3,
+        "delay_range": (1.0, 2.5),
     },
 }
 
@@ -137,14 +142,53 @@ DEFAULT_MODE = "date"
 DEFAULT_MAX_ARTICLES = 300
 DEFAULT_DAYS_BACK = 3
 
-# 停止條件
-CONSECUTIVE_TOO_OLD_LIMIT = 30
-CONSECUTIVE_FAIL_LIMIT = 50
-MAX_CONSECUTIVE_MISSES = 100
+# ==================== 停止條件常數（含單位註釋）====================
+# --- 通用 ---
+BLOCKED_CONSECUTIVE_LIMIT = 5       # 連續 N 次 403/429 回應後停止（次數）
 
-# 智能跳躍設定
-SMART_JUMP_THRESHOLD = 100
-SMART_JUMP_ENABLED_SOURCES = ['chinatimes', 'cna']
+# --- Auto Mode ---
+AUTO_DEFAULT_STOP_AFTER_SKIPS = 10  # 連續 N 個已爬取文章後停止（篇數）
+
+# --- Full Scan: Per-day adaptive suffix scanning (date-based sources) ---
+# 每天掃描時，連續 N 個 404 後認定當天文章已結束，跳到隔天
+DATE_SCAN_MISS_LIMIT = 80           # 連續 N 個 404 → 跳過當天剩餘 suffix
+# 若接近上限時仍有文章，自動擴展 max_suffix
+DATE_SCAN_AUTO_EXTEND_STEP = 200    # 每次自動擴展的 suffix 數量
+
+# ==================== Full Scan 專用覆蓋設定 ====================
+# Full scan 模式可以更積極：404 不給伺服器壓力，且有 blocked 自動停止機制
+FULL_SCAN_OVERRIDES = {
+    "ltn": {
+        "concurrent_limit": 12,
+        "delay_range": (0.1, 0.3),
+        "request_timeout": 5,
+    },
+    "udn": {
+        "concurrent_limit": 12,
+        "delay_range": (0.1, 0.3),
+        "request_timeout": 5,
+    },
+    "cna": {
+        "concurrent_limit": 8,
+        "delay_range": (0.2, 0.5),
+        "request_timeout": 5,
+    },
+    "einfo": {
+        "concurrent_limit": 3,
+        "delay_range": (1.0, 3.0),
+        "request_timeout": 10,
+    },
+    "esg_businesstoday": {
+        "concurrent_limit": 6,
+        "delay_range": (0.3, 0.8),
+        "request_timeout": 5,
+    },
+    "chinatimes": {
+        "concurrent_limit": 6,
+        "delay_range": (0.3, 0.8),
+        "request_timeout": 5,
+    },
+}
 
 # ==================== 調試設定 ====================
 DEBUG = os.environ.get("NLWEB_DEBUG", "").lower() in ("true", "1", "yes")

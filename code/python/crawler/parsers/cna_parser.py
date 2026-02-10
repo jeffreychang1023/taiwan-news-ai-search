@@ -70,9 +70,6 @@ class CnaParser(BaseParser):
                 self.logger.warning(f"No date found: {url}")
                 return None
 
-            raw_author = self._extract_raw_author(soup)
-            author = TextProcessor.clean_author(raw_author) if raw_author else ""
-
             paragraphs = self._extract_paragraphs(soup)
             if not paragraphs:
                 self.logger.warning(f"No content found: {url}")
@@ -83,6 +80,12 @@ class CnaParser(BaseParser):
             if len(article_body) < settings.MIN_ARTICLE_LENGTH:
                 self.logger.warning(f"Article too short: {url}")
                 return None
+
+            # 作者提取：HTML 選擇器 → body 正文開頭
+            raw_author = self._extract_raw_author(soup)
+            if not raw_author:
+                raw_author = self._extract_author_from_body(paragraphs)
+            author = TextProcessor.clean_author(raw_author) if raw_author else ""
 
             # ========== 提取關鍵字 ==========
             keywords = self._extract_keywords(soup, title, article_body)
@@ -288,17 +291,41 @@ class CnaParser(BaseParser):
         return None
 
     def _extract_raw_author(self, soup: BeautifulSoup) -> str:
-        author_tag = soup.select_one('.author')
-        if author_tag:
-            return author_tag.get_text(strip=True)
+        """從 HTML 選擇器提取作者"""
+        for selector in ['.author', '.reporter', '.byline']:
+            tag = soup.select_one(selector)
+            if tag:
+                return tag.get_text(strip=True)
+        return ""
 
-        reporter_tag = soup.select_one('.reporter')
-        if reporter_tag:
-            return reporter_tag.get_text(strip=True)
+    def _extract_author_from_body(self, paragraphs: List[str]) -> str:
+        """從正文開頭提取記者名（CNA 專用）
 
-        byline_tag = soup.select_one('.byline')
-        if byline_tag:
-            return byline_tag.get_text(strip=True)
+        常見格式：
+        - （中央社記者陳韻聿倫敦8日專電）
+        - （中央社記者黃郁菁屏東縣31日電）
+        - （中央社台北4日電）→ 無個人記者，回傳空字串
+        - （中央社紐約30日綜合外電報導）→ 無個人記者
+        """
+        if not paragraphs:
+            return ""
+
+        first_para = paragraphs[0][:200]
+
+        # 格式 1：（中央社記者XXX地名日專電/電）
+        m = re.search(
+            r'（中央社記者\s*(.+?)(?:\d+日|報導|專電|電）)',
+            first_para
+        )
+        if m:
+            raw = m.group(1).strip()
+            # 移除地名（地名通常在記者名後面，2-5個中文字）
+            # 例如「陳韻聿倫敦」→「陳韻聿」,「黃郁菁屏東縣」→「黃郁菁」
+            # 記者名通常 2-3 字，後面跟地名
+            name_match = re.match(r'([\u4e00-\u9fff]{2,3})', raw)
+            if name_match:
+                return name_match.group(1)
+            return raw
 
         return ""
 

@@ -57,12 +57,24 @@ class LtnParser(BaseParser):
         """根據文章 ID 構建 URL"""
         return f"https://news.ltn.com.tw/news/life/breakingnews/{article_id}"
 
+    def get_candidate_urls(self, article_id: int) -> List[str]:
+        """All category URLs except primary (life), ordered by frequency."""
+        candidates = []
+        for category in self.MAIN_CATEGORIES:
+            if category == 'life':
+                continue  # Already tried via get_url()
+            candidates.append(f"https://news.ltn.com.tw/news/{category}/breakingnews/{article_id}")
+        for domain_pattern in self.FALLBACK_DOMAINS:
+            candidates.append(domain_pattern.format(id=article_id))
+        return candidates
+
     def get_sitemap_config(self) -> Optional[Dict[str, Any]]:
         """取得 sitemap 相關配置"""
         return {
             'index_url': 'https://news.ltn.com.tw/sitemap.xml',
             'is_index': False,  # LTN sitemap is a single file with latest 1000 articles
-            'article_url_pattern': r'<loc>(https?://news\.ltn\.com\.tw/news/[^<]+)</loc>',
+            # Pattern applied to extracted URL (without <loc> tags)
+            'article_url_pattern': r'https?://news\.ltn\.com\.tw/news/',
             # LTN sitemap doesn't have date-based filenames, date filtering not applicable
             'sitemap_date_pattern': None,
         }
@@ -254,13 +266,19 @@ class LtnParser(BaseParser):
             return None
 
     def _extract_title(self, soup: BeautifulSoup) -> Optional[str]:
-        """提取標題"""
-        title_tag = soup.select_one('.whitecon.article h1')
-        if not title_tag:
-            title_tag = soup.find('h1')
+        """提取標題（支援 news/sports/ent/ec/health 等子網域）"""
+        # 依優先順序嘗試不同 selector
+        for selector in ['.whitecon.article h1', 'article h1', 'h1']:
+            tag = soup.select_one(selector)
+            if tag:
+                title = tag.get_text(strip=True)
+                if title:
+                    return title
 
-        if title_tag:
-            return title_tag.get_text(strip=True)
+        # fallback: og:title
+        og = soup.find('meta', property='og:title')
+        if og and og.get('content'):
+            return og['content'].strip()
 
         return None
 
@@ -297,12 +315,27 @@ class LtnParser(BaseParser):
         return ""
 
     def _extract_paragraphs(self, soup: BeautifulSoup) -> List[str]:
-        """提取內文段落"""
-        content_div = (
-            soup.select_one('.whitecon.article .text') or
-            soup.select_one('.text') or
-            soup.select_one('article')
-        )
+        """提取內文段落（支援 news/sports/ent/ec/health 等子網域）"""
+        # 依優先順序嘗試，每個候選必須有實際 <p> 內容
+        # ent.ltn.com.tw: .whitecon.article .text 存在但無 <p>，實際內容在 article .text
+        # ec.ltn.com.tw: 無 .whitecon.article，內容在 .article_content 或 .text
+        candidates = [
+            '.whitecon.article .text',
+            'article .text',
+            '.article_content',
+            '.text',
+            'article',
+        ]
+        content_div = None
+        for selector in candidates:
+            # select() 回傳所有匹配元素，找第一個有 <p> 的
+            # health.ltn.com.tw: 有多個 .text div，第一個空的，第二個有內容
+            for div in soup.select(selector):
+                if div.find('p'):
+                    content_div = div
+                    break
+            if content_div:
+                break
 
         if not content_div:
             return []

@@ -68,6 +68,17 @@ class EsgBusinessTodayParser(BaseParser):
     def source_name(self) -> str:
         return "esg_businesstoday"
 
+    def is_not_found_redirect(self, request_url: str, response_url: str) -> bool:
+        """不存在的文章會 301 redirect 到首頁，curl_cffi 會自動跟隨"""
+        return '/post/' in request_url and '/post/' not in response_url
+
+    @staticmethod
+    async def _get_response_text(response) -> Optional[str]:
+        """Extract text from aiohttp or curl_cffi response."""
+        if hasattr(response, 'text') and callable(response.text):
+            return await response.text()
+        return response.text
+
     def get_url(self, article_id: int) -> str:
         """構建文章 URL (含位數自動修正)"""
         # 1. 優先使用快取
@@ -88,7 +99,8 @@ class EsgBusinessTodayParser(BaseParser):
         return {
             'index_url': self.SITEMAP_URL,
             'is_index': False,  # Single sitemap with ~1000 articles
-            'article_url_pattern': r'<loc>(https?://esg\.businesstoday\.com\.tw/article/[^<]+)</loc>',
+            # Pattern applied to extracted URL (without <loc> tags)
+            'article_url_pattern': r'https?://esg\.businesstoday\.com\.tw/article/',
         }
 
     def get_discovered_ids(self) -> List[int]:
@@ -128,11 +140,7 @@ class EsgBusinessTodayParser(BaseParser):
                 self.logger.error(f"Sitemap fetch failed: {status}")
                 return
 
-            # 相容 aiohttp 和 curl_cffi 的 response text
-            if hasattr(response, 'text') and callable(response.text):
-                xml_text = await response.text()
-            else:
-                xml_text = response.text
+            xml_text = await self._get_response_text(response)
 
             # 解析 XML（使用 regex 避免依賴 xml 套件）
             url_pattern = r'<loc>([^<]+)</loc>'
@@ -219,11 +227,7 @@ class EsgBusinessTodayParser(BaseParser):
             if status != 200:
                 return ids
 
-            # 相容 aiohttp 和 curl_cffi 的 response text
-            if hasattr(response, 'text') and callable(response.text):
-                html = await response.text()
-            else:
-                html = response.text
+            html = await self._get_response_text(response)
 
             soup = BeautifulSoup(html, 'lxml')
             links = soup.select('a.article__item, a.hover-area, a[href*="/post/"]')
@@ -287,6 +291,15 @@ class EsgBusinessTodayParser(BaseParser):
         """解析單篇文章"""
         try:
             soup = BeautifulSoup(html, 'lxml')
+
+            # ========== 0. 首頁重導向偵測 ==========
+            # 不存在的文章 ID 會返回 HTTP 200 + 首頁 HTML
+            # 首頁特徵：有多個文章列表連結，但沒有 articleBody
+            if not soup.select_one('div[itemprop="articleBody"]'):
+                post_links = soup.select('a[href*="/post/"]')
+                if len(post_links) >= 5:
+                    self.logger.info(f"Homepage redirect detected (no articleBody, {len(post_links)} post links): {url}")
+                    return None
 
             # ========== 1. 標題 (headline) ==========
             headline = None

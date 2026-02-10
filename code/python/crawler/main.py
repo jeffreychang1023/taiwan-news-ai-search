@@ -115,6 +115,12 @@ Examples:
         default=100,
         help='Number of articles to crawl in auto mode (default: 100)'
     )
+    auto_group.add_argument(
+        '--date-floor',
+        type=str,
+        default=None,
+        help='Date floor for auto mode (YYYY-MM format). Stop crawling when articles are older than this date.'
+    )
 
     # Parser 參數
     parser_group = parser.add_argument_group('Parser Options')
@@ -145,12 +151,14 @@ Examples:
     return parser
 
 
-async def run_auto_mode(engine: CrawlerEngine, count: int = 100) -> dict:
+async def run_auto_mode(engine: CrawlerEngine, count: int = 100, date_floor: Optional[str] = None) -> dict:
     """執行自動模式"""
     logger = logging.getLogger('main')
     logger.info(f"Starting Auto Mode: {count} articles")
+    if date_floor:
+        logger.info(f"Date floor: {date_floor}")
 
-    stats = await engine.run_auto(count=count)
+    stats = await engine.run_auto(count=count, date_floor=date_floor)
     return stats
 
 
@@ -226,7 +234,7 @@ async def main_async(args: argparse.Namespace) -> int:
 
         # 判斷執行模式
         if args.auto_latest:
-            stats = await run_auto_mode(engine=engine, count=args.count)
+            stats = await run_auto_mode(engine=engine, count=args.count, date_floor=args.date_floor)
 
         elif args.id_start and args.id_end:
             stats = await run_id_range_mode(

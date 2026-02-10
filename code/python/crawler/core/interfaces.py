@@ -5,7 +5,7 @@ interfaces.py - Parser 介面定義
 """
 
 from abc import ABC, abstractmethod
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, List, Any
 from datetime import datetime
 from enum import Enum
 import logging
@@ -77,6 +77,13 @@ class BaseParser(ABC):
             'https://news.ltn.com.tw/news/life/breakingnews/4567890'
         """
         pass
+
+    def get_candidate_urls(self, article_id: int) -> List[str]:
+        """
+        Return alternative URLs to try if primary URL (get_url) fails to parse.
+        Default: no alternatives. Override for multi-category sources.
+        """
+        return []
 
     @abstractmethod
     async def get_latest_id(self, session=None) -> Optional[int]:

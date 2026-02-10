@@ -286,7 +286,7 @@ class EInfoParser(BaseParser):
         title: str,
         article_body: str
     ) -> List[str]:
-        """提取關鍵字"""
+        """提取關鍵字（多重策略）"""
         keywords = []
 
         # 方法 1：從 meta 標籤提取
@@ -299,23 +299,75 @@ class EInfoParser(BaseParser):
                 if kw.strip()
             ]
 
-        # 方法 2：從分類標籤提取
+        # 方法 2：從分類/標籤連結提取（Drupal 常見選擇器）
         if not keywords:
-            category_links = soup.select('.field-name-field-category a, .tags a')
+            tag_selectors = [
+                '.field-name-field-category a',
+                '.field-name-field-tags a',
+                '.tags a',
+                '[rel="tag"]',
+                '.taxonomy-term a',
+                '.field-name-field-topic a',
+            ]
+            for selector in tag_selectors:
+                links = soup.select(selector)
+                if links:
+                    keywords = [
+                        link.get_text(strip=True)
+                        for link in links
+                        if link.get_text(strip=True)
+                    ]
+                    break
+
+        # 方法 3：從 article:tag 提取
+        if not keywords:
+            article_tags = soup.find_all('meta', property='article:tag')
             keywords = [
-                link.get_text(strip=True)
-                for link in category_links
+                tag['content'].strip()
+                for tag in article_tags
+                if tag.get('content')
             ]
 
-        # 方法 3：簡易提取
+        # 方法 4：中文標題切詞提取
         if not keywords:
-            keywords = self._simple_keyword_extraction(title)
+            keywords = self._chinese_keyword_extraction(title)
 
         return keywords[:settings.MAX_KEYWORDS]
 
-    def _simple_keyword_extraction(self, title: str) -> List[str]:
-        """簡易關鍵字提取（委託給 TextProcessor）"""
-        return TextProcessor.simple_keyword_extraction(title, settings.STOPWORDS_ZH)
+    @staticmethod
+    def _chinese_keyword_extraction(title: str) -> List[str]:
+        """中文標題關鍵字提取（不依賴分詞器）
+
+        策略：用標點和停用詞切分標題，取 2-8 字的片段。
+        """
+        if not title:
+            return []
+
+        # 用標點分割
+        segments = re.split(
+            r'[，。、！？：；「」『』（）《》〈〉\s,.\-!?:;()\[\]／/]+',
+            title
+        )
+
+        stopwords = {'的', '了', '在', '是', '與', '及', '和', '或', '從', '到',
+                      '被', '為', '把', '對', '讓', '將', '而', '也', '又', '都',
+                      '已', '更', '再', '還', '卻', '才', '就', '要', '會', '能',
+                      '可', '可能', '不', '沒', '未', '無'}
+
+        keywords = []
+        for seg in segments:
+            seg = seg.strip()
+            # 移除開頭結尾的停用詞
+            for sw in stopwords:
+                if seg.startswith(sw):
+                    seg = seg[len(sw):]
+                if seg.endswith(sw):
+                    seg = seg[:-len(sw)]
+            seg = seg.strip()
+            if 2 <= len(seg) <= 8:
+                keywords.append(seg)
+
+        return keywords[:5]
 
     def _extract_title(self, soup: BeautifulSoup) -> Optional[str]:
         title_tag = soup.select_one('h1.title, #page-title')
@@ -369,21 +421,38 @@ class EInfoParser(BaseParser):
         return paragraphs
 
     def _extract_author(self, soup: BeautifulSoup) -> Optional[str]:
+        """提取作者（多重模式匹配）"""
         article_tag = soup.select_one('article')
         if not article_tag:
             return None
 
-        text = article_tag.get_text(strip=True)
+        text = article_tag.get_text()[:500]  # 作者資訊在前 500 字
+
+        # 按優先順序嘗試各種模式
         patterns = [
-            r'環境資訊中心記者\s+([^報導]+)報導',
-            r'文：([^（）]+)',
-            r'作者[：:]\s*([^\n]+)',
+            # 環境資訊中心記者 XXX 報導
+            r'環境資訊中心\s*記者\s+([^\s報]+(?:\s*[^\s報]+)?)\s*報導',
+            # 環境資訊中心綜合外電；XXX 編譯
+            r'環境資訊中心[^；]*；\s*([^\s編]+(?:\s+[^\s編]+)?)\s*編譯',
+            # 環境資訊中心 XXX報導（無「記者」二字）
+            r'環境資訊中心\s+([\u4e00-\u9fff]{2,3})[、\s].*?報導',
+            # 公視（特約）記者 XXX
+            r'公視(?:特約)?記者\s+([\u4e00-\u9fff]{2,3})',
+            # 特約記者XXX報導
+            r'特約記者\s*([^\s、報]+(?:\s*[^\s、報]+)?)\s*[、報]',
+            # 文：XXX
+            r'文[：:]\s*([\u4e00-\u9fff]{2,5})',
+            # 作者：XXX
+            r'作者[：:]\s*([\u4e00-\u9fff]{2,5})',
+            # 整理：XXX
+            r'整理[：:]\s*([\u4e00-\u9fff]{2,5})',
         ]
 
         for pattern in patterns:
             match = re.search(pattern, text)
             if match:
                 author_name = match.group(1).strip()
-                return TextProcessor.clean_author(author_name)
+                if author_name:
+                    return TextProcessor.clean_author(author_name)
 
         return None

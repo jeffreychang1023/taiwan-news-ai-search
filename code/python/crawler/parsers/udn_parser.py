@@ -53,12 +53,21 @@ class UdnParser(BaseParser):
         """根據文章 ID 構建 URL"""
         return f"https://udn.com/news/story/{self.DEFAULT_CATEGORY}/{article_id}"
 
+    def get_candidate_urls(self, article_id: int) -> List[str]:
+        """All category URLs except default (6656), ordered by settings."""
+        return [
+            f"https://udn.com/news/story/{cat}/{article_id}"
+            for cat in self.COMMON_CATEGORIES
+            if cat != self.DEFAULT_CATEGORY
+        ]
+
     def get_sitemap_config(self) -> Optional[Dict[str, Any]]:
         """取得 sitemap 相關配置"""
         return {
             'index_url': 'https://udn.com/sitemapxml/news/mapindex.xml',
             'is_index': True,  # UDN sitemap is an index pointing to multiple sitemaps
-            'article_url_pattern': r'<loc>(https?://udn\.com/news/story/[^<]+)</loc>',
+            # Pattern applied to extracted URL (without <loc> tags)
+            'article_url_pattern': r'https?://udn\.com/news/story/',
             # UDN sitemap filenames: {TYPE}T{YYYYMM}W{WEEK}.xml (e.g., 2T202602W1.xml)
             'sitemap_date_pattern': r'T(\d{6})W',
         }

@@ -102,6 +102,11 @@ class CrawlerFactory:
                 cls._registry['esg_businesstoday'] = EsgBusinessTodayParser
                 cls._logger.info("Loaded EsgBusinessTodayParser")
 
+            elif source == 'chinatimes':
+                from .chinatimes_parser import ChinatimesParser
+                cls._registry['chinatimes'] = ChinatimesParser
+                cls._logger.info("Loaded ChinatimesParser")
+
             else:
                 cls._logger.warning(f"Unknown source: {source}")
 
@@ -117,7 +122,8 @@ class CrawlerFactory:
             'cna',
             'moea',
             'einfo',
-            'esg_businesstoday'
+            'esg_businesstoday',
+            'chinatimes'
         ]
 
     @classmethod
