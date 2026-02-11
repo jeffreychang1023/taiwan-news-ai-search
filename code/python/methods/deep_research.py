@@ -304,22 +304,30 @@ class DeepResearchHandler(NLWebHandler):
         descriptions = [item.get('description', '') for item in results]
 
         # Build final report
+        # 研究模式中英對照
+        mode_labels = {
+            'discovery': '廣泛探索',
+            'strict': '嚴謹查核',
+            'monitor': '情報監測',
+        }
+        mode_label = mode_labels.get(self.research_mode, self.research_mode)
+
         report_parts = [
-            f"# Deep Research Report: {self.query}",
-            f"\n**Research Mode:** {self.research_mode.upper()}",
-            f"\n**Sources Analyzed:** {len(results)}",
+            f"# 深度研究報告：{self.query}",
+            f"\n**研究模式：** {mode_label}",
+            f"\n**分析來源數：** {len(results)}",
         ]
 
         # Add temporal context if applicable
         if temporal_context.get('is_temporal_query'):
-            date_range = f"{temporal_context.get('start_date', 'N/A')} to {temporal_context.get('end_date', 'N/A')}"
-            report_parts.append(f"\n**Time Period:** {date_range}")
+            date_range = f"{temporal_context.get('start_date', 'N/A')} 至 {temporal_context.get('end_date', 'N/A')}"
+            report_parts.append(f"\n**時間範圍：** {date_range}")
 
         report_parts.append("\n---\n")
 
         # Add research findings
         for i, desc in enumerate(descriptions, 1):
-            report_parts.append(f"\n## Finding {i}\n")
+            report_parts.append(f"\n## 研究發現 {i}\n")
             report_parts.append(desc)
             report_parts.append("\n")
 

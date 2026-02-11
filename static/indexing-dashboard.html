@@ -600,6 +600,121 @@
             margin-left: 5px;
         }
 
+        /* Coverage / Reference Points */
+        .coverage-source {
+            background: #f8fafc;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+            border: 1px solid #e2e8f0;
+        }
+
+        .coverage-source h3 {
+            color: #1e3a5f;
+            font-size: 16px;
+            margin-bottom: 5px;
+        }
+
+        .coverage-source .coverage-subtitle {
+            color: #94a3b8;
+            font-size: 13px;
+            margin-bottom: 15px;
+        }
+
+        .coverage-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .coverage-table th,
+        .coverage-table td {
+            padding: 8px 12px;
+            text-align: left;
+            border-bottom: 1px solid #e2e8f0;
+            font-size: 13px;
+        }
+
+        .coverage-table th {
+            background: #f1f5f9;
+            font-weight: 600;
+            color: #64748b;
+            text-transform: uppercase;
+            font-size: 11px;
+        }
+
+        .ref-status {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+
+        .ref-status.found {
+            background: #d1fae5;
+            color: #065f46;
+        }
+
+        .ref-status.confirmed_404 {
+            background: #fef3c7;
+            color: #92400e;
+        }
+
+        .ref-status.not_scanned {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+
+        .coverage-summary {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 15px;
+            flex-wrap: wrap;
+        }
+
+        .coverage-summary-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 13px;
+            color: #475569;
+        }
+
+        .coverage-summary-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+        }
+
+        .coverage-month-bar {
+            display: flex;
+            gap: 3px;
+            flex-wrap: wrap;
+            margin-top: 10px;
+        }
+
+        .coverage-month-cell {
+            width: 32px;
+            height: 24px;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 9px;
+            color: white;
+            font-weight: 500;
+            cursor: default;
+        }
+
+        .coverage-month-cell.has-data {
+            background: #22c55e;
+        }
+
+        .coverage-month-cell.no-data {
+            background: #e2e8f0;
+            color: #94a3b8;
+        }
+
         /* Error table */
         .error-table {
             width: 100%;
@@ -1006,6 +1121,7 @@
             <button class="tab-btn active" onclick="switchTab('statistics')">Statistics</button>
             <button class="tab-btn" onclick="switchTab('crawler')">Crawler</button>
             <button class="tab-btn" onclick="switchTab('fullscan')">Full Scan</button>
+            <button class="tab-btn" onclick="switchTab('coverage')">Coverage</button>
             <button class="tab-btn" onclick="switchTab('errors')">Errors <span id="errorBadge" class="error-badge" style="display:none">0</span></button>
         </div>
 
@@ -1135,6 +1251,7 @@
                             <option value="einfo" selected>EInfo (Sequential: 230K+)</option>
                             <option value="cna">CNA (Date-based)</option>
                             <option value="esg_businesstoday">ESG BT (Date-based)</option>
+                            <option value="chinatimes">Chinatimes (Date-based)</option>
                         </select>
                     </div>
                     <div class="control-group">
@@ -1168,6 +1285,20 @@
                         <p>No full scan tasks running. Select sources and click Start Full Scan.</p>
                     </div>
                 </div>
+            </div>
+        </div>
+
+        <!-- Coverage Tab -->
+        <div id="coverage-tab" class="tab-content">
+            <h2 style="color: #1e3a5f; margin-bottom: 10px;">Coverage Reference Points</h2>
+            <p style="color: #64748b; font-size: 14px; margin-bottom: 20px;">
+                Validates known article IDs at specific dates to verify full scan coverage.
+                <strong>found</strong> = successfully crawled,
+                <strong>confirmed_404</strong> = article does not exist,
+                <strong>not_scanned</strong> = not yet scanned.
+            </p>
+            <div id="coverageContent">
+                <p style="color: #94a3b8;">Loading...</p>
             </div>
         </div>
 
@@ -1302,6 +1433,8 @@
                 loadSources();
             } else if (tabName === 'fullscan') {
                 loadFullScanStatus();
+            } else if (tabName === 'coverage') {
+                loadReferencePoints();
             } else if (tabName === 'errors') {
                 loadAllErrors();
                 populateErrorSourceFilter();
@@ -2102,12 +2235,16 @@
 
         async function loadFullScanStatus() {
             try {
-                const res = await fetch(`${API_BASE}/api/indexing/fullscan/status`);
-                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                // Load watermarks in parallel with full scan status
+                const [statusRes] = await Promise.all([
+                    fetch(`${API_BASE}/api/indexing/fullscan/status`),
+                    loadWatermarks(),
+                ]);
+                if (!statusRes.ok) throw new Error(`HTTP ${statusRes.status}`);
 
-                const data = await res.json();
+                const data = await statusRes.json();
 
-                // Render source status
+                // Render source status (uses watermarkCache populated by loadWatermarks)
                 renderFullScanSourceStatus(data.sources);
 
                 // Render active tasks
@@ -2120,6 +2257,22 @@
 
         // Cache for monthly data per source
         const monthlyDataCache = {};
+
+        // Cache for watermark data
+        let watermarkCache = {};
+
+        async function loadWatermarks() {
+            try {
+                const res = await fetch(`${API_BASE}/api/indexing/watermarks`);
+                if (!res.ok) return {};
+                const data = await res.json();
+                watermarkCache = data.watermarks || {};
+                return watermarkCache;
+            } catch (e) {
+                console.error('Failed to load watermarks:', e);
+                return {};
+            }
+        }
 
         function renderFullScanSourceStatus(sources) {
             const container = document.getElementById('fullscanSourceStatus');
@@ -2134,6 +2287,15 @@
                     const typeLabel = info.type === 'sequential'
                         ? `Sequential (start: ${formatNumber(info.start_id || 0)})`
                         : 'Date-based';
+                    const wm = watermarkCache[sourceId];
+                    let wmLabel = '';
+                    if (wm) {
+                        if (wm.last_scanned_id) {
+                            wmLabel = `Last scan: ID ${formatNumber(wm.last_scanned_id)}`;
+                        } else if (wm.last_scanned_date) {
+                            wmLabel = `Last scan: ${wm.last_scanned_date}`;
+                        }
+                    }
                     return `
                         <div class="coverage-source-card" id="coverage-${sourceId}">
                             <div class="coverage-source-header" onclick="toggleSourceCoverage('${sourceId}')">
@@ -2141,6 +2303,7 @@
                                     <span class="arrow">&#9654;</span>
                                     <span class="coverage-source-name">${info.name}</span>
                                     <span style="color: #94a3b8; font-size: 12px; margin-left: 8px;">${typeLabel}</span>
+                                    ${wmLabel ? `<span style="color: #059669; font-size: 11px; margin-left: 10px;">${wmLabel}</span>` : ''}
                                 </div>
                                 <span class="coverage-source-total" id="coverage-total-${sourceId}">...</span>
                             </div>
@@ -2342,8 +2505,23 @@
             const startDate = document.getElementById('fullscanDateFrom').value.trim() || '2024-01-01';
             const endDate = document.getElementById('fullscanDateTo').value.trim() || new Date().toISOString().slice(0, 10);
 
+            // Build watermark info for confirmation
+            await loadWatermarks();
+            let wmInfo = '';
+            for (const src of selectedSources) {
+                const wm = watermarkCache[src];
+                if (wm && wm.last_scanned_id) {
+                    wmInfo += `  ${src}: starting from ID ${(wm.last_scanned_id + 1).toLocaleString()} (last: ${wm.last_scanned_id.toLocaleString()})\n`;
+                } else if (wm && wm.last_scanned_date) {
+                    const nextDay = new Date(new Date(wm.last_scanned_date).getTime() + 86400000).toISOString().slice(0, 10);
+                    wmInfo += `  ${src}: starting from ${nextDay} (last: ${wm.last_scanned_date})\n`;
+                } else {
+                    wmInfo += `  ${src}: starting from default (no previous scan)\n`;
+                }
+            }
+
             const msg = `Start full scan for ${selectedSources.length} source(s)?\n\n` +
-                `Sources: ${selectedSources.join(', ')}\n` +
+                `Sources:\n${wmInfo}\n` +
                 `Date range (date-based sources): ${startDate} to ${endDate}\n\n` +
                 `Sequential sources will auto-detect the latest ID.\n` +
                 `This may take several days for large ranges.`;
@@ -2435,6 +2613,99 @@
             // Also refresh error badge
             setInterval(loadErrorBadge, 30000);
         });
+
+        // ==================== Coverage / Reference Points ====================
+        async function loadReferencePoints() {
+            const container = document.getElementById('coverageContent');
+            container.innerHTML = '<p style="color: #94a3b8;">Loading reference points...</p>';
+
+            try {
+                const res = await fetch(`${API_BASE}/api/indexing/reference-points`);
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const data = await res.json();
+
+                if (data.error) {
+                    container.innerHTML = `<p style="color: #ef4444;">Error: ${data.error}</p>`;
+                    return;
+                }
+
+                let html = '';
+
+                for (const [sourceId, info] of Object.entries(data)) {
+                    const { name, configured, discovered, summary, discovered_months } = info;
+
+                    html += `<div class="coverage-source">`;
+                    html += `<h3>${name} (${sourceId})</h3>`;
+
+                    // Summary line
+                    if (summary.total > 0) {
+                        html += `<div class="coverage-summary">`;
+                        html += `<div class="coverage-summary-item">
+                            <span class="coverage-summary-dot" style="background:#22c55e"></span>
+                            Found: ${summary.found}/${summary.total}
+                        </div>`;
+                        if (summary.confirmed_404 > 0) {
+                            html += `<div class="coverage-summary-item">
+                                <span class="coverage-summary-dot" style="background:#f59e0b"></span>
+                                404: ${summary.confirmed_404}
+                            </div>`;
+                        }
+                        if (summary.not_scanned > 0) {
+                            html += `<div class="coverage-summary-item">
+                                <span class="coverage-summary-dot" style="background:#ef4444"></span>
+                                Not scanned: ${summary.not_scanned}
+                            </div>`;
+                        }
+                        html += `</div>`;
+
+                        // Configured reference points table
+                        html += `<table class="coverage-table">`;
+                        html += `<thead><tr>
+                            <th>Date</th><th>Article ID</th><th>Note</th><th>Status</th><th>Published</th>
+                        </tr></thead><tbody>`;
+                        for (const pt of configured) {
+                            const statusClass = pt.status;
+                            const statusLabel = pt.status === 'found' ? 'Found'
+                                : pt.status === 'confirmed_404' ? '404'
+                                : 'Not Scanned';
+                            html += `<tr>
+                                <td>${pt.date}</td>
+                                <td><code>${pt.id}</code></td>
+                                <td>${pt.note || ''}</td>
+                                <td><span class="ref-status ${statusClass}">${statusLabel}</span></td>
+                                <td>${pt.date_published || '-'}</td>
+                            </tr>`;
+                        }
+                        html += `</tbody></table>`;
+                    } else {
+                        html += `<p class="coverage-subtitle">No configured reference points. Using auto-discovery only.</p>`;
+                    }
+
+                    // Discovered coverage (month heatmap)
+                    if (discovered && discovered.length > 0) {
+                        html += `<div style="margin-top: 15px;">`;
+                        html += `<p style="color: #64748b; font-size: 13px; margin-bottom: 8px;">
+                            Auto-discovered: ${discovered_months} months with data
+                        </p>`;
+                        html += `<div class="coverage-month-bar">`;
+                        for (const d of discovered) {
+                            const label = d.date.substring(2); // "24-01" from "2024-01"
+                            html += `<div class="coverage-month-cell has-data" title="${d.date}: ${d.url}">${label}</div>`;
+                        }
+                        html += `</div></div>`;
+                    } else {
+                        html += `<p class="coverage-subtitle" style="margin-top: 10px;">No articles found in registry for this source.</p>`;
+                    }
+
+                    html += `</div>`;
+                }
+
+                container.innerHTML = html || '<p style="color: #94a3b8;">No data available.</p>';
+            } catch (error) {
+                console.error('Failed to load reference points:', error);
+                container.innerHTML = `<p style="color: #ef4444;">Failed to load: ${error.message}</p>`;
+            }
+        }
 
         async function loadErrorBadge() {
             try {

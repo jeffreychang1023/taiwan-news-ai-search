@@ -35,12 +35,13 @@ class CrawlerTaskStatus(Enum):
 
 # Full Scan source configurations
 FULL_SCAN_CONFIG = {
-    "udn":  {"type": "sequential", "name": "United Daily News", "start_id": 7_800_000},
-    "ltn":  {"type": "sequential", "name": "Liberty Times Net", "start_id": 3_000_000},
-    "einfo": {"type": "sequential", "name": "Environmental Info Center", "start_id": 230_000},
+    "udn":  {"type": "sequential", "name": "United Daily News", "start_id": 7_800_000, "default_end_id": 9_400_000},
+    "ltn":  {"type": "sequential", "name": "Liberty Times Net", "start_id": 4_550_000, "default_end_id": 5_400_000},
+    "einfo": {"type": "sequential", "name": "Environmental Info Center", "start_id": 230_000, "default_end_id": 270_000},
     "cna":  {"type": "date_based", "name": "Central News Agency"},
     "esg_businesstoday": {"type": "date_based", "name": "ESG BusinessToday"},
     "chinatimes": {"type": "date_based", "name": "China Times"},
+    "moea": {"type": "sequential", "name": "Ministry of Economic Affairs", "start_id": 110_000, "default_end_id": 122_000},
 }
 
 
@@ -70,8 +71,8 @@ class CrawlerTask:
     scan_end: Optional[str] = None               # "9313000" or "2026-02-07"
 
 
-ALLOWED_SOURCES = {"ltn", "udn", "cna", "esg_businesstoday", "einfo", "chinatimes"}
-ALLOWED_MODES = {"auto", "full_scan", "retry", "retry_urls", "list_page"}
+ALLOWED_SOURCES = {"ltn", "udn", "cna", "esg_businesstoday", "einfo", "chinatimes", "moea"}
+ALLOWED_MODES = {"auto", "full_scan", "retry", "retry_urls", "list_page", "sitemap"}
 MAX_COUNT = 100_000
 MAX_LIMIT = 10_000
 
@@ -260,6 +261,18 @@ class IndexingDashboardAPI:
         self._task_counter += 1
         task_id = f"crawler_{source}_{self._task_counter}_{int(time.time())}"
 
+        # Determine scan_start/scan_end for full_scan mode display
+        scan_start = None
+        scan_end = None
+        if mode == "full_scan":
+            config = FULL_SCAN_CONFIG.get(source, {})
+            if config.get("type") == "sequential":
+                scan_start = str(body.get("start_id", config.get("start_id", "")))
+                scan_end = str(body.get("end_id", config.get("default_end_id", "")))
+            elif config.get("type") == "date_based":
+                scan_start = body.get("start_date", "2024-01-01")
+                scan_end = body.get("end_date", time.strftime("%Y-%m-%d"))
+
         task = CrawlerTask(
             task_id=task_id,
             source=source,
@@ -267,7 +280,9 @@ class IndexingDashboardAPI:
             count=count,
             status=CrawlerTaskStatus.RUNNING,
             total=count,
-            started_at=time.time()
+            started_at=time.time(),
+            scan_start=scan_start,
+            scan_end=scan_end,
         )
 
         task.params = body
@@ -335,6 +350,11 @@ class IndexingDashboardAPI:
                         task.last_scanned_id = stats["last_scanned_id"]
                     if "last_scanned_date" in stats:
                         task.last_scanned_date = stats["last_scanned_date"]
+                    # Backfill scan_start/scan_end from engine stats if not set
+                    if task.scan_start is None and "scan_start" in stats:
+                        task.scan_start = str(stats["scan_start"])
+                    if task.scan_end is None and "scan_end" in stats:
+                        task.scan_end = str(stats["scan_end"])
                     asyncio.create_task(self._broadcast_status(task))
 
                 elif msg_type == "completed":
@@ -600,8 +620,8 @@ class IndexingDashboardAPI:
         try:
             # Check if process is still alive
             os.kill(pid, 0)  # signal 0 = existence check, doesn't kill
-        except OSError:
-            # Process doesn't exist (already exited)
+        except (OSError, SystemError):
+            # Process doesn't exist, or Windows raised SystemError for special PIDs
             return False
 
         try:
@@ -612,12 +632,12 @@ class IndexingDashboardAPI:
                 os.kill(pid, signal.SIGTERM)
             logger.info(f"Killed orphan subprocess PID={pid}")
             return True
-        except OSError as e:
+        except (OSError, SystemError) as e:
             logger.warning(f"Failed to kill orphan PID={pid}: {e}")
             return False
 
     def _save_tasks(self) -> None:
-        """將 tasks 保存到檔案"""
+        """將 tasks 保存到檔案（非阻塞：序列化在主線程，寫檔在背景線程）"""
         import json
 
         tasks_path = Path(self.TASKS_FILE)
@@ -628,8 +648,20 @@ class IndexingDashboardAPI:
                 'tasks': [self._task_to_dict(t) for t in self._crawler_tasks.values()],
                 'task_counter': self._task_counter,
             }
-            with open(tasks_path, 'w', encoding='utf-8') as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
+            # Serialize in main thread (needs access to task objects),
+            # then write to file in background thread to avoid blocking event loop
+            content = json.dumps(data, ensure_ascii=False, indent=2)
+
+            def _write():
+                with open(tasks_path, 'w', encoding='utf-8') as f:
+                    f.write(content)
+
+            try:
+                loop = asyncio.get_running_loop()
+                loop.run_in_executor(None, _write)
+            except RuntimeError:
+                # No running event loop (e.g. during sync init) — write directly
+                _write()
 
         except Exception as e:
             logger.warning(f"Failed to save tasks: {e}")
@@ -754,13 +786,22 @@ class IndexingDashboardAPI:
             "task": self._task_to_dict(task)
         }
 
-        for ws in self._websockets[:]:  # Copy list to avoid modification during iteration
-            try:
-                await ws.send_json(message)
-            except Exception as e:
-                logger.warning(f"Failed to send WebSocket message: {e}")
-                if ws in self._websockets:
-                    self._websockets.remove(ws)
+        if not self._websockets:
+            # Skip broadcast overhead when no clients connected
+            pass
+        else:
+            async def _send_safe(ws):
+                try:
+                    await ws.send_json(message)
+                except Exception as e:
+                    logger.warning(f"Failed to send WebSocket message: {e}")
+                    if ws in self._websockets:
+                        self._websockets.remove(ws)
+
+            await asyncio.gather(
+                *[_send_safe(ws) for ws in self._websockets[:]],
+                return_exceptions=True
+            )
 
         # 持久化 tasks（節流：最多每 N 秒保存一次，終態立即保存）
         now = time.time()
@@ -1282,10 +1323,15 @@ class IndexingDashboardAPI:
 
         logger.info(f"Auto-resume: {len(self._pending_auto_resume)} zombie full_scan task(s) to resume")
 
-        for old_task_id in self._pending_auto_resume:
-            new_id = await self._auto_resume_task(old_task_id)
-            if new_id:
-                logger.info(f"Auto-resume: {old_task_id} -> {new_id}")
+        results = await asyncio.gather(
+            *[self._auto_resume_task(tid) for tid in self._pending_auto_resume],
+            return_exceptions=True
+        )
+        for old_task_id, result in zip(self._pending_auto_resume, results):
+            if isinstance(result, Exception):
+                logger.warning(f"Auto-resume: failed to resume {old_task_id}: {result}")
+            elif result:
+                logger.info(f"Auto-resume: {old_task_id} -> {result}")
             else:
                 logger.warning(f"Auto-resume: failed to resume {old_task_id}")
 
@@ -1340,6 +1386,26 @@ class IndexingDashboardAPI:
 
         task_ids = []
 
+        # Phase 1: Auto-detect end_ids for sequential sources in parallel
+        detected_end_ids = {}
+        if body.get("end_id") is None:
+            detect_sources = [
+                s for s in sources
+                if FULL_SCAN_CONFIG[s]["type"] == "sequential"
+            ]
+            if detect_sources:
+                detect_results = await asyncio.gather(
+                    *[self._detect_latest_id(s) for s in detect_sources],
+                    return_exceptions=True
+                )
+                for source, result in zip(detect_sources, detect_results):
+                    if isinstance(result, Exception):
+                        logger.warning(f"Failed to auto-detect end_id for {source}: {result}")
+                    elif result is not None:
+                        detected_end_ids[source] = result
+                        logger.info(f"Auto-detected end_id for {source}: {result:,}")
+
+        # Phase 2: Create tasks (fast, no network I/O)
         for source in sources:
             config = FULL_SCAN_CONFIG[source]
 
@@ -1347,24 +1413,21 @@ class IndexingDashboardAPI:
             params = {"source": source, "mode": "full_scan"}
 
             if config["type"] == "sequential":
-                start_id = body.get("start_id", config.get("start_id"))
-                end_id = body.get("end_id")
+                # Use watermark to avoid re-scanning already-scanned IDs
+                default_start = config.get("start_id")
+                watermark = self._get_watermark(source)
+                if watermark and watermark.get("last_scanned_id"):
+                    wm_id = watermark["last_scanned_id"] + 1
+                    if wm_id > default_start:
+                        logger.info(f"Watermark override for {source}: {default_start:,} -> {wm_id:,}")
+                        default_start = wm_id
+                start_id = body.get("start_id") or default_start
+                end_id = body.get("end_id") or detected_end_ids.get(source)
 
-                # Auto-detect end_id if not provided
-                if end_id is None:
-                    try:
-                        parser = await self._get_parser(source)
-                        if parser:
-                            from crawler.core.engine import CrawlerEngine
-                            engine = CrawlerEngine(parser=parser, auto_save=False)
-                            engine.session = await engine._create_session()
-                            latest = await parser.get_latest_id(session=engine.session)
-                            await engine.close()
-                            if latest:
-                                end_id = latest
-                                logger.info(f"Auto-detected end_id for {source}: {end_id:,}")
-                    except Exception as e:
-                        logger.warning(f"Failed to auto-detect end_id for {source}: {e}")
+                # Fallback to config default_end_id if auto-detection failed
+                if end_id is None and config.get("default_end_id"):
+                    end_id = config["default_end_id"]
+                    logger.info(f"Using default_end_id for {source}: {end_id:,}")
 
                 if start_id is None or end_id is None:
                     logger.warning(f"Skipping {source}: start_id or end_id not available")
@@ -1376,7 +1439,17 @@ class IndexingDashboardAPI:
                 scan_end = str(end_id)
 
             else:  # date_based
-                params["start_date"] = body.get("start_date", "2024-01-01")
+                # Use watermark to avoid re-scanning already-scanned dates
+                default_start_date = "2024-01-01"
+                watermark = self._get_watermark(source)
+                if watermark and watermark.get("last_scanned_date"):
+                    from datetime import datetime as dt, timedelta
+                    wm_date = dt.strptime(watermark["last_scanned_date"], "%Y-%m-%d")
+                    new_start = (wm_date + timedelta(days=1)).strftime("%Y-%m-%d")
+                    if new_start > default_start_date:
+                        logger.info(f"Watermark override for {source}: {default_start_date} -> {new_start}")
+                        default_start_date = new_start
+                params["start_date"] = body.get("start_date") or default_start_date
                 params["end_date"] = body.get("end_date", time.strftime("%Y-%m-%d"))
                 scan_start = params["start_date"]
                 scan_end = params["end_date"]
@@ -1398,7 +1471,6 @@ class IndexingDashboardAPI:
             )
 
             self._crawler_tasks[task_id] = task
-            self._save_tasks()
 
             reader_task = asyncio.create_task(
                 self._run_crawler_subprocess(task, params)
@@ -1407,6 +1479,9 @@ class IndexingDashboardAPI:
 
             task_ids.append(task_id)
             logger.info(f"Started full scan: {task_id} for {source} ({scan_start} -> {scan_end})")
+
+        if task_ids:
+            self._save_tasks()
 
         if not task_ids:
             return web.json_response({"error": "No tasks could be started"}, status=400)
@@ -1442,6 +1517,105 @@ class IndexingDashboardAPI:
             "tasks": scan_tasks,
             "sources": sources_info,
         })
+
+    async def get_watermarks(self, request: web.Request) -> web.Response:
+        """
+        GET /api/indexing/watermarks
+
+        Returns scan watermarks for all sources.
+        """
+        try:
+            from crawler.core.crawled_registry import get_registry
+            registry = get_registry()
+            watermarks = registry.get_all_watermarks()
+            return web.json_response({"watermarks": watermarks})
+        except Exception as e:
+            logger.warning(f"Failed to read watermarks: {e}")
+            return web.json_response({"watermarks": {}, "error": str(e)})
+
+    async def get_reference_points(self, request: web.Request) -> web.Response:
+        """
+        GET /api/indexing/reference-points
+
+        Returns reference point validation results for all sources.
+        Includes both configured reference points and auto-discovered points.
+        """
+        try:
+            from crawler.core.crawled_registry import get_registry
+            from crawler.core.settings import REFERENCE_POINTS
+
+            registry = get_registry()
+            result = {}
+
+            for source_id in FULL_SCAN_CONFIG:
+                configured_points = REFERENCE_POINTS.get(source_id, [])
+
+                # Validate configured reference points
+                validated = []
+                if configured_points:
+                    validated = registry.validate_reference_points(
+                        source_id, configured_points
+                    )
+
+                # Auto-discover reference points from existing data
+                discovered = registry.discover_reference_points(source_id)
+
+                # Summary counts
+                found = sum(1 for v in validated if v["status"] == "found")
+                confirmed_404 = sum(1 for v in validated if v["status"] == "confirmed_404")
+                not_scanned = sum(1 for v in validated if v["status"] == "not_scanned")
+
+                result[source_id] = {
+                    "name": FULL_SCAN_CONFIG[source_id].get("name", source_id),
+                    "configured": validated,
+                    "discovered": discovered,
+                    "summary": {
+                        "total": len(validated),
+                        "found": found,
+                        "confirmed_404": confirmed_404,
+                        "not_scanned": not_scanned,
+                    },
+                    "discovered_months": len(discovered),
+                }
+
+            return web.json_response(result)
+        except Exception as e:
+            logger.error(f"Failed to get reference points: {e}", exc_info=True)
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def _detect_latest_id(self, source: str) -> Optional[int]:
+        """Auto-detect the latest article ID for a sequential source."""
+        try:
+            parser = await self._get_parser(source)
+            if not parser:
+                return None
+            from crawler.core.engine import CrawlerEngine
+            engine = CrawlerEngine(parser=parser, auto_save=False)
+            engine.session = await engine._create_session()
+            try:
+                latest = await asyncio.wait_for(
+                    parser.get_latest_id(session=engine.session),
+                    timeout=30
+                )
+                return latest
+            finally:
+                await engine.close()
+        except asyncio.TimeoutError:
+            logger.warning(f"Timeout detecting latest ID for {source}")
+            return None
+        except Exception as e:
+            logger.warning(f"Failed to detect latest ID for {source}: {e}")
+            return None
+
+    def _get_watermark(self, source: str) -> Optional[dict]:
+        """Read scan watermark from registry."""
+        try:
+            from crawler.core.crawled_registry import get_registry
+            registry = get_registry()
+            return registry.get_scan_watermark(source)
+        except Exception as e:
+            logger.warning(f"Failed to read watermark for {source}: {e}")
+            return None
 
     def _task_to_dict(self, task: CrawlerTask) -> Dict[str, Any]:
         """Convert CrawlerTask to dict for JSON response"""
@@ -1514,6 +1688,10 @@ def setup_routes(app: web.Application) -> None:
     # Full Scan
     app.router.add_post("/api/indexing/fullscan/start", api.start_full_scan)
     app.router.add_get("/api/indexing/fullscan/status", api.get_full_scan_status)
+    app.router.add_get("/api/indexing/watermarks", api.get_watermarks)
+
+    # Reference Points (coverage validation)
+    app.router.add_get("/api/indexing/reference-points", api.get_reference_points)
 
     # Auto-resume zombie full_scan tasks on startup
     async def on_startup(app):

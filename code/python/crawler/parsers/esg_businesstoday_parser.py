@@ -73,10 +73,8 @@ class EsgBusinessTodayParser(BaseParser):
         return '/post/' in request_url and '/post/' not in response_url
 
     @staticmethod
-    async def _get_response_text(response) -> Optional[str]:
-        """Extract text from aiohttp or curl_cffi response."""
-        if hasattr(response, 'text') and callable(response.text):
-            return await response.text()
+    def _get_response_text(response) -> Optional[str]:
+        """Extract text from curl_cffi response."""
         return response.text
 
     def get_url(self, article_id: int) -> str:
@@ -134,13 +132,11 @@ class EsgBusinessTodayParser(BaseParser):
             self.logger.info(f"Fetching sitemap: {self.SITEMAP_URL}")
             response = await session.get(self.SITEMAP_URL)
 
-            # 相容 aiohttp (.status) 和 curl_cffi (.status_code)
-            status = getattr(response, 'status_code', None) or getattr(response, 'status', 0)
-            if status != 200:
-                self.logger.error(f"Sitemap fetch failed: {status}")
+            if response.status_code != 200:
+                self.logger.error(f"Sitemap fetch failed: {response.status_code}")
                 return
 
-            xml_text = await self._get_response_text(response)
+            xml_text = self._get_response_text(response)
 
             # 解析 XML（使用 regex 避免依賴 xml 套件）
             url_pattern = r'<loc>([^<]+)</loc>'
@@ -222,12 +218,10 @@ class EsgBusinessTodayParser(BaseParser):
 
             response = await session.get(url)
 
-            # 相容 aiohttp (.status) 和 curl_cffi (.status_code)
-            status = getattr(response, 'status_code', None) or getattr(response, 'status', 0)
-            if status != 200:
+            if response.status_code != 200:
                 return ids
 
-            html = await self._get_response_text(response)
+            html = self._get_response_text(response)
 
             soup = BeautifulSoup(html, 'lxml')
             links = soup.select('a.article__item, a.hover-area, a[href*="/post/"]')

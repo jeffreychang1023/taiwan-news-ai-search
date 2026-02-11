@@ -1335,11 +1335,11 @@ class DeepResearchOrchestrator:
         return [{
             "@type": "Item",
             "url": "https://deep-research.internal/error",
-            "name": f"Research Error: {query}",
-            "site": "Deep Research Module",
+            "name": f"研究錯誤：{query}",
+            "site": "深度研究模組",
             "siteUrl": "https://deep-research.internal",
             "score": 0,
-            "description": f"## Error\n\n{error_message}",
+            "description": f"## 錯誤\n\n{error_message}",
             "schema_object": {
                 "@type": "ErrorReport",
                 "error": error_message

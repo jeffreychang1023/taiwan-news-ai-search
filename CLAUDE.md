@@ -10,7 +10,7 @@
 
 新聞網站自然語言搜尋系統。目標：可信、準確、邏輯嚴謹的搜尋與推論。
 
-**目前狀態**（2026-01）：Reasoning 與 Deep Research 系統已完成。重點：效能優化。
+**目前狀態**（2026-02）：核心系統完成（Indexing + Reasoning + Ranking）。重點：E2E 驗證與效能優化。
 
 ---
 
@@ -22,7 +22,7 @@
 
 | 狀態區域               | 主要檔案                                                       |
 | ------------------ | ---------------------------------------------------------- |
-| **Crawler**        | `crawler/core/engine.py`, `crawler/parsers/*.py`           |
+| **Crawler**        | `crawler/core/engine.py`, `crawler/subprocess_runner.py`, `crawler/parsers/*.py` |
 | **Indexing**       | `indexing/pipeline.py`, `indexing/chunking_engine.py`      |
 | Server Startup     | `webserver/aiohttp_server.py`                              |
 | Connection Layer   | `webserver/middleware/`, `chat/websocket.py`               |
@@ -86,7 +86,7 @@
 
 | 模組                     | 狀態      | 說明                                   |
 | ---------------------- | ------- | ------------------------------------ |
-| **M0: Indexing**       | 🟢 完成   | Crawler (6 Parser) + Indexing Pipeline |
+| **M0: Indexing**       | 🟢 完成   | Crawler (7 Parser, Subprocess 隔離) + Indexing Pipeline |
 | **M1: Input**          | 🟡 部分完成 | Query Decomposition ✅ / Guardrails ❌ |
 | **M2: Retrieval**      | 🟡 部分完成 | Internal Search ✅ / Web Search ❌     |
 | **M3: Ranking**        | 🟢 完成   | BM25 + XGBoost + MMR                 |
@@ -100,9 +100,14 @@
 
 ## 目前開發重點
 
-### 已完成（2026-01）
+### 已完成（2026-02）
 
-✅ **M0 Indexing 資料工廠**（Crawler 6 Parser + Indexing Pipeline）
+✅ **Dashboard Bug Fixes + Full Scan 穩定性**（MOEA 限速修復、scan_start/scan_end 初始化、task cleanup）
+✅ **UDN Sitemap Backfill + curl_cffi 清理**（sitemap mode 串接、fail fast、shim 移除）
+✅ **Qdrant Profile 切換系統**（online/offline 環境切換）
+✅ **E2E 驗證基礎設施**（MCP wrapper、Streaming 改進、E2E 測試框架）
+✅ **Search Mode 優化**（統一搜尋 UX、前端 UI/UX 改進）
+✅ **M0 Indexing 資料工廠**（Crawler 7 Parser + Subprocess 隔離 + Indexing Pipeline）
 ✅ Reasoning 系統（Actor-Critic、4 個 agents、幻覺防護）
 ✅ Deep Research（時間範圍、澄清、引用）
 ✅ XGBoost ML Ranking（Phase A/B/C）
@@ -116,6 +121,7 @@
 
 ### 目前工作
 
+🔄 **全量 Backfill**：6 source 從 checkpoint 續跑中（UDN 用 sitemap 獨立處理）
 🔄 **效能優化**：延遲分析、token 減少、引用 UX 改進
 
 **規劃**：見 `.claude/NEXT_STEPS.md` 與 `.claude/CONTEXT.md`

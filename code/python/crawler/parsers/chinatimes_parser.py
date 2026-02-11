@@ -35,6 +35,19 @@ class ChinatimesParser(BaseParser):
         'world', 'money', 'sport', 'star',
     ]
 
+    # realtimenews category codes（URL 中 - 後的 6 位數字）
+    # get_url() 用 260402（社會）作 primary，其餘作 candidate
+    REALTIMENEWS_CATEGORY_CODES = [
+        '260402',  # 社會 (primary, highest volume)
+        '260407',  # 政治
+        '260405',  # 生活
+        '260404',  # 國際
+        '260408',  # 科技
+        '260410',  # 娛樂
+        '260412',  # 體育
+        '260403',  # 財經
+    ]
+
     def __init__(self):
         super().__init__()
         self._id_url_map: Dict[int, str] = {}
@@ -51,11 +64,21 @@ class ChinatimesParser(BaseParser):
         return f"https://www.chinatimes.com/realtimenews/{article_id}-260402"
 
     def get_candidate_urls(self, article_id: int) -> List[str]:
-        """嘗試不同 section（realtimenews / newspapers / opinion 互不重疊）"""
-        return [
-            f"https://www.chinatimes.com/newspapers/{article_id}-260109",
-            f"https://www.chinatimes.com/opinion/{article_id}-262101",
-        ]
+        """嘗試不同 category code 和 section。
+
+        Chinatimes URL 必須包含正確的 category code（不像 CNA 可以任意 category resolve）。
+        Primary URL 用 260402（社會），這裡列出其他 realtimenews categories + newspapers/opinion。
+        """
+        candidates = []
+        # 其他 realtimenews category codes（跳過 primary 260402）
+        for code in self.REALTIMENEWS_CATEGORY_CODES:
+            if code == '260402':
+                continue  # Already tried via get_url()
+            candidates.append(f"https://www.chinatimes.com/realtimenews/{article_id}-{code}")
+        # 不同 section
+        candidates.append(f"https://www.chinatimes.com/newspapers/{article_id}-260109")
+        candidates.append(f"https://www.chinatimes.com/opinion/{article_id}-262101")
+        return candidates
 
     def get_list_page_config(self) -> Optional[Dict[str, Any]]:
         """列表頁爬取配置"""
@@ -82,17 +105,11 @@ class ChinatimesParser(BaseParser):
 
             response = await session.get(list_url)
 
-            # 相容 aiohttp (.status) 和 curl_cffi (.status_code)
-            status = getattr(response, 'status_code', None) or getattr(response, 'status', 0)
-            if status != 200:
-                self.logger.error(f"Failed to fetch list page: {status}")
+            if response.status_code != 200:
+                self.logger.error(f"Failed to fetch list page: {response.status_code}")
                 return None
 
-            # 相容 aiohttp (await .text()) 和 curl_cffi (.text)
-            if hasattr(response, 'text') and callable(response.text):
-                html = await response.text()
-            else:
-                html = response.text
+            html = response.text
             soup = BeautifulSoup(html, 'lxml')
             links = soup.select('a[href*="/realtimenews/"]')
 

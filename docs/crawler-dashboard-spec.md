@@ -79,7 +79,7 @@ Indexing Dashboard 是一個單頁應用程式，用於管理 NLWeb 的爬蟲系
 | 控制項 | 類型 | 選項/範圍 | 說明 |
 |--------|------|----------|------|
 | Source | Select | 動態載入 | 選擇爬蟲來源 |
-| Mode | Select | `auto`, `list_page` | 爬取模式 |
+| Mode | Select | `auto`, `list_page`, `full_scan`, `sitemap` | 爬取模式 |
 | Max Count | Number | 1-5000 | auto 最大爬取數量 |
 | Stop After Skips | Number | 1-100 | auto 模式：連續幾個已爬取後停止 |
 | Max Pages | Number | 1-100 | list_page 模式：最大頁數 |
@@ -100,6 +100,20 @@ Indexing Dashboard 是一個單頁應用程式，用於管理 NLWeb 的爬蟲系
 **List Page Mode - 列表頁爬取**
 - 從分類列表頁逐頁爬取
 - 適用於：moea 等僅有列表頁的來源
+
+**Full Scan Mode - 全量掃描**
+- 掃描指定 ID/日期範圍內的每一個 ID
+- Sequential sources: `start_id` / `end_id`
+- Date-based sources: `start_date` / `end_date`（YYYY-MM 或 YYYY-MM-DD）
+- Watermark 機制：記錄上次掃描進度，重啟時自動跳過已掃描範圍
+- 適用於：大量 backfill
+
+**Sitemap Mode - Sitemap 爬取**
+- 從 sitemap index 取得所有文章 URL，命中率 100%
+- 參數：`date_from`（YYYYMM）、`date_to`、`limit`
+- 自動 dedup（跳過 registry 已有的 URL）
+- 目前僅 UDN 支援（1,051 子 sitemap，~58 萬 URL）
+- 適用於：UDN backfill（vs full_scan 僅 6% 命中率）
 
 #### 輸出檔案切塊
 
@@ -163,7 +177,7 @@ POST /api/indexing/fullscan/start
   → Sequential: 自動偵測 end_id (parser.get_latest_id())
   → Date-based: 使用 start_date/end_date（預設 2024-01-01 ~ today）
   → 掃描每一個 ID，不做 early-stop
-  → 404 Adaptive Throttle: 連續 N 個 404 → 倍增 delay（降速，不停止）
+  → AutoThrottle: 根據伺服器回應速度動態調整 delay（EWMA 平滑）
   → 唯一停止條件: BLOCKED_CONSECUTIVE_LIMIT (5) 或到達 end
 ```
 
@@ -178,10 +192,16 @@ POST /api/indexing/fullscan/start
 │ Found: 52,300   Skipped: 8,200               │
 │ 404: 880K       Failed: 12                   │
 │ Speed: 2.5 req/s                             │
+│ Latency: 0.34s   Delay: 0.85s               │
 │ ─────────────────────────────────────────────│
 │ [Stop Button]                                │
 └──────────────────────────────────────────────┘
 ```
+
+**AutoThrottle 即時指標**：
+- `avg_latency`: 最近 50 次請求的平均回應時間（秒）
+- `current_delay`: AutoThrottle 計算的當前延遲值（秒）
+- 這些值由 engine `_report_progress()` 自動注入 stats，Dashboard 可直接顯示
 
 #### 進程隔離（Subprocess Per Crawler）
 
@@ -210,6 +230,8 @@ Dashboard (parent process)
 3. 偵測到 → `raise asyncio.CancelledError` → graceful shutdown
 4. 若 10 秒內未結束，parent 呼叫 `proc.terminate()`
 
+> **注意**：`_evaluate_batch_results()` 使用 `isinstance(result, BaseException)`（非 `Exception`）判斷例外。Python 3.9+ 的 `CancelledError` 繼承自 `BaseException`，若只用 `Exception` 會漏接，導致 tuple unpack 失敗。
+
 **Key files**:
 - `crawler/subprocess_runner.py` — subprocess entry point
 - `indexing/dashboard_api.py` — `_run_crawler_subprocess()` launches & monitors
@@ -222,6 +244,7 @@ Dashboard (parent process)
 
 - **Save throttling**: 最多每 5 秒存檔一次，terminal 狀態（completed/failed/early_stopped）立即存
 - **Zombie detection**: Server 重啟時，仍在 running/stopping 狀態的任務自動標記為 failed
+- **scan_start/scan_end**: 由 `start_crawler` 和 `start_full_scan` 初始化，progress handler 可從 engine stats backfill 缺失值
 
 #### Task Resume（Checkpoint-based）
 
@@ -242,9 +265,54 @@ Resume：  start_id=8,500,001, end_id=9,313,000
          → 從 checkpoint 繼續
 ```
 
+#### 404 Skip 加速（2026-02-10）
+
+Full Scan 啟動時載入三層 skip 資料，避免重複 HTTP request：
+
+1. **Watermark skip**：`id <= watermark` 的 ID 全部跳過（上一輪已掃過）
+   - Sequential: `current_id <= last_scanned_id`（O(1) int 比較）
+   - Date-based: `current_day <= last_scanned_date`（整天跳過）
+2. **Known 404 skip**：article_id 在 `not_found_articles` 表中（`Set[int]` in-memory lookup）
+3. **Crawled skip**：URL 已在 `crawled_articles` 表中（既有邏輯）
+
+**持久化**：404 記錄隨 batch checkpoint 一起 flush（`flush_not_found()`），非逐筆 commit。最壞丟失一個 batch 的 404 記錄（下次重掃即恢復）。
+
+**效果**：重啟後重掃已覆蓋範圍，watermark 以下的 ID 全部秒跳過，無 HTTP request。
+
 ---
 
-### 3. Errors Tab
+### 3. Coverage Tab
+
+Full Scan 完成後的覆蓋率驗證。用預先定義的參考點（已知文章 ID）比對 registry，確認是否有遺漏。
+
+#### 參考點驗證表
+
+| 欄位 | 說明 |
+|------|------|
+| Date | 參考點所屬月份 (YYYY-MM) |
+| Article ID | 已知存在的文章 ID |
+| Note | 參考點描述 |
+| Status | `found` / `confirmed_404` / `not_scanned` |
+| Published | 實際發布日期（僅 found 狀態有值） |
+
+**狀態標示**：
+- 綠底 `found`：已成功爬取
+- 黃底 `confirmed_404`：文章不存在（參考點需更換）
+- 紅底 `not_scanned`：尚未掃描到該區間
+
+#### Auto-discover 月份覆蓋圖
+
+從 `crawled_articles` 自動取得每月一篇代表性文章，以色塊視覺化顯示哪些月份有資料。適用於 sequential sources（UDN/LTN/einfo）無法預設參考點的情況。
+
+#### 資料來源
+
+- 設定檔：`settings.py` → `REFERENCE_POINTS`
+- API：`GET /api/indexing/reference-points`
+- 驗證邏輯：`crawled_registry.py` → `validate_reference_points()` / `discover_reference_points()`
+
+---
+
+### 4. Errors Tab
 
 錯誤追蹤與重試介面。
 
@@ -380,7 +448,7 @@ Resume：  start_id=8,500,001, end_id=9,313,000
 }
 ```
 
-> **注意**：moea 僅支援 `auto` 和 `list_page` 模式（list page 爬取），不支援 `full_scan` 模式。
+> **注意**：moea 支援 `auto`、`list_page`、`full_scan` 模式。Full scan 使用 sequential ID（news_id）。
 
 ---
 
@@ -461,7 +529,9 @@ Resume：  start_id=8,500,001, end_id=9,313,000
       "stats": {
         "success": 45,
         "failed": 3,
-        "skipped": 2
+        "skipped": 2,
+        "avg_latency": 0.342,
+        "current_delay": 0.85
       },
       "error": null
     }
@@ -559,6 +629,38 @@ Resume：  start_id=8,500,001, end_id=9,313,000
       "duration_seconds": 86400
     }
   ]
+}
+```
+
+---
+
+### Coverage / Reference Points
+
+#### GET `/api/indexing/reference-points`
+
+取得所有來源的參考點驗證結果。
+
+**Response:**
+```json
+{
+  "cna": {
+    "name": "Central News Agency",
+    "configured": [
+      {
+        "id": 202401020010,
+        "date": "2024-01",
+        "note": "2024-01-02 第10篇",
+        "status": "found",
+        "url": "https://www.cna.com.tw/news/aall/202401020010.aspx",
+        "date_published": "2024-01-02T..."
+      }
+    ],
+    "discovered": [
+      {"url": "...", "date": "2024-01", "date_published": "2024-01-02"}
+    ],
+    "summary": {"total": 12, "found": 8, "confirmed_404": 0, "not_scanned": 4},
+    "discovered_months": 26
+  }
 }
 ```
 
@@ -807,4 +909,4 @@ Resume：  start_id=8,500,001, end_id=9,313,000
 
 ---
 
-*更新：2026-02-10（Clear by Error Type、UTF-8 decode fix）*
+*更新：2026-02-12（scan_start/scan_end 初始化修復、MOEA rate limiting 調整、Task cleanup 最佳化）*

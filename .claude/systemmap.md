@@ -9,21 +9,25 @@ NLWeb 是自然語言搜尋系統，提供智慧查詢處理、多源檢索與 A
 
 系統分為 7 個主要模組（M0-M6）：
 
-### M0: Indexing（索引與數據）🔴 規劃中
+### M0: Indexing（索引與數據）🟢 完成
 **目標**：高可信資料工廠。自動化擷取、清洗、驗證到分級儲存。
 
 | 元件 | 狀態 | 檔案 | 說明 |
 |------|------|------|------|
-| Qdrant Vector DB | 🟡 | `retrieval_providers/qdrant.py` | 語意檢索，混合檢索 |
-| Data Chunking | ❌ | `indexing/chunking.py` | 依重要性分級 chunking |
-| Auto Crawler | ❌ | `indexing/crawler.py` | 自動抓取高可信來源 |
-| Format Detector | ❌ | `indexing/format_detector.py` | 偵測網站格式變動 |
-| Quality Gate | ❌ | `indexing/quality_gate.py` | 剔除低品質內容 |
-| Light NER | ❌ | `indexing/light_ner.py` | 輕量實體識別 |
-| Source Authority | ❌ | `indexing/source_authority.py` | 權威分數計算 |
-| Domain Allowlist | ❌ | `indexing/domain_allowlist.py` | 動態白名單 |
-| Regex Parser | ❌ | `indexing/regex_parser.py` | 結構化資料提取 |
-| Anomaly Detector | ❌ | `indexing/anomaly_detector.py` | 資料流健康監控 |
+| Qdrant Vector DB | ✅ | `retrieval_providers/qdrant.py` | 語意檢索，混合檢索 |
+| **Crawler Engine** | ✅ | `crawler/core/engine.py` | 爬蟲引擎（async 支援）|
+| **Parser Factory** | ✅ | `crawler/parsers/factory.py` | 7 個 Parser（ltn, udn, cna, moea, einfo, esg, chinatimes） |
+| **Chunking Engine** | ✅ | `indexing/chunking_engine.py` | 170 字/chunk + Extractive Summary |
+| **Quality Gate** | ✅ | `indexing/quality_gate.py` | 長度、HTML、中文比例驗證 |
+| **Ingestion Engine** | ✅ | `indexing/ingestion_engine.py` | TSV → CDM 解析 |
+| **Source Manager** | ✅ | `indexing/source_manager.py` | 來源分級（Tier 1-4） |
+| **Vault Storage** | ✅ | `indexing/dual_storage.py` | SQLite + Zstd 壓縮（線程安全）|
+| **Rollback Manager** | ✅ | `indexing/rollback_manager.py` | 遷移記錄、payload 備份 |
+| **Indexing Pipeline** | ✅ | `indexing/pipeline.py` | 主流程 + 斷點續傳 |
+| **Embedding Module** | ✅ | `indexing/embedding.py` | 向量生成（Azure OpenAI）|
+| **Qdrant Uploader** | ✅ | `indexing/qdrant_uploader.py` | 向量上傳至 Qdrant |
+| **Subprocess Runner** | ✅ | `crawler/subprocess_runner.py` | Crawler 子進程入口（GIL 隔離）|
+| **Dashboard API** | ✅ | `indexing/dashboard_api.py` | 索引化監控 API（subprocess 管理）|
 
 ### M1: Input（入口與安全）🟡 部分完成
 **目標**：安全閘道。攔截惡意指令、多模態資料整合、意圖識別。
@@ -228,4 +232,4 @@ Writer → API → (LLM Safety Net) → Frontend UI → Visualizer/Dashboard/Exp
 
 ---
 
-*更新：2026-01-19*
+*更新：2026-02-04*

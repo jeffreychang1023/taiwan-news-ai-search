@@ -237,7 +237,7 @@ class WriterPromptBuilder:
 }}
 ```
 
-### Confidence Level 判定指引
+### 信心度評估指引
 
 - **建議值**：{suggested_confidence}（根據 Critic 的 status 自動計算）
 - **調整原則**：通常情況下請採用建議值，但如果你發現內容證據力極強或極弱，可以自行調整。
@@ -312,14 +312,14 @@ class WriterPromptBuilder:
         Returns:
             Formatted feedback string
         """
-        feedback = f"""**Status**: {critic_review.status}
+        feedback = f"""**狀態**: {critic_review.status}
 
-**Mode Compliance**: {critic_review.mode_compliance}
+**模式符合度**: {critic_review.mode_compliance}
 
-**Critique**:
+**評論**:
 {critic_review.critique}
 
-**Suggestions**:
+**建議**:
 """
         if critic_review.suggestions:
             feedback += "\n".join(f"- {s}" for s in critic_review.suggestions)
@@ -327,11 +327,11 @@ class WriterPromptBuilder:
             feedback += "（無具體建議）"
 
         if critic_review.logical_gaps:
-            feedback += "\n\n**Logical Gaps**:\n"
+            feedback += "\n\n**邏輯漏洞**:\n"
             feedback += "\n".join(f"- {g}" for g in critic_review.logical_gaps)
 
         if critic_review.source_issues:
-            feedback += "\n\n**Source Issues**:\n"
+            feedback += "\n\n**來源問題**:\n"
             feedback += "\n".join(f"- {i}" for i in critic_review.source_issues)
 
         return feedback

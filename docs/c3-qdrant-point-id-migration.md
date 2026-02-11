@@ -1,6 +1,6 @@
 # C3: Qdrant Point ID Migration Plan
 
-> **狀態**: 待辦 — 下次 re-index 時一併處理
+> **狀態**: ✅ 已完成 — 2026-02-10（Qdrant 尚無資料，直接改）
 > **來源**: 2026-02-09 Code Review
 > **影響範圍**: `code/python/indexing/qdrant_uploader.py`
 

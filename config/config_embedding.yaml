@@ -38,4 +38,4 @@ providers:
 
   huggingface:
     api_key_env: HF_TOKEN
-    model: sentence-transformers/all-MiniLM-L6-v2
+    model: BAAI/bge-m3

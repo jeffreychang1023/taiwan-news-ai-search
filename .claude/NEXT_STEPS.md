@@ -184,10 +184,57 @@
 - Phase 2 CoV（Chain of Verification 事實查核）
 
 ### ✅ Track I：M0 Indexing 資料工廠
-- Crawler 系統（6 個 Parser）
+- Crawler 系統（7 個 Parser）
 - Indexing Pipeline（完整模組）
 - CLI 工具
 
+### ✅ Track J：E2E 驗證與搜尋優化
+- MCP Wrapper 實作
+- Streaming 改進
+- E2E 測試框架
+- 搜尋模式統一化
+- Qdrant 連線修復
+
+### ✅ Track K：Subprocess Per Crawler（B1）
+- 每個 crawler 獨立 subprocess（GIL 隔離）
+- JSON lines IPC protocol
+- Signal file 停止機制
+- Chinatimes 設定同步（7 個 Parser）
+
+### ✅ Track L：Crawler Fixes & Dashboard Enhancement
+- UTF-8 decode 修復
+- Dashboard Clear by Error Type
+- Tasks.json 清理
+
+### ✅ Track M：Scrapy/Trafilatura 最佳模式整合
+- AutoThrottle（Scrapy 風格自適應延遲）
+- htmldate/trafilatura 通用 fallback（engine 層級）
+- Response latency 追蹤
+- charset_normalizer 編碼偵測
+
+### ✅ Track N：Code Review 修復 + C3 Qdrant UUID5
+- CancelledError unpack 修復（BaseException）
+- `_ensure_date()` log 加 URL
+- C3 Qdrant Point ID → UUID5（零成本遷移）
+
+### ✅ Track O：UDN Sitemap Backfill + curl_cffi 清理
+- UDN sitemap mode 串接（subprocess_runner + dashboard_api）
+- curl_cffi fail fast（移除 silent fallback + 4 parser 兼容 shim）
+- MOEA 加入 CURL_CFFI_SOURCES
+- Dead code bug 修正（_create_session CurlSession 縮排）
+- 全量 backfill 啟動（7 source，2024-02 起）
+
+### ✅ Track P：Qdrant Profile 切換系統
+- QDRANT_PROFILE=online|offline 環境變數
+- Profile manager + dimension validation
+- 線上/線下安全切換
+
+### ✅ Track Q：Dashboard Bug Fixes + Full Scan 穩定性
+- MOEA rate limiting 修復（concurrent=2, delay=2-4s）
+- `null -> null` 顯示 bug 修復（3 層：start_crawler + progress + engine stats）
+- Task cleanup（124→13 tasks）
+- indexing-spec.md 全面更新
+
 ---
 
-*更新：2026-01-28*
+*更新：2026-02-12*

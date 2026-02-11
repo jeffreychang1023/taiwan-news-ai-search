@@ -53,17 +53,30 @@ class MoeaParser(BaseParser):
     def source_name(self) -> str:
         return "moea"
 
+    # MOEA articles require kind + menu_id params; news_id alone returns FileNotFound
+    MOEA_CATEGORIES = [
+        (1, 40),   # 新聞
+        (2, 41),   # 新聞稿
+        (5, 44),   # 活動
+    ]
+
     def get_url(self, article_id: int) -> str:
         if article_id in self._id_url_map:
             cached_url = self._id_url_map[article_id]
             self.logger.debug(f"Using cached URL for ID {article_id}: {cached_url}")
             return cached_url
 
-        self.logger.warning(
-            f"ID {article_id} not in cache. "
-            f"Please run get_latest_id() first to build URL map."
-        )
-        return None
+        # Full scan: try kind=1 (most common) as primary
+        kind, menu_id = self.MOEA_CATEGORIES[0]
+        return f"https://www.moea.gov.tw/MNS/populace/news/News.aspx?kind={kind}&menu_id={menu_id}&news_id={article_id}"
+
+    def get_candidate_urls(self, article_id: int) -> list:
+        """Return alternative kind/menu_id combinations for full scan."""
+        # Skip first (already used as primary in get_url)
+        return [
+            f"https://www.moea.gov.tw/MNS/populace/news/News.aspx?kind={kind}&menu_id={menu_id}&news_id={article_id}"
+            for kind, menu_id in self.MOEA_CATEGORIES[1:]
+        ]
 
     def get_discovered_ids(self) -> List[int]:
         """回傳已發現的 ID 列表（供 Engine 使用）"""

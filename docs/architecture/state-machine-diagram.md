@@ -399,10 +399,34 @@ stateDiagram-v2
 
         state CriticPhase {
             [*] --> ReviewDraft
+
+            note right of ReviewDraft
+                Phase 2 CoV:
+                Critic 接收 formatted_context
+                用於事實查核（驗證引用）
+            end note
+
             ReviewDraft --> EvaluateLogic
-            EvaluateLogic --> CheckSources
-            CheckSources --> DetermineStatus
-            DetermineStatus --> [*]
+            EvaluateLogic --> VerifyClaims: Phase 2 CoV
+
+            state VerifyClaims {
+                [*] --> ExtractKeyFacts
+                ExtractKeyFacts --> CrossCheckWithSources
+                CrossCheckWithSources --> FlagUnsupported
+                FlagUnsupported --> [*]
+            }
+
+            VerifyClaims --> CheckModeCompliance
+            CheckModeCompliance --> DetermineStatus
+
+            state DetermineStatus <<choice>>
+            DetermineStatus --> PASS: 邏輯完整 & 引用正確
+            DetermineStatus --> WARN: 小問題但可接受
+            DetermineStatus --> REJECT: 需要重大修正
+
+            PASS --> [*]
+            WARN --> [*]
+            REJECT --> [*]
         }
 
         CriticPhase --> ConvergenceCheck
@@ -436,14 +460,16 @@ stateDiagram-v2
     WriterPhase --> HallucinationGuard
 
     state HallucinationGuard {
-        [*] --> VerifySources
+        [*] --> ExtractCitations
 
-        state VerifySources <<choice>>
-        VerifySources --> PassGuard: Sources Valid
-        VerifySources --> CorrectSources: Invalid Sources
+        ExtractCitations --> VerifyAgainstSourceMap
 
-        CorrectSources --> PassGuard
-        PassGuard --> [*]
+        state VerifyAgainstSourceMap <<choice>>
+        VerifyAgainstSourceMap --> AllCitationsValid: All [n] in source_map
+        VerifyAgainstSourceMap --> RemoveInvalidCitations: Invalid [n] found
+
+        RemoveInvalidCitations --> AllCitationsValid
+        AllCitationsValid --> [*]
     }
 
     HallucinationGuard --> FormatResult
@@ -927,4 +953,4 @@ sequenceDiagram
 
 ---
 
-*Generated: 2026-01-14*
+*更新：2026-02-04*

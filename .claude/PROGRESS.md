@@ -2,21 +2,267 @@
 
 ## 最近里程碑
 
+### 2026-02-11：Dashboard Bug Fixes + Full Scan 穩定性 ✅
+
+**4 項修復**
+
+1. **MOEA 429 Rate Limiting 修復**（`settings.py`）
+   - `FULL_SCAN_OVERRIDES["moea"]`: concurrent 5→2, delay (0.5-1.5)→(2.0-4.0)s, timeout 8→10s
+   - 修復後 MOEA 成功 crawl（ok=8+），不再被封鎖
+
+2. **`null -> null` 顯示 Bug 修復**（3 層修復）
+   - `dashboard_api.py` `start_crawler`: 當 mode=="full_scan" 時初始化 `scan_start`/`scan_end`
+   - `dashboard_api.py` progress handler: 從 engine stats backfill `scan_start`/`scan_end`
+   - `engine.py` `_reset_stats()`: 在 `_full_scan_sequential` 和 `_full_scan_date_based` 加入 `scan_start`/`scan_end`
+   - 根因：`start_crawler` endpoint（通用）未像 `start_full_scan`（專用）一樣初始化掃描範圍
+
+3. **Task Cleanup**
+   - 124 筆累積 tasks → 13 筆（每個 source 保留 2 筆最新）
+   - 防止 auto-resume 再膨脹：cleanup 時已將 running→failed，不觸發 auto-resume
+
+4. **indexing-spec.md 全面更新**
+   - MOEA session type AIOHTTP→CURL_CFFI
+   - UDN scan method 加入 sitemap（推薦）+ hit rate 對比
+   - 新增 Sitemap Mode 完整文件
+   - 新增 CURL_CFFI_SOURCES 設定文件
+   - 新增 MOEA 到 NEWS_SOURCES
+
+---
+
+### 2026-02-11：UDN Sitemap Backfill + curl_cffi Reward Hack 清理 + Qdrant Profile ✅
+
+**3 項重大改進**
+
+1. **UDN Sitemap Backfill 串接**
+   - `subprocess_runner.py` 新增 `elif mode == "sitemap":` 分支
+   - `dashboard_api.py` ALLOWED_MODES 加入 `"sitemap"`
+   - `engine.py` run_sitemap/run_list_page 的 batch 迴圈加入 `self.stats['progress']` 更新
+   - UDN sitemap 命中率 100%（vs full_scan 6%），backfill 效率大幅提升
+
+2. **curl_cffi Reward Hack 清理**（系統性修復）
+   - **根因**：engine `_create_session()` curl_cffi 不可用時 silent fallback 到 aiohttp
+   - **連鎖問題**：4 個 parser 加了 `getattr(response, 'status_code', None) or getattr(response, 'status', 0)` 兼容 shim 掩蓋問題
+   - **修正 1**：engine fail fast — `raise RuntimeError` 取代 silent fallback
+   - **修正 2**：移除 cna/chinatimes/einfo/esg_bt 所有兼容 shim，直接用 curl_cffi API
+   - **修正 3**：`settings.py` CURL_CFFI_SOURCES 加入 `moea`（之前漏了）
+   - **修正 4**：`_create_session()` CurlSession 建立 dead code bug（code simplifier 發現）
+   - **原則**：parser 宣告 curl_cffi → settings 必須列入 → engine 必須提供 → 缺了就炸
+
+3. **Qdrant Profile 切換系統**
+   - `QDRANT_PROFILE=online|offline` 環境變數
+   - Profiles: `config/config_qdrant_profiles.yaml`
+   - Manager: `core/qdrant_profile.py`（load → validate dimension → overlay CONFIG）
+   - Dimension validation at startup via sync QdrantClient
+
+4. **全量 Backfill 啟動**（7 source，2024-02 起）
+   - UDN: sitemap, LTN/einfo/MOEA: full_scan sequential, CNA/chinatimes/ESG BT: full_scan date-based
+   - Watermark reset for ESG BT（was stuck at 2026-02-13）, einfo, MOEA
+
+---
+
+### 2026-02-10：Crawler 效能與 Dashboard 非阻塞優化 ✅
+
+**run_auto 批次並行 + Dashboard async 反模式修復**
+
+1. **run_auto 批次並行**（`engine.py`）
+   - 從 sequential（一次一篇，~26 req/min）改為 semaphore+gather 批次並行（~100+ req/min）
+   - 保留 consecutive_skips 和 date_floor 邏輯，在 pre-filter 階段追蹤
+   - batch_size = concurrent_limit * 5，UDN 預設 concurrent=5
+
+2. **Dashboard watermark 顯示修正**（`indexing-dashboard.html`）
+   - 移除 `updated_at` 日期顯示，避免 sequential source 誤導為 date-based
+
+3. **start_full_scan auto-detect 並行化**（`dashboard_api.py`）
+   - 抽出 `_detect_latest_id()` helper，3 個 sequential source 的 `get_latest_id` 用 `asyncio.gather` 並行
+   - 從 ~30s 降到 ~10s
+
+4. **schedule_auto_resume 並行化**（`dashboard_api.py`）
+   - zombie task resume 從串列改為 `asyncio.gather`
+
+5. **WebSocket broadcast 並行化**（`dashboard_api.py`）
+   - 多 client 廣播從逐個 await 改為 `asyncio.gather`
+
+6. **_save_tasks 非阻塞化**（`dashboard_api.py`）
+   - JSON 序列化在主線程，`run_in_executor` 背景寫檔
+   - start_full_scan 中 per-task save 合併為一次
+
+---
+
+### 2026-02-10：UIUX 修改（B+C 類 7 項 + A 類 3 項）✅
+
+**與設計師討論後的 10 項 UI/UX 改進**
+
+**A 類（簡單修改）**：
+1. **#2 全選按鈕改國字**（`news-search-prototype.html`）— SVG icon → 文字「全選」
+2. **#4 大字體模式影響 Deep Research**（`news-search.css`）— 新增 `.large-font` 下研究報告字體規則
+3. **#14 包含文件自動開右面板**（`news-search.js`）— `togglePrivateSources()` 勾選時 `openTab('files')`
+
+**B 類（中等修改）**：
+4. **#1 Deep Research 輸入框移到聊天區底部**（`news-search.js`）— 與 Chat 模式相同，`searchContainer` 移至 `chatInputContainer`
+5. **#3 展開/折疊合併為單一 Toggle**（`news-search.js`）— `addToggleAllToolbar()` 改為單按鈕切換「全部折疊/全部展開」
+6. **#5+#6 English labels 改中文**（`deep_research.py`, `orchestrator.py`, `writer.py`）— mode/confidence/feedback 標籤全部中文化
+7. **#8 進度感簡化**（`news-search.js`）— 標題改「深度研究進行中」，移除 `.log-detail` 技術細節
+8. **#11 參考資料 toggle**（`news-search.js` + `news-search.css`）— 引用列表改為可折疊（預設折疊），顯示 Title + 完整 URL
+9. **#13 Session 隔離驗證** — 確認 `currentResearchReport` 已正確 save/load/switch，無需修改
+
+**已用 DevTools 測試通過**：#2, #14, #1（三模式切換）
+
+---
+
+### 2026-02-10：Code Review 修復 + C3 Qdrant UUID5 遷移 ✅
+
+**3 項 review fix + Point ID 安全性修復**
+
+1. **CancelledError unpack 修復**（`engine.py`）
+   - `_evaluate_batch_results()`: `isinstance(result, Exception)` → `BaseException`
+   - Python 3.9+ `CancelledError` 繼承 `BaseException`，stop 時 gather 回傳被漏判
+
+2. **`_ensure_date()` log 改善**（`engine.py`）
+   - 新增 `url` 參數，warning 時標明被丟棄的文章 URL
+
+3. **`_adaptive_delay()` jitter 上限 clamp**（`engine.py`）
+   - `actual` 加 `min(actual, self.max_delay)`，防止 jitter 微超 max_delay
+
+4. **C3 Qdrant Point ID → UUID5**（`qdrant_uploader.py`）
+   - MD5 截斷 64-bit int → `uuid.uuid5()` string（SHA-1 based, 128-bit）
+   - Qdrant 目前無資料，直接改零成本，未來不再有碰撞風險
+
+---
+
+### 2026-02-10：Scrapy/Trafilatura 最佳模式整合 ✅
+
+**Engine 層級 4 項增強：AutoThrottle、htmldate fallback、trafilatura fallback、latency 追蹤**
+
+1. **AutoThrottle**（`engine.py` + `settings.py`）
+   - Scrapy 風格自適應延遲：`new_delay = (old_delay + avg_latency/target_concurrency) / 2`
+   - 取代固定 `random.uniform(min_delay, max_delay)`，4 個呼叫點全部替換
+   - 錯誤回應自動 `_throttle_backoff()` 加倍 delay
+   - `AUTOTHROTTLE_ENABLED` 開關可隨時回退
+
+2. **htmldate 通用 Fallback**（`engine.py`）
+   - `_ensure_date(data, html)`: parser 漏掉 datePublished 時自動補全
+   - 3 個 parse 成功路徑全部加入（primary URL、404 candidate、parse-failed candidate）
+   - 無日期 → 丟棄文章（避免無日期資料進入系統）
+
+3. **Trafilatura 通用 Fallback**（`engine.py`）
+   - `_trafilatura_fallback(html, url)`: custom parser 回傳 None 後最後嘗試
+   - `bare_extraction(favor_precision=True)` + MIN_ARTICLE_LENGTH 品質檢查
+   - `stats['trafilatura_fallbacks']` 計數器追蹤勝率
+   - 標記 `_source: "trafilatura_fallback"` 便於溯源
+
+4. **Response Latency 追蹤**（`engine.py`）
+   - rolling window 50 筆 `_latencies`，`_avg_latency` 滾動平均
+   - `_fetch()` HTTP 請求前後包 `time.monotonic()` 計時
+   - `_report_progress()` 回報 `stats['avg_latency']` 和 `stats['current_delay']`
+
+---
+
+### 2026-02-10：Crawler Fixes & Dashboard Enhancement ✅
+
+**三項修復：UTF-8 decode、tasks 清理、Clear by Error Type**
+
+1. **UTF-8 Decode Error 修復**（`crawler/core/engine.py`）
+   - curl_cffi `response.text` 在 Big5/cp950 content 時拋 UnicodeDecodeError
+   - 新增 try/except，fallback 到 `response.content.decode('utf-8', errors='replace')`
+   - 修復 CNA/einfo subprocess 因 cp950 content 崩潰的問題
+
+2. **Tasks.json 清理**
+   - 140 筆累積任務（71% failed）→ 3 筆（zombie tasks 標記 failed）
+   - `crawled_registry.db`（393K articles）不受影響，去重機制正常
+
+3. **Dashboard Clear by Error Type**
+   - `crawled_registry.py` `clear_failed()`: 新增 `error_types` 參數，使用 parameterized SQL IN clause
+   - `dashboard_api.py` `clear_errors()`: 接收並傳遞 `error_types`
+   - `indexing-dashboard.html` `clearErrors()`: 與 `retryAllErrors()` 對齊，使用相同的 `getSelectedErrorTypes()` 過濾邏輯
+
+---
+
+### 2026-02-09：Subprocess Per Crawler（B1）✅
+
+**Crawler 進程隔離 — 每個 crawler 獨立 subprocess，真正 GIL 隔離**
+
+1. **Subprocess Runner**（`crawler/subprocess_runner.py`）
+   - 新檔案，作為 subprocess 入口點
+   - 接收 CLI 參數（--params JSON, --task-id, --signal-dir）
+   - All logging → stderr, JSON protocol → stdout
+   - 支援所有 5 種 mode: full_scan, auto, list_page, retry, retry_urls
+
+2. **Dashboard API 改造**（`indexing/dashboard_api.py`）
+   - `_run_crawler_subprocess()`: 用 `asyncio.create_subprocess_exec()` 啟動 crawler
+   - 讀取 subprocess stdout JSON lines 更新 task 狀態
+   - 7 個啟動點全部改用 subprocess
+   - 舊 `_run_crawler()` 保留為 `_run_crawler_inprocess()` fallback
+
+3. **Engine stop_check**（`crawler/core/engine.py`）
+   - `__init__` 新增 `stop_check: Optional[Callable[[], bool]]` 參數
+   - `_report_progress()` 檢查 `stop_check()` → `raise CancelledError`
+
+4. **Stop Mechanism**
+   - Signal file: `data/crawler/signals/.stop_{task_id}`
+   - 10 秒 graceful shutdown timeout → `proc.terminate()` fallback
+
+5. **Chinatimes 設定同步**
+   - `dashboard_api.py` FULL_SCAN_CONFIG 新增 chinatimes
+   - `settings.py` FULL_SCAN_OVERRIDES 新增 chinatimes（concurrent=6, delay=0.3-0.8s）
+
+6. **Windows UnicodeDecodeError 修復**
+   - `subprocess_runner.py` patch `CrawlerEngine._setup_logger` 將 StreamHandler 重導到 stderr
+   - `dashboard_api.py` stdout 解碼加 `errors="replace"` 防禦
+   - 根因：Windows cp950 編碼的中文 log 輸出到 stdout 破壞 JSON protocol
+
+7. **Zombie/Orphan Subprocess 清理**
+   - `CrawlerTask._pid` 欄位 + `_task_to_dict()` 持久化 PID
+   - `_load_tasks()` 重啟時 3 步清理：signal file → taskkill/SIGTERM → mark failed
+   - `_kill_orphan_process()` 靜態方法（Windows: `taskkill /F /PID`, Unix: `SIGTERM`）
+   - Auto-resume 從 checkpoint 續跑，不會產生重複 crawler
+
+---
+
+### 2026-02-04：E2E 驗證與搜尋模式優化 ✅
+
+**MCP Wrapper 與 E2E 測試基礎設施**
+
+1. **MCP Wrapper 實作**
+   - 統一的 Model Context Protocol 封裝
+   - 支援多種 LLM 後端
+
+2. **Streaming 改進**
+   - SSE 串流效能優化
+   - 前端接收處理修復
+
+3. **E2E 測試框架**
+   - 端到端測試基礎設施建立
+   - 整合測試覆蓋
+
+**Search Mode 大規模優化**
+
+1. **統一搜尋 UX 重構**
+   - 搜尋模式統一化
+   - 前端 UI/UX 改進
+   - 多項 Bug 修復
+
+2. **Qdrant 連線修復**
+   - 修復遠端連線逾時問題
+   - 改善連線穩定性
+
+---
+
 ### 2026-01-28：M0 Indexing 資料工廠完成 ✅
 
 **完整 Data Pipeline：Crawler → Indexing → Storage**
 
 #### Crawler 系統
 
-**6 個 Parser 實作**：
+**7 個 Parser 實作**：
 | Parser | 來源 | 爬取模式 | HTTP Client |
 |--------|------|----------|-------------|
 | `ltn` | 自由時報 | Sequential ID | AIOHTTP |
 | `udn` | 聯合報 | Sequential ID | AIOHTTP |
-| `cna` | 中央社 | Sequential ID | CURL_CFFI |
+| `cna` | 中央社 | Date-based ID | CURL_CFFI |
 | `moea` | 經濟部 | List-based | AIOHTTP |
-| `einfo` | 環境資訊中心 | Sequential + Binary Search | CURL_CFFI |
-| `esg_businesstoday` | 今周刊 ESG | Sitemap / AJAX | CURL_CFFI |
+| `einfo` | 環境資訊中心 | Sequential ID | CURL_CFFI |
+| `esg_businesstoday` | 今周刊 ESG | Date-based ID | CURL_CFFI |
+| `chinatimes` | 中國時報 | Date-based ID (14位) | CURL_CFFI |
 
 **核心模組**（`code/python/crawler/`）：
 - `core/engine.py` - 爬蟲引擎
@@ -260,4 +506,4 @@ python -m indexing.pipeline data.tsv --site udn --resume
 
 ---
 
-*更新：2026-01-28*
+*更新：2026-02-12*

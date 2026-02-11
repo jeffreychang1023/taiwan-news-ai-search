@@ -117,6 +117,13 @@ async def main(params: dict, task_id: str, signal_dir: str):
             )
         elif mode == "retry_urls":
             result = await engine.run_retry_urls(urls=params.get("urls", []))
+        elif mode == "sitemap":
+            result = await engine.run_sitemap(
+                sitemap_index_url=params.get("sitemap_index_url"),
+                date_from=params.get("date_from"),
+                date_to=params.get("date_to"),
+                limit=params.get("limit", 0),
+            )
         else:
             _send({"type": "error", "error": f"Unknown mode: {mode}"})
             sys.exit(1)

@@ -56,6 +56,11 @@ RATE_LIMIT_BACKOFF = 2.0
 # 封鎖冷卻設定
 BLOCKED_COOLDOWN = 20.0
 
+# ==================== AutoThrottle 設定 ====================
+# Scrapy 風格自適應延遲：根據伺服器回應速度動態調速
+AUTOTHROTTLE_ENABLED = True                # 開關（False = 回退到固定 random delay）
+AUTOTHROTTLE_TARGET_CONCURRENCY = 1.0      # 目標並行數（越高 → delay 越低）
+
 # ==================== 預設 HTTP Headers ====================
 DEFAULT_HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -91,6 +96,7 @@ CURL_CFFI_SOURCES = [
     'chinatimes',
     'einfo',
     'esg_businesstoday',
+    'moea',
 ]
 
 # ==================== 新聞來源設定 ====================
@@ -145,6 +151,8 @@ DEFAULT_DAYS_BACK = 3
 # ==================== 停止條件常數（含單位註釋）====================
 # --- 通用 ---
 BLOCKED_CONSECUTIVE_LIMIT = 5       # 連續 N 次 403/429 回應後停止（次數）
+FULL_SCAN_BLOCKED_LIMIT = 50        # Full scan 容許更多次 blocked（次數）
+FULL_SCAN_BLOCKED_COOLDOWN = 120.0  # Full scan blocked 後冷卻秒數
 
 # --- Auto Mode ---
 AUTO_DEFAULT_STOP_AFTER_SKIPS = 10  # 連續 N 個已爬取文章後停止（篇數）
@@ -162,31 +170,46 @@ FULL_SCAN_OVERRIDES = {
         "concurrent_limit": 12,
         "delay_range": (0.1, 0.3),
         "request_timeout": 5,
+        "max_candidate_urls": 0,  # LTN auto-redirects (302) to correct category; candidates waste requests
     },
     "udn": {
         "concurrent_limit": 12,
         "delay_range": (0.1, 0.3),
         "request_timeout": 5,
+        "max_candidate_urls": 0,
     },
     "cna": {
-        "concurrent_limit": 8,
-        "delay_range": (0.2, 0.5),
-        "request_timeout": 5,
+        "concurrent_limit": 4,
+        "delay_range": (0.5, 1.5),
+        "request_timeout": 8,
+        "max_candidate_urls": 0,
     },
     "einfo": {
         "concurrent_limit": 3,
         "delay_range": (1.0, 3.0),
         "request_timeout": 10,
+        "max_candidate_urls": 0,
     },
     "esg_businesstoday": {
         "concurrent_limit": 6,
         "delay_range": (0.3, 0.8),
         "request_timeout": 5,
+        "max_candidate_urls": 0,
     },
     "chinatimes": {
-        "concurrent_limit": 6,
-        "delay_range": (0.3, 0.8),
-        "request_timeout": 5,
+        "concurrent_limit": 3,
+        "delay_range": (1.0, 2.5),
+        "request_timeout": 8,
+        # 每個 404 ID 嘗試 N 個 candidate category codes。值越高覆蓋率越好但請求放大越嚴重。
+        # 調查結果：Category 分佈均勻（前4各~19%），Top 6 = 96.6% 覆蓋率
+        # 4 = 前 4 個 category（~76% 覆蓋率），避免 Cloudflare 限速
+        "max_candidate_urls": 4,
+    },
+    "moea": {
+        "concurrent_limit": 2,
+        "delay_range": (2.0, 4.0),
+        "request_timeout": 10,
+        # MOEA requires correct kind+menu_id; low concurrency to avoid 429
     },
 }
 
@@ -253,4 +276,58 @@ STOPWORDS_ZH = {
     '的', '了', '在', '是', '我', '有', '和', '就', '不', '人',
     '都', '一', '一個', '上', '也', '很', '到', '說', '要', '去',
     '你', '會', '著', '沒有', '看', '好', '自己', '這'
+}
+
+# ==================== 覆蓋率參考點 ====================
+# 用於驗證 Full Scan 是否有遺漏的已知文章參考點
+# 每個參考點: {"id": article_id, "date": "YYYY-MM", "note": "描述"}
+#
+# Date-based sources: article_id = YYYYMMDD * multiplier + suffix
+#   CNA/ESG_BT: suffix 4位 (multiplier=10000)
+#   Chinatimes: suffix 6位 (multiplier=1000000)
+# Sequential sources: 需手動填入或透過 auto-discover 從已爬取資料取得
+REFERENCE_POINTS = {
+    "cna": [
+        {"id": 202401020010, "date": "2024-01", "note": "2024-01-02 第10篇"},
+        {"id": 202403040010, "date": "2024-03", "note": "2024-03-04 第10篇"},
+        {"id": 202405060010, "date": "2024-05", "note": "2024-05-06 第10篇"},
+        {"id": 202407010010, "date": "2024-07", "note": "2024-07-01 第10篇"},
+        {"id": 202409020010, "date": "2024-09", "note": "2024-09-02 第10篇"},
+        {"id": 202411040010, "date": "2024-11", "note": "2024-11-04 第10篇"},
+        {"id": 202501060010, "date": "2025-01", "note": "2025-01-06 第10篇"},
+        {"id": 202503030010, "date": "2025-03", "note": "2025-03-03 第10篇"},
+        {"id": 202505050010, "date": "2025-05", "note": "2025-05-05 第10篇"},
+        {"id": 202507070010, "date": "2025-07", "note": "2025-07-07 第10篇"},
+        {"id": 202509010010, "date": "2025-09", "note": "2025-09-01 第10篇"},
+        {"id": 202511030010, "date": "2025-11", "note": "2025-11-03 第10篇"},
+    ],
+    "chinatimes": [
+        {"id": 20240102000010, "date": "2024-01", "note": "2024-01-02 第10篇"},
+        {"id": 20240304000010, "date": "2024-03", "note": "2024-03-04 第10篇"},
+        {"id": 20240506000010, "date": "2024-05", "note": "2024-05-06 第10篇"},
+        {"id": 20240701000010, "date": "2024-07", "note": "2024-07-01 第10篇"},
+        {"id": 20240902000010, "date": "2024-09", "note": "2024-09-02 第10篇"},
+        {"id": 20241104000010, "date": "2024-11", "note": "2024-11-04 第10篇"},
+        {"id": 20250106000010, "date": "2025-01", "note": "2025-01-06 第10篇"},
+        {"id": 20250303000010, "date": "2025-03", "note": "2025-03-03 第10篇"},
+        {"id": 20250505000010, "date": "2025-05", "note": "2025-05-05 第10篇"},
+        {"id": 20250707000010, "date": "2025-07", "note": "2025-07-07 第10篇"},
+        {"id": 20250901000010, "date": "2025-09", "note": "2025-09-01 第10篇"},
+        {"id": 20251103000010, "date": "2025-11", "note": "2025-11-03 第10篇"},
+    ],
+    "esg_businesstoday": [
+        {"id": 202401020005, "date": "2024-01", "note": "2024-01-02 第5篇"},
+        {"id": 202403040005, "date": "2024-03", "note": "2024-03-04 第5篇"},
+        {"id": 202405060005, "date": "2024-05", "note": "2024-05-06 第5篇"},
+        {"id": 202407010005, "date": "2024-07", "note": "2024-07-01 第5篇"},
+        {"id": 202409020005, "date": "2024-09", "note": "2024-09-02 第5篇"},
+        {"id": 202411040005, "date": "2024-11", "note": "2024-11-04 第5篇"},
+        {"id": 202501060005, "date": "2025-01", "note": "2025-01-06 第5篇"},
+        {"id": 202503030005, "date": "2025-03", "note": "2025-03-03 第5篇"},
+    ],
+    # Sequential sources: 透過 auto-discover 從已爬取資料取得
+    # 或手動填入已確認存在的文章 ID
+    "udn": [],
+    "ltn": [],
+    "einfo": [],
 }

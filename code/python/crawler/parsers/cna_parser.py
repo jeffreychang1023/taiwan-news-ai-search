@@ -196,7 +196,8 @@ class CnaParser(BaseParser):
                     category = match.group(1)
                     article_id = int(match.group(2))
 
-                    if str(article_id).endswith('5001'):
+                    suffix = int(str(article_id)[-4:])
+                    if 5001 <= suffix <= 5010:
                         self.logger.debug(f"Skipping 'Good Morning World' article: {article_id}")
                         continue
 
@@ -211,7 +212,7 @@ class CnaParser(BaseParser):
             latest_id = max(ids)
             self.logger.info(
                 f"Latest ID: {latest_id} "
-                f"(cached {len(self._id_url_map)} URLs, excluded *5001 articles)"
+                f"(cached {len(self._id_url_map)} URLs, excluded *5001-5010 articles)"
             )
             return latest_id
 

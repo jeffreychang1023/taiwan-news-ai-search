@@ -20,6 +20,10 @@ from typing import Dict, List, Optional, Any, Set, Union, Callable
 from datetime import datetime, timedelta
 from enum import Enum
 
+from charset_normalizer import from_bytes
+from htmldate import find_date
+import trafilatura
+
 from . import settings
 from .settings import DEFAULT_HEADERS
 from .interfaces import BaseParser, SessionType
@@ -60,11 +64,12 @@ def _run_parse_in_thread(parser, html, url):
 
 FULL_SCAN_CONFIG = {
     "udn":  {"type": "sequential", "default_start_id": 7_800_000},
-    "ltn":  {"type": "sequential", "default_start_id": 3_000_000},
+    "ltn":  {"type": "sequential", "default_start_id": 4_550_000},
     "einfo": {"type": "sequential", "default_start_id": 230_000},
-    "cna":  {"type": "date_based", "max_suffix": 600},
-    "esg_businesstoday": {"type": "date_based", "max_suffix": 600},
-    "chinatimes": {"type": "date_based", "max_suffix": 3500, "suffix_digits": 6},
+    "cna":  {"type": "date_based", "max_suffix": 6000},
+    "esg_businesstoday": {"type": "date_based", "max_suffix": 600, "date_scan_miss_limit": 150},
+    "chinatimes": {"type": "date_based", "max_suffix": 6000, "suffix_digits": 6, "date_scan_miss_limit": 700},
+    "moea": {"type": "sequential", "default_start_id": 110_000},
 }
 
 # 嘗試引入 curl_cffi
@@ -81,6 +86,7 @@ class CrawlStatus(Enum):
     SUCCESS = "SUCCESS"
     NOT_FOUND = "NOT_FOUND"
     BLOCKED = "BLOCKED"
+    FETCH_ERROR = "FETCH_ERROR"  # Timeout/network error (not 403/429 block)
 
 
 class CrawlerEngine:
@@ -179,6 +185,13 @@ class CrawlerEngine:
             'blocked': 0,
         }
 
+        # Full scan mode flags
+        self._full_scan_mode = False
+        self._max_candidate_urls = None  # None = unlimited
+        self._not_found_ids: Set[int] = set()  # Known 404 article IDs (loaded for full scan)
+        self._watermark_id: Optional[int] = None   # Previous scan progress (sequential)
+        self._watermark_date: Optional[str] = None  # Previous scan progress (date-based)
+
         # 智能跳躍狀態
         self.consecutive_failures = 0
         self.smart_jump_count = 0
@@ -190,6 +203,12 @@ class CrawlerEngine:
         # 進度更新節流（避免太頻繁）
         self._last_progress_update = 0
         self._progress_update_interval = 1.0  # 最多每秒更新一次
+
+        # Response latency tracking (rolling window for AutoThrottle)
+        self._latencies: list[float] = []
+        self._latency_window = 50  # keep last N latency samples
+        self._avg_latency: float = 0.0
+        self._current_delay: float = (self.min_delay + self.max_delay) / 2.0
 
     def _load_source_config(self) -> None:
         """載入來源專屬設定"""
@@ -306,15 +325,16 @@ class CrawlerEngine:
         """創建 Session"""
         if self.session_type == SessionType.CURL_CFFI:
             if not CURL_CFFI_AVAILABLE:
-                self.logger.warning("curl_cffi not available, falling back to aiohttp")
-                self.session_type = SessionType.AIOHTTP
-            else:
-                self.logger.info("Creating curl_cffi session")
-                return CurlSession(
-                    headers=DEFAULT_HEADERS,
-                    timeout=self.request_timeout,
-                    impersonate="chrome110"
+                raise RuntimeError(
+                    f"curl_cffi is required for {self.parser.source_name} but not installed. "
+                    f"Install it with: pip install curl_cffi"
                 )
+            self.logger.info("Creating curl_cffi session")
+            return CurlSession(
+                headers=DEFAULT_HEADERS,
+                timeout=self.request_timeout,
+                impersonate="chrome110"
+            )
 
         self.logger.info("Creating aiohttp session")
         ssl_context = ssl.create_default_context()
@@ -335,6 +355,13 @@ class CrawlerEngine:
         headers['User-Agent'] = random.choice(settings.USER_AGENTS)
         return headers
 
+    def _record_latency(self, latency: float) -> None:
+        """Record a request latency sample and update rolling average."""
+        self._latencies.append(latency)
+        if len(self._latencies) > self._latency_window:
+            self._latencies = self._latencies[-self._latency_window:]
+        self._avg_latency = sum(self._latencies) / len(self._latencies)
+
     async def _handle_rate_limit(self) -> None:
         """處理 429 Rate Limit 錯誤"""
         self.rate_limit_hit = True
@@ -342,6 +369,7 @@ class CrawlerEngine:
 
         self.logger.warning(f"Rate limit detected (429), cooling down for {cooldown}s...")
         self.rate_limit_cooldown_until = time.time() + cooldown
+        self._throttle_backoff()
 
         await asyncio.sleep(cooldown)
 
@@ -361,13 +389,16 @@ class CrawlerEngine:
 
         retry_count = 0
         max_retries = settings.MAX_RETRIES
+        got_blocked_response = False
 
         while retry_count <= max_retries:
             try:
                 headers = self._get_headers()
+                t0 = time.monotonic()
 
                 if self.session_type == SessionType.CURL_CFFI:
                     response = await session.get(url, headers=headers)
+                    self._record_latency(time.monotonic() - t0)
                     status = response.status_code
 
                     if status == 200:
@@ -376,14 +407,14 @@ class CrawlerEngine:
                         if final_url != url and hasattr(self.parser, 'is_not_found_redirect'):
                             if self.parser.is_not_found_redirect(url, final_url):
                                 return (None, CrawlStatus.NOT_FOUND)
-                        try:
-                            text = response.text
-                        except UnicodeDecodeError:
-                            text = response.content.decode('utf-8', errors='replace')
+                        # charset_normalizer 自動偵測編碼（取代 response.text 避免 Big5/cp950 炸）
+                        detected = from_bytes(response.content).best()
+                        text = str(detected) if detected else response.content.decode('utf-8', errors='replace')
                         return (text, CrawlStatus.SUCCESS)
                     elif status == 404:
                         return (None, CrawlStatus.NOT_FOUND)
                     elif status in (403, 429):
+                        got_blocked_response = True
                         await self._handle_rate_limit()
                     elif status in (500, 502, 503, 504):
                         pass  # 繼續重試
@@ -395,16 +426,21 @@ class CrawlerEngine:
                         headers=headers,
                         timeout=aiohttp.ClientTimeout(total=self.request_timeout)
                     ) as response:
+                        self._record_latency(time.monotonic() - t0)
                         if response.status == 200:
                             # 偵測靜默 redirect（如 ESG BT 不存在的文章 301→首頁）
                             final_url = str(response.url)
                             if final_url != url and hasattr(self.parser, 'is_not_found_redirect'):
                                 if self.parser.is_not_found_redirect(url, final_url):
                                     return (None, CrawlStatus.NOT_FOUND)
-                            return (await response.text(), CrawlStatus.SUCCESS)
+                            raw = await response.read()
+                            detected = from_bytes(raw).best()
+                            text = str(detected) if detected else raw.decode('utf-8', errors='replace')
+                            return (text, CrawlStatus.SUCCESS)
                         elif response.status == 404:
                             return (None, CrawlStatus.NOT_FOUND)
                         elif response.status in (403, 429):
+                            got_blocked_response = True
                             await self._handle_rate_limit()
                         elif response.status in (500, 502, 503, 504):
                             pass  # 繼續重試
@@ -423,11 +459,42 @@ class CrawlerEngine:
                 wait_time = settings.RETRY_DELAY * (2 ** (retry_count - 1))
                 await asyncio.sleep(min(wait_time, settings.MAX_RETRY_DELAY))
 
-        return (None, CrawlStatus.BLOCKED)
+        # Distinguish real blocks (403/429) from timeouts/network errors
+        if got_blocked_response:
+            return (None, CrawlStatus.BLOCKED)
+        return (None, CrawlStatus.FETCH_ERROR)
 
     async def _random_delay(self):
-        """隨機延遲"""
+        """隨機延遲（固定模式，AutoThrottle 關閉時使用）"""
         await asyncio.sleep(random.uniform(self.min_delay, self.max_delay))
+
+    async def _adaptive_delay(self):
+        """AutoThrottle: adaptive delay based on server response latency.
+
+        Uses EWMA smoothing: new_delay = (old_delay + target_delay) / 2
+        where target_delay = avg_latency / TARGET_CONCURRENCY.
+        Falls back to random delay when AutoThrottle is disabled or no samples yet.
+        """
+        if not settings.AUTOTHROTTLE_ENABLED or not self._latencies:
+            await self._random_delay()
+            return
+
+        target_delay = self._avg_latency / settings.AUTOTHROTTLE_TARGET_CONCURRENCY
+        new_delay = (self._current_delay + target_delay) / 2.0
+        # Clamp to per-source hard limits
+        new_delay = max(self.min_delay, min(new_delay, self.max_delay))
+        self._current_delay = new_delay
+
+        # Add small jitter (±10%) to avoid synchronized bursts
+        jitter = new_delay * 0.1
+        actual = new_delay + random.uniform(-jitter, jitter)
+        actual = max(self.min_delay, min(actual, self.max_delay))
+
+        await asyncio.sleep(actual)
+
+    def _throttle_backoff(self):
+        """Increase current delay on error (403/429/5xx) responses."""
+        self._current_delay = min(self._current_delay * 2.0, self.max_delay)
 
     async def _process_article(
         self,
@@ -452,6 +519,8 @@ class CrawlerEngine:
         if status == CrawlStatus.NOT_FOUND:
             # Primary URL 404 — try candidate URLs before giving up
             candidate_urls = self.parser.get_candidate_urls(article_id)
+            if self._max_candidate_urls is not None:
+                candidate_urls = candidate_urls[:self._max_candidate_urls]
             if candidate_urls:
                 for candidate_url in candidate_urls:
                     if self._is_crawled(candidate_url):
@@ -460,9 +529,7 @@ class CrawlerEngine:
                         return CrawlStatus.SUCCESS
 
                     c_html, c_status = await self._fetch(candidate_url, session)
-                    if c_status == CrawlStatus.NOT_FOUND or c_html is None:
-                        continue
-                    if c_status == CrawlStatus.BLOCKED:
+                    if c_status in (CrawlStatus.NOT_FOUND, CrawlStatus.BLOCKED, CrawlStatus.FETCH_ERROR) or c_html is None:
                         continue
 
                     try:
@@ -471,12 +538,16 @@ class CrawlerEngine:
                             None, _run_parse_in_thread, self.parser, c_html, candidate_url
                         )
                         if c_data is not None:
-                            self.logger.info(f"ID {article_id:,} found via candidate URL (404 fallback): {candidate_url}")
-                            return await self._handle_successful_parse(article_id, candidate_url, c_data)
+                            c_data = self._ensure_date(c_data, c_html, candidate_url)
+                            if c_data is not None:
+                                self.logger.info(f"ID {article_id:,} found via candidate URL (404 fallback): {candidate_url}")
+                                return await self._handle_successful_parse(article_id, candidate_url, c_data)
                     except Exception as e:
                         self.logger.debug(f"Error parsing candidate {candidate_url}: {e}")
 
             self.stats['not_found'] += 1
+            self._not_found_ids.add(article_id)
+            self.registry.mark_not_found(self.parser.source_name, article_id)
             await self._report_progress()
             return CrawlStatus.NOT_FOUND
 
@@ -486,11 +557,17 @@ class CrawlerEngine:
             await self._report_progress()
             return CrawlStatus.BLOCKED
 
+        if status == CrawlStatus.FETCH_ERROR:
+            self.stats['failed'] += 1
+            self._mark_failed(url, "fetch_error", "Timeout/network error after retries")
+            await self._report_progress()
+            return CrawlStatus.FETCH_ERROR
+
         if html is None:
             self.stats['failed'] += 1
             self._mark_failed(url, "fetch_error", "Failed to fetch HTML")
             await self._report_progress()
-            return CrawlStatus.BLOCKED
+            return CrawlStatus.FETCH_ERROR
 
         try:
             loop = asyncio.get_event_loop()
@@ -498,10 +575,25 @@ class CrawlerEngine:
                 None, _run_parse_in_thread, self.parser, html, url
             )
             if data is not None:
-                return await self._handle_successful_parse(article_id, url, data)
+                data = self._ensure_date(data, html, url)
+                if data is not None:
+                    return await self._handle_successful_parse(article_id, url, data)
+
+            # Custom parser failed — try trafilatura fallback before candidate URLs
+            tf_data = await loop.run_in_executor(
+                None, self._trafilatura_fallback, html, url
+            )
+            if tf_data is not None:
+                tf_data = self._ensure_date(tf_data, html, url)
+                if tf_data is not None:
+                    self.stats['trafilatura_fallbacks'] = self.stats.get('trafilatura_fallbacks', 0) + 1
+                    self.logger.info(f"ID {article_id:,} rescued by trafilatura fallback")
+                    return await self._handle_successful_parse(article_id, url, tf_data)
 
             # Primary URL parse failed — try candidate URLs
             candidate_urls = self.parser.get_candidate_urls(article_id)
+            if self._max_candidate_urls is not None:
+                candidate_urls = candidate_urls[:self._max_candidate_urls]
             for candidate_url in candidate_urls:
                 if self._is_crawled(candidate_url):
                     self.stats['skipped'] += 1
@@ -516,8 +608,10 @@ class CrawlerEngine:
                     None, _run_parse_in_thread, self.parser, c_html, candidate_url
                 )
                 if c_data is not None:
-                    self.logger.info(f"ID {article_id:,} found via candidate URL: {candidate_url}")
-                    return await self._handle_successful_parse(article_id, candidate_url, c_data)
+                    c_data = self._ensure_date(c_data, c_html, candidate_url)
+                    if c_data is not None:
+                        self.logger.info(f"ID {article_id:,} found via candidate URL: {candidate_url}")
+                        return await self._handle_successful_parse(article_id, candidate_url, c_data)
 
             # All candidates failed
             self.stats['failed'] += 1
@@ -531,6 +625,72 @@ class CrawlerEngine:
             self._mark_failed(url, "parse_exception", str(e)[:200])
             await self._report_progress()
             return CrawlStatus.BLOCKED
+
+    def _ensure_date(self, data: Dict[str, Any], html: str, url: str = "") -> Optional[Dict[str, Any]]:
+        """Ensure article has a datePublished; use htmldate as fallback.
+
+        Returns the data dict (possibly with datePublished filled in),
+        or None if no date could be determined (article should be discarded).
+        """
+        if data.get('datePublished'):
+            return data
+        try:
+            hd = find_date(html, outputformat='%Y-%m-%d')
+        except Exception as e:
+            self.logger.debug(f"htmldate error: {e}")
+            hd = None
+        if hd:
+            data['datePublished'] = f"{hd}T00:00:00"
+            self.logger.info(f"htmldate fallback filled datePublished: {hd}")
+            return data
+        self.logger.warning(f"No date found (parser + htmldate), discarding: {url or data.get('url', '?')}")
+        return None
+
+    def _trafilatura_fallback(self, html: str, url: str) -> Optional[Dict[str, Any]]:
+        """Last-resort extraction using trafilatura when custom parser returns None.
+
+        This is a sync method; call via run_in_executor from async context.
+        Returns a standard NewsArticle dict or None.
+        """
+        try:
+            result = trafilatura.bare_extraction(
+                html, url=url, favor_precision=True, include_comments=False
+            )
+        except Exception as e:
+            self.logger.debug(f"trafilatura fallback error for {url}: {e}")
+            return None
+
+        if not result:
+            return None
+
+        # trafilatura 2.0+ returns Document object; convert to dict
+        if hasattr(result, 'as_dict'):
+            result = result.as_dict()
+
+        title = result.get('title')
+        body = result.get('text')
+        if not title or not body or len(body) < settings.MIN_ARTICLE_LENGTH:
+            return None
+
+        # Assemble standard NewsArticle dict
+        date_str = result.get('date')  # YYYY-MM-DD format from trafilatura
+        date_published = f"{date_str}T00:00:00" if date_str else None
+
+        data = {
+            '@context': 'https://schema.org',
+            '@type': 'NewsArticle',
+            'headline': title,
+            'articleBody': body[:settings.MAX_ARTICLE_LENGTH],
+            'url': url,
+            '_source': 'trafilatura_fallback',
+        }
+        if date_published:
+            data['datePublished'] = date_published
+        author = result.get('author')
+        if author:
+            data['author'] = {'@type': 'Person', 'name': author}
+
+        return data
 
     async def _handle_successful_parse(
         self,
@@ -579,7 +739,10 @@ class CrawlerEngine:
 
         self._last_progress_update = now
         try:
-            self.progress_callback(self.stats.copy())
+            stats = self.stats.copy()
+            stats['avg_latency'] = round(self._avg_latency, 3)
+            stats['current_delay'] = round(self._current_delay, 3)
+            self.progress_callback(stats)
         except Exception as e:
             self.logger.warning(f"Progress callback error: {e}")
 
@@ -620,7 +783,7 @@ class CrawlerEngine:
         hit_count = 0
         miss_count = 0
         for aid, result in zip(batch_ids, results):
-            if isinstance(result, Exception):
+            if isinstance(result, BaseException):
                 self.logger.warning(f"Exception processing ID {aid}: {result}")
                 miss_count += 1
                 continue
@@ -636,12 +799,17 @@ class CrawlerEngine:
             elif status == CrawlStatus.BLOCKED:
                 self.consecutive_failures += 1
                 miss_count += 1
+            elif status == CrawlStatus.FETCH_ERROR:
+                # Timeout/network error — don't count as blocked
+                self.stats['failed'] = self.stats.get('failed', 0) + 1
+                miss_count += 1
         return hit_count, miss_count
 
     def _check_blocked_stop(self) -> bool:
         """Check if we should stop due to consecutive blocked requests. Returns True if stopped."""
-        if self.consecutive_failures >= settings.BLOCKED_CONSECUTIVE_LIMIT:
-            self.logger.warning(f"Stopping: {self.consecutive_failures} consecutive blocked requests")
+        limit = settings.FULL_SCAN_BLOCKED_LIMIT if self._full_scan_mode else settings.BLOCKED_CONSECUTIVE_LIMIT
+        if self.consecutive_failures >= limit:
+            self.logger.warning(f"Stopping: {self.consecutive_failures} consecutive blocked requests (limit={limit})")
             self.stats['early_stopped'] = True
             self.stats['early_stop_reason'] = f"連續 {self.consecutive_failures} 次請求被封鎖"
             return True
@@ -655,6 +823,7 @@ class CrawlerEngine:
     ) -> Dict[str, Any]:
         """
         自動爬取最新文章，連續遇到已爬取的文章時自動停止。
+        使用批次並行處理提升效率。
 
         Args:
             count: 最大爬取數量（上限）
@@ -700,54 +869,80 @@ class CrawlerEngine:
             # 重置統計
             self._reset_stats(early_stopped=False, early_stop_reason=None)
 
+            batch_size = max(self.concurrent_limit * 5, 20)
+            semaphore = asyncio.Semaphore(self.concurrent_limit)
+
+            self.logger.info(f"Parallel auto: batch_size={batch_size}, concurrent_limit={self.concurrent_limit}")
+
+            async def _process_one(aid: int) -> tuple:
+                async with semaphore:
+                    await self._adaptive_delay()
+                    status = await self._process_article(aid, self.session)
+                    return (aid, status)
+
             consecutive_skips = 0
             current_id = latest_id
             processed = 0
 
             while processed < count:
-                self.stats['total'] += 1
+                # Phase 1: Collect batch, pre-filtering already-crawled IDs
+                batch_ids = []
+                should_stop = False
 
-                if self._is_any_url_crawled(current_id):
-                    self.stats['skipped'] += 1
-                    consecutive_skips += 1
-                    self.logger.debug(f"Skip (already crawled): {current_id}, consecutive: {consecutive_skips}")
+                while len(batch_ids) < batch_size and processed < count:
+                    self.stats['total'] += 1
 
-                    if consecutive_skips >= stop_after_consecutive_skips:
-                        self.logger.info(f"Stopping: {consecutive_skips} consecutive skips reached")
-                        self.stats['early_stopped'] = True
-                        self.stats['early_stop_reason'] = f"連續 {consecutive_skips} 篇已爬取，自動停止"
-                        break
-                else:
-                    # 重置連續 skip 計數
-                    consecutive_skips = 0
+                    if self._is_any_url_crawled(current_id):
+                        self.stats['skipped'] += 1
+                        consecutive_skips += 1
 
-                    # 實際爬取
-                    await self._random_delay()
-                    status = await self._process_article(current_id, self.session)
-
-                    # 如果是新文章但爬取失敗（blocked），也算一次有效嘗試
-                    if status == CrawlStatus.BLOCKED:
-                        # 連續被封鎖也應該停止
-                        self.consecutive_failures += 1
-                        if self.consecutive_failures >= settings.BLOCKED_CONSECUTIVE_LIMIT:
-                            self.logger.warning(f"Stopping: too many consecutive failures")
+                        if consecutive_skips >= stop_after_consecutive_skips:
+                            self.logger.info(f"Stopping: {consecutive_skips} consecutive skips reached")
                             self.stats['early_stopped'] = True
-                            self.stats['early_stop_reason'] = f"連續 {self.consecutive_failures} 次請求被封鎖"
+                            self.stats['early_stop_reason'] = f"連續 {consecutive_skips} 篇已爬取，自動停止"
+                            should_stop = True
                             break
                     else:
-                        self.consecutive_failures = 0
+                        consecutive_skips = 0
+                        batch_ids.append(current_id)
 
-                processed += 1
-                current_id -= 1
+                    processed += 1
+                    current_id -= 1
 
-                # 日期下界檢查：ID 低於 floor_id 表示已超出目標日期範圍
-                if floor_id and current_id < floor_id:
-                    self.logger.info(f"Stopping: reached date floor (ID {current_id:,} < floor {floor_id:,})")
-                    self.stats['early_stopped'] = True
-                    self.stats['early_stop_reason'] = f"已達日期下界 {date_floor}（ID {floor_id:,}）"
-                    break
+                    # 日期下界檢查
+                    if floor_id and current_id < floor_id:
+                        self.logger.info(f"Stopping: reached date floor (ID {current_id:,} < floor {floor_id:,})")
+                        self.stats['early_stopped'] = True
+                        self.stats['early_stop_reason'] = f"已達日期下界 {date_floor}（ID {floor_id:,}）"
+                        should_stop = True
+                        break
 
                 await self._report_progress()
+
+                if should_stop and not batch_ids:
+                    break
+
+                # Phase 2: Process batch in parallel
+                if batch_ids:
+                    tasks = [_process_one(aid) for aid in batch_ids]
+                    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+                    self._evaluate_batch_results(batch_ids, results)
+                    await self._report_progress()
+
+                    if self._check_blocked_stop():
+                        break
+
+                    # Cooldown when blocked responses detected
+                    if self.consecutive_failures > 0:
+                        self.logger.warning(
+                            f"Blocked: {self.consecutive_failures}/{settings.BLOCKED_CONSECUTIVE_LIMIT}, "
+                            f"cooling down {settings.BLOCKED_COOLDOWN}s"
+                        )
+                        await asyncio.sleep(settings.BLOCKED_COOLDOWN)
+
+                if should_stop:
+                    break
 
         finally:
             if need_close:
@@ -757,8 +952,22 @@ class CrawlerEngine:
         return self.stats
 
     def _apply_full_scan_overrides(self) -> None:
-        """套用 full scan 專用設定（更高併發、更短 delay）。"""
+        """套用 full scan 專用設定（更高併發、更短 delay）+ 載入 skip 資料。"""
         source_name = self.parser.source_name
+
+        # Always load skip data (watermark + known 404s) regardless of overrides
+        self._not_found_ids = self.registry.load_not_found_ids(source_name)
+        wm = self.registry.get_scan_watermark(source_name)
+        self._watermark_id = wm['last_scanned_id'] if wm and wm.get('last_scanned_id') else None
+        self._watermark_date = wm['last_scanned_date'] if wm and wm.get('last_scanned_date') else None
+        self._full_scan_mode = True
+
+        self.logger.info(
+            f"Full scan skip data: "
+            f"known_404s={len(self._not_found_ids):,}, "
+            f"watermark_id={self._watermark_id}, watermark_date={self._watermark_date}"
+        )
+
         overrides = settings.FULL_SCAN_OVERRIDES.get(source_name)
         if not overrides:
             return
@@ -773,12 +982,14 @@ class CrawlerEngine:
         delay_range = overrides.get('delay_range', (self.min_delay, self.max_delay))
         self.min_delay, self.max_delay = delay_range
         self.request_timeout = overrides.get('request_timeout', self.request_timeout)
+        self._max_candidate_urls = overrides.get('max_candidate_urls')
 
         self.logger.info(
             f"Full scan overrides applied: "
             f"concurrent {old['concurrent_limit']}→{self.concurrent_limit}, "
             f"delay {old['delay_range']}→{delay_range}, "
-            f"timeout {old['request_timeout']}s→{self.request_timeout}s"
+            f"timeout {old['request_timeout']}s→{self.request_timeout}s, "
+            f"max_candidate_urls={self._max_candidate_urls}"
         )
 
     async def run_full_scan(
@@ -854,6 +1065,8 @@ class CrawlerEngine:
             early_stopped=False,
             early_stop_reason=None,
             last_scanned_id=start_id,
+            scan_start=start_id,
+            scan_end=end_id,
         )
 
         need_close = self.session is None
@@ -868,8 +1081,7 @@ class CrawlerEngine:
 
             async def _process_one(aid: int) -> tuple:
                 async with semaphore:
-                    delay = random.uniform(self.min_delay, self.max_delay)
-                    await asyncio.sleep(delay)
+                    await self._adaptive_delay()
                     status = await self._process_article(aid, self.session)
                     return (aid, status)
 
@@ -878,7 +1090,13 @@ class CrawlerEngine:
                 # Collect batch, pre-filtering already-crawled IDs
                 batch_ids = []
                 while current_id <= end_id and len(batch_ids) < batch_size:
-                    if self._is_any_url_crawled(current_id):
+                    # Watermark check first (O(1), covers most IDs in re-scans)
+                    already_scanned = (
+                        (self._watermark_id is not None and current_id <= self._watermark_id)
+                        or self._is_any_url_crawled(current_id)
+                        or current_id in self._not_found_ids
+                    )
+                    if already_scanned:
                         self.stats['skipped'] += 1
                     else:
                         batch_ids.append(current_id)
@@ -898,11 +1116,26 @@ class CrawlerEngine:
 
                 # Update checkpoint after batch completes
                 self.stats['last_scanned_id'] = current_id - 1
+                self.registry.update_scan_watermark(
+                    self.parser.source_name,
+                    last_scanned_id=current_id - 1
+                )
+                self.registry.flush_not_found()
                 self.stats['progress'] = current_id - start_id
                 await self._report_progress()
 
                 if self._check_blocked_stop():
                     break
+
+                # Cooldown when blocked responses detected (prevent escalating to full block)
+                if self.consecutive_failures > 0:
+                    cooldown = settings.FULL_SCAN_BLOCKED_COOLDOWN if self._full_scan_mode else settings.BLOCKED_COOLDOWN
+                    limit = settings.FULL_SCAN_BLOCKED_LIMIT if self._full_scan_mode else settings.BLOCKED_CONSECUTIVE_LIMIT
+                    self.logger.warning(
+                        f"Blocked: {self.consecutive_failures}/{limit}, "
+                        f"cooling down {cooldown}s"
+                    )
+                    await asyncio.sleep(cooldown)
 
         finally:
             if need_close:
@@ -932,10 +1165,15 @@ class CrawlerEngine:
         """
         suffix_multiplier = 10 ** suffix_digits
         total_days = (to_date - from_date).days + 1
+
+        # Per-source miss_limit（chinatimes 密度極低，需要更高的 miss_limit）
+        source_config = FULL_SCAN_CONFIG.get(self.parser.source_name, {})
+        miss_limit = source_config.get("date_scan_miss_limit", settings.DATE_SCAN_MISS_LIMIT)
+
         self.logger.info(f"Full scan date-based: {from_date.strftime('%Y-%m-%d')} -> "
                         f"{to_date.strftime('%Y-%m-%d')} ({total_days} days, "
                         f"max_suffix={max_suffix}, suffix_digits={suffix_digits}, "
-                        f"miss_limit={settings.DATE_SCAN_MISS_LIMIT})")
+                        f"miss_limit={miss_limit})")
 
         self._reset_stats(
             total=total_days,
@@ -943,6 +1181,8 @@ class CrawlerEngine:
             early_stopped=False,
             early_stop_reason=None,
             last_scanned_date=from_date.strftime('%Y-%m-%d'),
+            scan_start=from_date.strftime('%Y-%m-%d'),
+            scan_end=to_date.strftime('%Y-%m-%d'),
         )
 
         need_close = self.session is None
@@ -956,14 +1196,26 @@ class CrawlerEngine:
 
             async def _process_one(aid: int) -> tuple:
                 async with semaphore:
-                    delay = random.uniform(self.min_delay, self.max_delay)
-                    await asyncio.sleep(delay)
+                    await self._adaptive_delay()
                     status = await self._process_article(aid, self.session)
                     return (aid, status)
 
             current_day = from_date
             while current_day <= to_date:
                 date_prefix = int(current_day.strftime('%Y%m%d'))
+                current_day_str = current_day.strftime('%Y-%m-%d')
+
+                # Watermark skip: entire day already scanned in previous run
+                day_below_watermark = (
+                    self._watermark_date is not None
+                    and current_day_str <= self._watermark_date
+                )
+                if day_below_watermark:
+                    self.logger.debug(f"Day {date_prefix}: below watermark {self._watermark_date}, skipping")
+                    days_processed += 1
+                    self.stats['progress'] = days_processed
+                    current_day += timedelta(days=1)
+                    continue
 
                 # Per-day adaptive scanning
                 effective_max = max_suffix
@@ -976,7 +1228,7 @@ class CrawlerEngine:
                         article_id = date_prefix * suffix_multiplier + suffix
                         suffix += 1
 
-                        if self._is_any_url_crawled(article_id):
+                        if self._is_any_url_crawled(article_id) or article_id in self._not_found_ids:
                             self.stats['skipped'] += 1
                             day_consecutive_miss = 0  # existing article = reset
                         else:
@@ -986,7 +1238,7 @@ class CrawlerEngine:
 
                     if not batch_ids:
                         # All skipped (already crawled) — check auto-extend
-                        if suffix > effective_max and day_consecutive_miss < settings.DATE_SCAN_MISS_LIMIT:
+                        if suffix > effective_max and day_consecutive_miss < miss_limit:
                             old = effective_max
                             effective_max += settings.DATE_SCAN_AUTO_EXTEND_STEP
                             self.logger.warning(
@@ -1009,8 +1261,18 @@ class CrawlerEngine:
                     if self._check_blocked_stop():
                         break
 
+                    # Cooldown when blocked responses detected
+                    if self.consecutive_failures > 0:
+                        cooldown = settings.FULL_SCAN_BLOCKED_COOLDOWN if self._full_scan_mode else settings.BLOCKED_COOLDOWN
+                        limit = settings.FULL_SCAN_BLOCKED_LIMIT if self._full_scan_mode else settings.BLOCKED_CONSECUTIVE_LIMIT
+                        self.logger.warning(
+                            f"Blocked: {self.consecutive_failures}/{limit}, "
+                            f"cooling down {cooldown}s"
+                        )
+                        await asyncio.sleep(cooldown)
+
                     # Per-day early stop
-                    if day_consecutive_miss >= settings.DATE_SCAN_MISS_LIMIT:
+                    if day_consecutive_miss >= miss_limit:
                         self.logger.debug(
                             f"Day {date_prefix}: {day_consecutive_miss} consecutive misses, "
                             f"skipping remaining suffixes (scanned to {suffix - 1})"
@@ -1018,7 +1280,7 @@ class CrawlerEngine:
                         break
 
                     # Auto-extend: near/past ceiling but still finding articles
-                    if suffix > effective_max and day_consecutive_miss < settings.DATE_SCAN_MISS_LIMIT:
+                    if suffix > effective_max and day_consecutive_miss < miss_limit:
                         old = effective_max
                         effective_max += settings.DATE_SCAN_AUTO_EXTEND_STEP
                         self.logger.warning(
@@ -1032,6 +1294,11 @@ class CrawlerEngine:
                 # Update checkpoint after entire day completes
                 days_processed += 1
                 self.stats['last_scanned_date'] = current_day.strftime('%Y-%m-%d')
+                self.registry.update_scan_watermark(
+                    self.parser.source_name,
+                    last_scanned_date=current_day.strftime('%Y-%m-%d')
+                )
+                self.registry.flush_not_found()
                 self.stats['progress'] = days_processed
 
                 current_day += timedelta(days=1)
@@ -1154,7 +1421,7 @@ class CrawlerEngine:
 
             async def process_url_with_semaphore(url: str):
                 async with semaphore:
-                    await self._random_delay()
+                    await self._adaptive_delay()
                     return await self._process_url(url, self.session)
 
             tasks = [process_url_with_semaphore(url) for url in urls]
@@ -1370,7 +1637,8 @@ class CrawlerEngine:
                 tasks = [process_with_semaphore(url) for url in batch]
                 await asyncio.gather(*tasks, return_exceptions=True)
 
-                self.logger.info(f"Progress: {min(i + batch_size, len(total_urls_to_crawl))}/{len(total_urls_to_crawl)}")
+                self.stats['progress'] = min(i + batch_size, len(total_urls_to_crawl))
+                self.logger.info(f"Progress: {self.stats['progress']}/{len(total_urls_to_crawl)}")
 
         finally:
             if need_close:
@@ -1714,7 +1982,8 @@ class CrawlerEngine:
                 tasks = [process_with_semaphore(url) for url in batch]
                 await asyncio.gather(*tasks, return_exceptions=True)
 
-                self.logger.info(f"Progress: {min(i + batch_size, len(total_urls_to_crawl))}/{len(total_urls_to_crawl)}")
+                self.stats['progress'] = min(i + batch_size, len(total_urls_to_crawl))
+                self.logger.info(f"Progress: {self.stats['progress']}/{len(total_urls_to_crawl)}")
 
         finally:
             if need_close:

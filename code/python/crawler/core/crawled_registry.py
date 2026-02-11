@@ -15,7 +15,7 @@ import sqlite3
 import threading
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Set
 
 from . import settings
 
@@ -95,6 +95,23 @@ class CrawledRegistry:
             CREATE INDEX IF NOT EXISTS idx_failed_source ON failed_urls(source_id);
             CREATE INDEX IF NOT EXISTS idx_failed_at ON failed_urls(failed_at);
             CREATE INDEX IF NOT EXISTS idx_error_type ON failed_urls(error_type);
+
+            -- Not-found articles: remember confirmed 404 article IDs for skip
+            CREATE TABLE IF NOT EXISTS not_found_articles (
+                source_id TEXT NOT NULL,
+                article_id INTEGER NOT NULL,
+                confirmed_at TEXT NOT NULL,
+                PRIMARY KEY (source_id, article_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_nf_source ON not_found_articles(source_id);
+
+            -- Scan watermarks: remember how far each source has been scanned
+            CREATE TABLE IF NOT EXISTS scan_watermarks (
+                source_id TEXT PRIMARY KEY,
+                last_scanned_id INTEGER,
+                last_scanned_date TEXT,
+                updated_at TEXT NOT NULL
+            );
         """)
         conn.commit()
 
@@ -566,6 +583,229 @@ class CrawledRegistry:
             LIMIT ?
         """, (source_id, max_retries, limit))
         return [row['url'] for row in cursor]
+
+    # ==================== Scan Watermark Management ====================
+
+    def get_scan_watermark(self, source_id: str) -> Optional[Dict[str, Any]]:
+        """Get the scan watermark for a source."""
+        conn = self._get_conn()
+        cursor = conn.execute(
+            "SELECT * FROM scan_watermarks WHERE source_id = ?",
+            (source_id,)
+        )
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+    def update_scan_watermark(
+        self,
+        source_id: str,
+        last_scanned_id: Optional[int] = None,
+        last_scanned_date: Optional[str] = None,
+    ) -> None:
+        """
+        Update scan watermark (only advances forward, never backwards).
+
+        Args:
+            source_id: Source identifier
+            last_scanned_id: For sequential sources
+            last_scanned_date: For date-based sources (YYYY-MM-DD)
+        """
+        conn = self._get_conn()
+        now = datetime.now().isoformat()
+
+        existing = self.get_scan_watermark(source_id)
+
+        if existing:
+            # Only advance forward
+            new_id = last_scanned_id
+            if new_id is not None and existing.get('last_scanned_id') is not None:
+                new_id = max(new_id, existing['last_scanned_id'])
+
+            new_date = last_scanned_date
+            if new_date is not None and existing.get('last_scanned_date') is not None:
+                new_date = max(new_date, existing['last_scanned_date'])
+
+            conn.execute("""
+                UPDATE scan_watermarks
+                SET last_scanned_id = COALESCE(?, last_scanned_id),
+                    last_scanned_date = COALESCE(?, last_scanned_date),
+                    updated_at = ?
+                WHERE source_id = ?
+            """, (new_id, new_date, now, source_id))
+        else:
+            conn.execute("""
+                INSERT INTO scan_watermarks (source_id, last_scanned_id, last_scanned_date, updated_at)
+                VALUES (?, ?, ?, ?)
+            """, (source_id, last_scanned_id, last_scanned_date, now))
+
+        conn.commit()
+
+    def get_all_watermarks(self) -> Dict[str, Dict[str, Any]]:
+        """Get all scan watermarks (for Dashboard display)."""
+        conn = self._get_conn()
+        cursor = conn.execute("SELECT * FROM scan_watermarks")
+        return {row['source_id']: dict(row) for row in cursor}
+
+    # ==================== Not-Found Article Management ====================
+
+    def __init_not_found_buffer(self):
+        """Lazy-init the not-found buffer."""
+        if not hasattr(self, '_nf_buffer'):
+            self._nf_buffer: List[tuple] = []
+
+    def mark_not_found(self, source_id: str, article_id: int) -> None:
+        """Buffer a confirmed 404 article ID in memory. Call flush_not_found() after batch."""
+        self.__init_not_found_buffer()
+        self._nf_buffer.append((source_id, article_id, datetime.now().isoformat()))
+
+    def flush_not_found(self) -> None:
+        """Bulk INSERT buffered not-found records and commit. Minimizes write lock duration."""
+        self.__init_not_found_buffer()
+        if not self._nf_buffer:
+            return
+        conn = self._get_conn()
+        conn.executemany(
+            "INSERT OR IGNORE INTO not_found_articles (source_id, article_id, confirmed_at) VALUES (?, ?, ?)",
+            self._nf_buffer
+        )
+        conn.commit()
+        self._nf_buffer.clear()
+
+    def load_not_found_ids(self, source_id: str) -> Set[int]:
+        """Load all 404 article IDs for a source into a memory set."""
+        conn = self._get_conn()
+        cursor = conn.execute(
+            "SELECT article_id FROM not_found_articles WHERE source_id = ?",
+            (source_id,)
+        )
+        return {row['article_id'] for row in cursor}
+
+    def get_not_found_count(self, source_id: Optional[str] = None) -> int:
+        """Get count of 404 records (for stats/debug)."""
+        conn = self._get_conn()
+        if source_id:
+            cursor = conn.execute(
+                "SELECT COUNT(*) as count FROM not_found_articles WHERE source_id = ?",
+                (source_id,)
+            )
+        else:
+            cursor = conn.execute("SELECT COUNT(*) as count FROM not_found_articles")
+        return cursor.fetchone()['count']
+
+    # ==================== Reference Points Validation ====================
+
+    def validate_reference_points(
+        self, source_id: str, points: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """
+        Validate reference point articles against the registry.
+
+        For each reference point, checks:
+        1. Is the article in crawled_articles? → "found"
+        2. Is the article in not_found_articles (confirmed 404)? → "confirmed_404"
+        3. Neither → "not_scanned"
+
+        Args:
+            source_id: Source identifier
+            points: List of {"id": article_id, "date": "YYYY-MM", "note": "..."}
+
+        Returns:
+            List of validation results with status
+        """
+        conn = self._get_conn()
+        results = []
+
+        for point in points:
+            article_id = point["id"]
+            article_id_str = str(article_id)
+
+            # Check crawled_articles (URL contains article_id)
+            cursor = conn.execute(
+                "SELECT url, date_published FROM crawled_articles "
+                "WHERE source_id = ? AND url LIKE ? LIMIT 1",
+                (source_id, f"%{article_id_str}%")
+            )
+            row = cursor.fetchone()
+
+            if row:
+                status = "found"
+                url = row["url"]
+                date_published = row["date_published"]
+            else:
+                url = None
+                date_published = None
+                # Check not_found_articles
+                nf_cursor = conn.execute(
+                    "SELECT 1 FROM not_found_articles "
+                    "WHERE source_id = ? AND article_id = ?",
+                    (source_id, article_id)
+                )
+                status = "confirmed_404" if nf_cursor.fetchone() else "not_scanned"
+
+            results.append({
+                "id": article_id,
+                "date": point.get("date", ""),
+                "note": point.get("note", ""),
+                "status": status,
+                "url": url,
+                "date_published": date_published,
+            })
+
+        return results
+
+    def discover_reference_points(self, source_id: str) -> List[Dict[str, Any]]:
+        """
+        Auto-discover reference points by finding one article per month
+        from existing crawled data.
+
+        Returns:
+            List of {"url", "date", "date_published"} sorted by date
+        """
+        conn = self._get_conn()
+        cursor = conn.execute("""
+            SELECT url, date_published, SUBSTR(date_published, 1, 7) as month
+            FROM crawled_articles
+            WHERE source_id = ?
+              AND date_published IS NOT NULL
+              AND date_published != ''
+            GROUP BY SUBSTR(date_published, 1, 7)
+            ORDER BY date_published
+        """, (source_id,))
+
+        return [
+            {
+                "url": row["url"],
+                "date": row["month"],
+                "date_published": row["date_published"],
+            }
+            for row in cursor
+        ]
+
+    def get_daily_article_counts(
+        self, source_id: str, year_month: str
+    ) -> Dict[str, int]:
+        """
+        Get article counts per day for a source in a given month.
+        Useful for detecting days with zero articles (potential gaps).
+
+        Args:
+            source_id: Source identifier
+            year_month: "YYYY-MM" format
+
+        Returns:
+            Dict mapping "YYYY-MM-DD" to article count
+        """
+        conn = self._get_conn()
+        cursor = conn.execute("""
+            SELECT SUBSTR(date_published, 1, 10) as day, COUNT(*) as count
+            FROM crawled_articles
+            WHERE source_id = ?
+              AND date_published LIKE ?
+            GROUP BY SUBSTR(date_published, 1, 10)
+            ORDER BY day
+        """, (source_id, f"{year_month}%"))
+
+        return {row["day"]: row["count"] for row in cursor}
 
     def close(self) -> None:
         """Close database connection."""

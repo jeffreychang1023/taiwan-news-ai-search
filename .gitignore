@@ -12,6 +12,7 @@
 myenv
 venv
 .env
+.env.*
 data/
 *.tsv
 

@@ -10,13 +10,20 @@ einfo_parser.py - 環境資訊中心解析器
 
 import re
 import asyncio
+import logging
 from datetime import datetime
 from typing import Dict, List, Optional, Any
 from bs4 import BeautifulSoup
+from htmldate import find_date
+import trafilatura
 
 from ..core.interfaces import BaseParser, SessionType
 from ..core import settings
 from ..utils.text_processor import TextProcessor
+
+# A/B test 統計（模組級別，跨多篇文章累計）
+_ab_stats = {"custom_only": 0, "trafilatura_only": 0, "both": 0, "neither": 0}
+_ab_logger = logging.getLogger("EInfoABTest")
 
 
 class EInfoParser(BaseParser):
@@ -100,7 +107,7 @@ class EInfoParser(BaseParser):
         self,
         session,
         low: int = 241000,
-        high: int = 260000
+        high: int = 270000
     ) -> Optional[int]:
         """二分搜尋找到最新有效的 node ID"""
         if session is None:
@@ -108,19 +115,20 @@ class EInfoParser(BaseParser):
 
         self.logger.info(f"Binary search for latest ID in range [{low}, {high}]")
         latest_valid = None
+        consecutive_errors = 0
+        max_consecutive_errors = 3
 
         while low <= high:
             mid = (low + high) // 2
             url = self.get_url(mid)
 
             try:
-                response = await session.get(url)
+                response = await asyncio.wait_for(session.get(url), timeout=8)
                 await asyncio.sleep(0.3)  # Rate limiting
 
-                # 相容 aiohttp (.status) 和 curl_cffi (.status_code)
-                status = getattr(response, 'status_code', None) or getattr(response, 'status', 0)
+                consecutive_errors = 0  # Reset on success
 
-                if status == 200:
+                if response.status_code == 200:
                     # 這個 ID 存在，往更大的找
                     latest_valid = mid
                     low = mid + 1
@@ -132,6 +140,10 @@ class EInfoParser(BaseParser):
 
             except Exception as e:
                 self.logger.warning(f"Binary search error at {mid}: {e}")
+                consecutive_errors += 1
+                if consecutive_errors >= max_consecutive_errors:
+                    self.logger.warning(f"Binary search aborted: {max_consecutive_errors} consecutive errors")
+                    break
                 high = mid - 1
 
         if latest_valid:
@@ -153,16 +165,10 @@ class EInfoParser(BaseParser):
 
                 response = await session.get(url)
 
-                # 相容 aiohttp (.status) 和 curl_cffi (.status_code)
-                status = getattr(response, 'status_code', None) or getattr(response, 'status', 0)
-                if status != 200:
+                if response.status_code != 200:
                     continue
 
-                # 相容 aiohttp 和 curl_cffi 的 response text
-                if hasattr(response, 'text') and callable(response.text):
-                    html = await response.text()
-                else:
-                    html = response.text
+                html = response.text
 
                 soup = BeautifulSoup(html, 'lxml')
                 node_links = soup.find_all('a', href=re.compile(r'/node/(\d+)'))
@@ -201,16 +207,10 @@ class EInfoParser(BaseParser):
             url = self.get_url(article_id)
             response = await session.get(url)
 
-            # 相容 aiohttp (.status) 和 curl_cffi (.status_code)
-            status = getattr(response, 'status_code', None) or getattr(response, 'status', 0)
-            if status != 200:
+            if response.status_code != 200:
                 return None
 
-            # 相容 aiohttp 和 curl_cffi 的 response text
-            if hasattr(response, 'text') and callable(response.text):
-                html = await response.text()
-            else:
-                html = response.text
+            html = response.text
 
             soup = BeautifulSoup(html, 'lxml')
             date_str = self._extract_date(soup)
@@ -225,24 +225,113 @@ class EInfoParser(BaseParser):
             return None
 
     async def parse(self, html: str, url: str) -> Optional[Dict[str, Any]]:
-        """解析 HTML 內容"""
+        """解析 HTML 內容（含 Trafilatura A/B test）"""
+        custom_result = await self._custom_parse(html, url)
+        traf_result = self._trafilatura_parse(html, url)
+
+        # ========== A/B test 記錄 ==========
+        global _ab_stats
+        if custom_result and traf_result:
+            _ab_stats["both"] += 1
+        elif custom_result and not traf_result:
+            _ab_stats["custom_only"] += 1
+        elif traf_result and not custom_result:
+            _ab_stats["trafilatura_only"] += 1
+            _ab_logger.info(f"TRAFILATURA_WIN: {url} (custom parser failed, trafilatura succeeded)")
+        else:
+            _ab_stats["neither"] += 1
+
+        total = sum(_ab_stats.values())
+        if total % 50 == 0 and total > 0:
+            _ab_logger.info(
+                f"A/B stats ({total} articles): "
+                f"both={_ab_stats['both']} "
+                f"custom_only={_ab_stats['custom_only']} "
+                f"traf_only={_ab_stats['trafilatura_only']} "
+                f"neither={_ab_stats['neither']}"
+            )
+
+        # 優先用 custom，fallback 到 trafilatura
+        return custom_result or traf_result
+
+    def _trafilatura_parse(self, html: str, url: str) -> Optional[Dict[str, Any]]:
+        """用 Trafilatura 通用提取器解析"""
+        try:
+            # bare_extraction 回傳 Document 物件（trafilatura 2.0+）
+            doc = trafilatura.bare_extraction(
+                html,
+                url=url,
+                include_comments=False,
+                include_tables=False,
+                favor_precision=True,
+            )
+            if not doc:
+                return None
+
+            title = doc.title or ''
+            body = doc.text or ''
+            date_str = doc.date or ''
+            author = doc.author or ''
+
+            if not title or not body or len(body) < settings.MIN_ARTICLE_LENGTH:
+                return None
+
+            # 日期處理
+            published_date = None
+            if date_str:
+                try:
+                    published_date = datetime.strptime(date_str, '%Y-%m-%d')
+                except ValueError:
+                    pass
+            if not published_date:
+                hd = find_date(html, outputformat='%Y-%m-%d')
+                if hd:
+                    published_date = datetime.strptime(hd, '%Y-%m-%d')
+
+            if not published_date:
+                return None
+
+            # 日期過濾
+            if self.target_date and published_date < self.target_date:
+                return None
+
+            return {
+                "@type": "NewsArticle",
+                "headline": TextProcessor.clean_text(title),
+                "articleBody": TextProcessor.smart_extract_summary(body.split('\n')),
+                "author": author or "",
+                "datePublished": published_date.strftime('%Y-%m-%dT%H:%M:%S'),
+                "publisher": "環境資訊中心",
+                "inLanguage": "zh-TW",
+                "url": url,
+                "keywords": [],
+                "_source": "trafilatura",  # 標記來源，方便後續分析
+            }
+
+        except Exception as e:
+            self.logger.debug(f"Trafilatura parse error: {e}")
+            return None
+
+    async def _custom_parse(self, html: str, url: str) -> Optional[Dict[str, Any]]:
+        """原本的自訂解析邏輯"""
         try:
             soup = BeautifulSoup(html, 'lxml')
-
-            match = re.search(r'/node/(\d+)', url)
-            article_id = int(match.group(1)) if match else 0
 
             title = self._extract_title(soup)
             if not title:
                 return None
 
             date_str = self._extract_date(soup)
-            if not date_str:
-                return None
+            published_date = self._parse_date(date_str) if date_str else None
 
-            published_date = self._parse_date(date_str)
+            # htmldate fallback：CSS selector 或自訂 regex 失敗時
             if not published_date:
-                return None
+                hd = find_date(html, outputformat='%Y-%m-%d')
+                if hd:
+                    published_date = datetime.strptime(hd, '%Y-%m-%d')
+                    self.logger.debug(f"htmldate fallback found date: {hd}")
+                else:
+                    return None
 
             # 日期過濾
             if self.target_date and published_date < self.target_date:
@@ -277,7 +366,7 @@ class EInfoParser(BaseParser):
             }
 
         except Exception as e:
-            self.logger.error(f"Parse error: {e}")
+            self.logger.error(f"Custom parse error: {e}")
             return None
 
     def _extract_keywords(

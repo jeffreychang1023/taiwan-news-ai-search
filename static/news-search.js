@@ -234,14 +234,12 @@
                 currentMode = newMode;
 
                 // Handle mode-specific UI changes
-                if (newMode === 'search' || newMode === 'deep_research') {
+                if (newMode === 'search') {
                     btnSearch.textContent = '搜尋';
-                    searchInput.placeholder = newMode === 'deep_research'
-                        ? '輸入問題進行深度研究分析...'
-                        : '問我任何新聞相關問題，例如：最近台灣資安政策有什麼進展？';
+                    searchInput.placeholder = '問我任何新聞相關問題，例如：最近台灣資安政策有什麼進展？';
 
-                    // Move search container back to original position if coming from chat
-                    if (previousMode === 'chat') {
+                    // Move search container back to original position if coming from chat/deep_research
+                    if (previousMode === 'chat' || previousMode === 'deep_research') {
                         const mainContainer = document.querySelector('main .container');
                         const loadingStateEl = document.getElementById('loadingState');
                         mainContainer.insertBefore(searchContainer, loadingStateEl);
@@ -249,13 +247,19 @@
                         chatContainer.classList.remove('active');
                     }
 
-                    // 如果切換到進階搜尋，自動顯示 popup 並重置確認狀態
-                    if (newMode === 'deep_research') {
-                        advancedSearchConfirmed = false;
-                        showAdvancedPopup();
-                    } else {
-                        hideAdvancedPopup();
-                    }
+                    hideAdvancedPopup();
+                } else if (newMode === 'deep_research') {
+                    btnSearch.textContent = '搜尋';
+                    searchInput.placeholder = '輸入問題進行深度研究分析...';
+
+                    // Move search container to chat area bottom
+                    chatContainer.classList.add('active');
+                    chatInputContainer.appendChild(searchContainer);
+                    chatInputContainer.style.display = 'block';
+
+                    // 自動顯示 popup 並重置確認狀態
+                    advancedSearchConfirmed = false;
+                    showAdvancedPopup();
                 } else if (newMode === 'chat') {
                     btnSearch.textContent = '發送';
                     searchInput.placeholder = '研究助理會參考摘要內容及您釘選的文章來回答...';
@@ -906,7 +910,7 @@
                 container.id = 'reasoning-progress';
                 container.className = 'reasoning-progress-container';
                 container.innerHTML = `
-                    <div class="progress-header">Deep Research</div>
+                    <div class="progress-header">深度研究進行中</div>
                     <div class="progress-log" id="progress-log"></div>
                 `;
 
@@ -928,22 +932,14 @@
 
             const stage = data.stage;
 
-            // Helper to add a log entry
-            function addLogEntry(icon, text, cssClass = '', detail = '', stats = null) {
+            // Helper to add a log entry (no detail parameter)
+            function addLogEntry(icon, text, cssClass = '') {
                 // Check if we should update an existing active entry instead of adding new
                 const existingActive = logContainer.querySelector('.log-entry.active');
                 if (existingActive && cssClass === 'complete') {
-                    // Update the active entry to complete
                     existingActive.classList.remove('active');
                     existingActive.classList.add('complete');
                     existingActive.querySelector('.log-icon').textContent = icon;
-                    if (stats) {
-                        const statsHtml = Object.entries(stats).map(([label, value]) => {
-                            const statClass = value.class || '';
-                            return `<span class="stat ${statClass}">${label}: ${value.text}</span>`;
-                        }).join('');
-                        existingActive.querySelector('.log-text').innerHTML += `<span class="log-stats">${statsHtml}</span>`;
-                    }
                     return;
                 }
 
@@ -953,12 +949,6 @@
                     <span class="log-icon">${icon}</span>
                     <span class="log-text">${text}</span>
                 `;
-                if (detail) {
-                    const detailEl = document.createElement('div');
-                    detailEl.className = 'log-detail';
-                    detailEl.textContent = detail;
-                    entry.appendChild(detailEl);
-                }
                 logContainer.appendChild(entry);
 
                 // Auto-scroll to bottom
@@ -986,14 +976,11 @@
 
                 case 'analyst_complete':
                     completeLastActive('✓');
-                    const citationsCount = data.citations_count || 0;
-                    addLogEntry('✓', `分析完成，引用了 ${citationsCount} 個來源`, 'complete');
+                    addLogEntry('✓', `分析完成`, 'complete');
                     break;
 
                 case 'gap_search_started':
-                    const queries = data.new_queries ? data.new_queries.slice(0, 2).join('、') : '';
-                    const reason = data.gap_reason || '發現資訊缺口';
-                    addLogEntry('↻', `偵測到資訊缺口，正在補充搜尋...`, 'active gap-search', `${reason}${queries ? ' → ' + queries : ''}`);
+                    addLogEntry('↻', `偵測到資訊缺口，正在補充搜尋...`, 'active gap-search');
                     break;
 
                 case 'cov_verifying':
@@ -1002,18 +989,7 @@
 
                 case 'cov_complete':
                     completeLastActive('✓');
-                    const verified = data.verified_count || 0;
-                    const unverified = data.unverified_count || 0;
-                    const contradicted = data.contradicted_count || 0;
-                    let covText = `事實查核完成`;
-                    let covStats = [];
-                    if (verified > 0) covStats.push(`<span class="stat success">已驗證 ${verified}</span>`);
-                    if (unverified > 0) covStats.push(`<span class="stat warning">未驗證 ${unverified}</span>`);
-                    if (contradicted > 0) covStats.push(`<span class="stat error">矛盾 ${contradicted}</span>`);
-                    if (covStats.length > 0) {
-                        covText += `<span class="log-stats">${covStats.join('')}</span>`;
-                    }
-                    addLogEntry('✓', covText, 'complete cov');
+                    addLogEntry('✓', '事實查核完成', 'complete cov');
                     break;
 
                 case 'critic_reviewing':
@@ -1040,7 +1016,7 @@
 
                 case 'writer_complete':
                     completeLastActive('✓');
-                    addLogEntry('✓', '報告生成完成！', 'complete');
+                    addLogEntry('✓', '報告生成完成', 'complete');
                     // Change header indicator to done
                     const header = container.querySelector('.progress-header');
                     if (header) {
@@ -1049,7 +1025,6 @@
                     break;
 
                 default:
-                    // Unknown stage - just log it
                     console.log('[Progress] Unknown stage:', stage);
                     break;
             }
@@ -2006,48 +1981,43 @@
                 return '';
             }
 
+            // Collapsible toggle wrapper (default: collapsed)
             let html = '<div class="citation-reference-section">';
-            html += '<h3 class="citation-reference-title">參考資料來源</h3>';
+            html += `<button class="citation-reference-toggle" onclick="this.parentElement.classList.toggle('expanded')">
+                <span class="citation-toggle-icon">▶</span>
+                <span>參考資料來源 (${validSources.length})</span>
+            </button>`;
             html += '<div class="citation-reference-list">';
 
             validSources.forEach(item => {
                 const url = item.url;
-                // Determine the type of source
                 let sourceType = '新聞';
-                let displayUrl = url;
                 let isClickable = true;
 
                 if (url.startsWith('urn:llm:knowledge:')) {
                     sourceType = 'AI 背景知識';
-                    displayUrl = url.replace('urn:llm:knowledge:', '');
                     isClickable = false;
                 } else if (url.startsWith('private://')) {
                     sourceType = '私人文件';
-                    displayUrl = url.replace('private://', '');
                     isClickable = false;
-                } else {
-                    // Try to extract domain for display
-                    try {
-                        const urlObj = new URL(url);
-                        displayUrl = urlObj.hostname.replace('www.', '');
-                    } catch (e) {
-                        displayUrl = url.length > 50 ? url.substring(0, 50) + '...' : url;
-                    }
                 }
 
                 if (isClickable) {
                     html += `<div class="citation-reference-item">
                         <span class="citation-reference-number">[${item.index}]</span>
-                        <a href="${escapeHTML(url)}" target="_blank" class="citation-reference-link" title="${escapeHTML(url)}">
-                            <span class="citation-reference-domain">${escapeHTML(displayUrl)}</span>
+                        <a href="${escapeHTML(url)}" target="_blank" class="citation-reference-link">
+                            ${escapeHTML(url)}
                         </a>
                     </div>`;
                 } else {
+                    const displayText = url.startsWith('urn:llm:knowledge:')
+                        ? url.replace('urn:llm:knowledge:', '')
+                        : url.replace('private://', '');
                     html += `<div class="citation-reference-item">
                         <span class="citation-reference-number">[${item.index}]</span>
-                        <span class="citation-reference-text" title="${escapeHTML(url)}">
+                        <span class="citation-reference-text">
                             <span class="citation-reference-type">${sourceType}</span>
-                            <span class="citation-reference-domain">${escapeHTML(displayUrl)}</span>
+                            ${escapeHTML(displayText)}
                         </span>
                     </div>`;
                 }
@@ -2261,30 +2231,31 @@
         function addToggleAllToolbar(reportContainer) {
             const toolbar = document.createElement('div');
             toolbar.className = 'research-toggle-all-toolbar';
-            toolbar.innerHTML = `
-                <button class="btn-toggle-all" data-action="expand">全部展開</button>
-                <button class="btn-toggle-all" data-action="collapse">全部折疊</button>
-            `;
 
-            toolbar.querySelectorAll('.btn-toggle-all').forEach(btn => {
-                btn.addEventListener('click', () => {
-                    const collapse = btn.dataset.action === 'collapse';
-                    reportContainer.querySelectorAll('.research-section').forEach(section => {
-                        const icon = section.querySelector('.collapse-icon');
-                        const content = section.querySelector('.research-section-content');
-                        if (collapse) {
-                            section.classList.add('collapsed');
-                            if (icon) icon.textContent = '▶';
-                            if (content) { content.style.maxHeight = '0'; content.style.overflow = 'hidden'; }
-                        } else {
-                            section.classList.remove('collapsed');
-                            if (icon) icon.textContent = '▼';
-                            if (content) { content.style.maxHeight = ''; content.style.overflow = ''; }
-                        }
-                    });
+            let allCollapsed = false;
+            const toggleBtn = document.createElement('button');
+            toggleBtn.className = 'btn-toggle-all';
+            toggleBtn.textContent = '全部折疊';
+
+            toggleBtn.addEventListener('click', () => {
+                allCollapsed = !allCollapsed;
+                reportContainer.querySelectorAll('.research-section').forEach(section => {
+                    const icon = section.querySelector('.collapse-icon');
+                    const content = section.querySelector('.research-section-content');
+                    if (allCollapsed) {
+                        section.classList.add('collapsed');
+                        if (icon) icon.textContent = '▶';
+                        if (content) { content.style.maxHeight = '0'; content.style.overflow = 'hidden'; }
+                    } else {
+                        section.classList.remove('collapsed');
+                        if (icon) icon.textContent = '▼';
+                        if (content) { content.style.maxHeight = ''; content.style.overflow = ''; }
+                    }
                 });
+                toggleBtn.textContent = allCollapsed ? '全部展開' : '全部折疊';
             });
 
+            toolbar.appendChild(toggleBtn);
             reportContainer.insertBefore(toolbar, reportContainer.firstChild);
         }
 
@@ -4341,6 +4312,11 @@
                     // Apply collapsible sections
                     reportHTML = addCollapsibleSections(reportHTML);
 
+                    // Append citation reference list (toggle)
+                    if (currentResearchReport.sources && currentResearchReport.sources.length > 0) {
+                        reportHTML += generateCitationReferenceList(currentResearchReport.sources);
+                    }
+
                     reportContainer.innerHTML = reportHTML;
                     researchViewEl.appendChild(reportContainer);
 
@@ -4362,6 +4338,12 @@
                     if (researchTab) {
                         researchTab.click();
                     }
+                }
+            } else {
+                // No research report in this session — clear any leftover report display
+                const researchViewEl = document.getElementById('researchView');
+                if (researchViewEl) {
+                    researchViewEl.innerHTML = '';
                 }
             }
 
@@ -5243,6 +5225,11 @@
             const checkbox = document.getElementById('includePrivateSourcesCheckbox');
             includePrivateSources = checkbox.checked;
             console.log('Include private sources:', includePrivateSources);
+
+            // 勾選時自動開啟右側「我的檔案」面板
+            if (includePrivateSources) {
+                openTab('files');
+            }
         }
 
         // Bind toolbar buttons for source tree

@@ -3,7 +3,7 @@ name: update-docs
 description: |
   定期維護專案文件，同步程式碼與文件的一致性。結合 git 分析、對話摘要、程式碼結構掃描來更新文件。
   觸發時機：(1) 用戶輸入 /update-docs，(2) 完成功能開發後需要記錄進度，(3) 架構變更後需要更新文件。
-  支援參數：all（全部）、progress（進度相關）、architecture（架構相關）。
+  支援參數：all（全部）、progress（進度相關）、architecture（架構相關）、specs（規格文件）、docs（docs/ 目錄文件）。
 ---
 
 # Update Docs
@@ -14,9 +14,11 @@ description: |
 
 | 參數 | 更新範圍 |
 |------|----------|
-| `all` 或無參數 | 全部文件 |
+| `all` 或無參數 | 全部文件（progress + architecture + specs + docs）|
 | `progress` | CONTEXT.md, PROGRESS.md, COMPLETED_WORK.md, NEXT_STEPS.md |
 | `architecture` | systemmap.md, state-machine-diagram.md |
+| `specs` | docs/ 下所有 *spec*.md 文件 |
+| `docs` | docs/ 下所有活躍文件（排除 archive/），包含指南、計畫、說明文件 |
 
 ## 文件分工
 
@@ -28,8 +30,33 @@ description: |
 | `.claude/COMPLETED_WORK.md` | 已完成工作 | 追加新完成項目 |
 | `.claude/NEXT_STEPS.md` | 下一步規劃 | 移除已完成、新增待辦 |
 | `.claude/systemmap.md` | 靜態結構 | 模組清單、API、檔案對應 |
-| `docs/architecture/state-machine-diagram.md` | 動態流程 | Mermaid 狀態圖 |
+| `docs/architecture/state-machine-diagram.md` | 動態流程 | **半自動**：偵測變更區塊，提示更新 |
+| `docs/*spec*.md` | 模組規格 | 根據對應模組變更更新 |
+| `docs/*.md`（非 spec、非 archive） | 指南與說明 | 根據對應功能變更更新 |
 | `static/architecture.html` | 視覺化 | **手動維護**，skill 會提醒 |
+
+---
+
+## Source of Truth 與更新優先順序
+
+```
+程式碼 → Spec 文件 → Docs 指南 → State Machine Diagram / Systemmap → Progress 文件
+```
+
+| 層級 | 文件 | 說明 |
+|------|------|------|
+| **L1: 程式碼** | `code/python/**/*.py` | 最終真相 |
+| **L2: Spec 文件** | `docs/*-spec.md` | 模組級規格，貼近實作 |
+| **L2.5: Docs 指南** | `docs/*.md`（非 spec） | 功能指南、使用說明，從 L1/L2 推導 |
+| **L3: 架構文件** | `state-machine-diagram.md`, `systemmap.md` | 系統級視圖，從 L2 推導 |
+| **L4: 進度文件** | `CONTEXT.md`, `PROGRESS.md` 等 | 工作追蹤，從對話/git 推導 |
+
+**更新原則**：
+- 高層級文件（L3/L4）根據低層級文件（L1/L2）更新
+- 如果 spec 與 state-machine-diagram 衝突，**以 spec 為準**
+- 如果 systemmap 與 spec 衝突，**以 spec 為準**
+
+---
 
 ## 執行流程
 
@@ -48,6 +75,8 @@ python tools/indexer.py --index
 - `code/python/` - 主要程式碼
 - `code/python/reasoning/` - Reasoning 系統
 - `code/python/core/` - 核心模組
+- `code/python/indexing/` - Indexing 模組
+- `code/python/crawler/` - Crawler 模組
 
 ### 2. 分析變更
 
@@ -55,6 +84,7 @@ python tools/indexer.py --index
 - 檢查模組是否新增/刪除/重命名
 - 檢查 API 端點是否變更
 - 檢查狀態機流程是否變更
+- 檢查 spec 文件對應的模組是否變更
 
 ### 3. 更新文件
 
@@ -67,32 +97,219 @@ python tools/indexer.py --index
 4. 移除已完成項目 → 更新 NEXT_STEPS.md
 
 **architecture 範圍**：
-1. 掃描程式碼結構 → 更新 systemmap.md 的模組清單
-2. 檢查資料流變更 → 更新 state-machine-diagram.md
+1. **先更新 spec**：確保 spec 文件與程式碼同步
+2. **再更新 systemmap**：根據 spec 文件更新模組清單
+3. **最後更新 state-machine-diagram**：根據 spec + 程式碼半自動更新（見下方詳細流程）
 
-**all 範圍**：
-1. 執行 progress + architecture
-2. 更新 CLAUDE.md 的模組狀態表
+> **注意**：systemmap 和 state-machine-diagram 的內容應以 spec 為準，不是反過來。
 
-### 4. 提醒手動維護
+**specs 範圍**：
+1. 根據 git diff 判斷哪些 spec 需要更新
+2. 檢查 spec 之間的關聯性，以最新的為主調整舊的
+3. 更新對應的 spec 文件
 
-完成後輸出：
+**docs 範圍**：
+1. 掃描 `docs/` 目錄下所有活躍文件（排除 `docs/archive/`）
+2. 根據 git diff 判斷哪些 docs 需要更新
+3. 檢查文件與對應程式碼/功能是否同步
+4. 更新過時的指南、說明文件
+
+**all 範圍**（按優先順序執行）：
+1. **specs**：先確保 spec 文件與程式碼同步
+2. **docs**：根據 spec 和程式碼更新 docs/ 下的指南文件
+3. **architecture**：根據 spec 更新 systemmap 和 state-machine-diagram
+4. **progress**：更新進度相關文件
+5. **CLAUDE.md**：最後更新模組狀態表
+
+---
+
+## State Machine Diagram 半自動更新流程
+
+### 檔案 → 區塊對應表
+
+| 變更檔案 | 影響的狀態圖區塊 |
+|----------|------------------|
+| `webserver/aiohttp_server.py` | Section 1: 系統總覽 |
+| `webserver/middleware/*`, `chat/websocket.py` | Section 2: 連接層狀態 |
+| `core/baseHandler.py`, `core/state.py` | Section 3: 請求處理狀態 |
+| `core/query_analysis/*.py` | Section 3: Pre-Retrieval |
+| `core/retriever.py`, `core/bm25.py` | Section 3: Retrieval |
+| `core/ranking.py`, `core/xgboost_ranker.py`, `core/mmr.py` | Section 4: 排序管道狀態 |
+| `reasoning/orchestrator.py`, `reasoning/agents/*.py` | Section 5: Reasoning 系統狀態 |
+| `chat/conversation.py`, `chat/websocket.py` | Section 6: Chat 系統狀態 |
+| `core/utils/message_senders.py`, `core/schemas.py` | Section 7: SSE 串流狀態 |
+| 錯誤處理相關 | Section 8: 錯誤處理狀態 |
+| `core/state.py` | Section 9: Handler State |
+
+### Section 10 特別處理
+
+Section 10 是 **Sequence Diagram**（時序圖），與 Section 1-9 的 State Diagram 不同：
+
+| 類型 | 用途 | 更新觸發 |
+|------|------|----------|
+| State Diagram (1-9) | 單一元件的狀態轉換 | 該元件內部邏輯變更 |
+| Sequence Diagram (10) | 跨元件的互動流程 | 元件間**介面**變更 |
+
+**觸發條件**：
+- SSE 訊息類型改變（`core/schemas.py`）
+- API 參數改變（`webserver/routes/*.py`）
+- 新增/移除/重命名元件
+- 元件間呼叫順序改變
+
+**不觸發**：單純內部邏輯變更（不影響介面）
+
+### 更新流程
+
+1. **偵測變更**：執行 `git diff --name-only HEAD~10` 取得變更檔案清單
+2. **對應區塊**：根據上表找出受影響的區塊
+3. **提示用戶**：輸出「以下區塊可能需要更新：Section X (名稱)」
+4. **讀取程式碼**：讀取變更的程式碼檔案
+5. **比較差異**：比較現有 Mermaid 圖與程式碼邏輯
+6. **提出建議**：說明需要修改的狀態、轉換條件
+7. **執行更新**：在用戶確認後更新 state-machine-diagram.md
+
+### 輸出格式
+
 ```
-architecture.html 需要手動更新。請在瀏覽器中開啟並編輯視覺化架構圖。
+## State Machine Diagram 更新建議
+
+偵測到以下檔案變更：
+- core/ranking.py (+50, -20)
+- reasoning/orchestrator.py (+30, -10)
+
+影響的區塊：
+- Section 4: 排序管道狀態
+- Section 5: Reasoning 系統狀態
+
+建議修改：
+1. Section 4: 新增 XGBoost 重排序步驟
+2. Section 5: Actor-Critic 迴圈新增 Gap Resolution 分支
+
+是否要更新這些區塊？(y/n)
 ```
 
-### 5. Git 整合
+---
 
-詢問用戶：
-```
-是否要 commit 這些文件變更？(y/n)
-```
+## Spec 文件更新流程
 
-若用戶同意，執行：
+### Spec 文件自動偵測
+
+**偵測機制**：自動掃描 `docs/*spec*.md`，不需要手動維護清單。
+
 ```bash
-git add CLAUDE.md .claude/*.md docs/architecture/*.md
-git commit -m "docs: update project documentation"
+# 偵測所有 spec 文件
+find docs -name "*spec*.md" -not -path "docs/archive/*"
 ```
+
+### 已知 Spec 文件對應表
+
+| Spec 文件 | 對應模組/目錄 | 觸發條件 |
+|-----------|---------------|----------|
+| `docs/indexing-spec.md` | M0 Indexing | `indexing/`, `crawler/` 變更 |
+| `docs/crawler-dashboard-spec.md` | M0 Crawler | `crawler/`, `indexing/dashboard*` 變更 |
+| `docs/frontend-spec.md` | M5 Frontend | `static/`, `webserver/routes/` 變更 |
+| `docs/reasoning-spec.md` | M4 Reasoning | `reasoning/` 變更 |
+| `docs/reranking-spec.md` | M3 Ranking | `core/ranking.py`, `core/mmr.py`, `core/xgboost*` 變更 |
+
+**新 spec 處理**：如果偵測到未在對應表中的 spec，提示用戶確認對應模組。
+
+### 關聯性處理
+
+當多個 spec 需要更新時：
+
+1. **檢查最後更新日期**：從文件末尾的 `*更新：YYYY-MM-DD*` 取得
+2. **以最新為主**：如果 spec A 比 spec B 新，且兩者有關聯內容，以 A 為準調整 B
+3. **關聯性定義**：
+   - `indexing-spec` ↔ `crawler-dashboard-spec`：共享 Crawler 資料流
+   - `indexing-spec` ↔ `reasoning-spec`：共享資料格式（payload schema）
+   - `reranking-spec` ↔ `reasoning-spec`：共享排序結果處理
+
+### 更新流程
+
+1. **偵測需要更新的 spec**：根據 git diff 和對應表判斷
+2. **讀取相關程式碼**：讀取變更的程式碼檔案
+3. **比較差異**：比較現有 spec 與程式碼
+4. **檢查關聯性**：如果多個 spec 需要更新，確保一致性
+5. **執行更新**：更新 spec 文件內容
+
+### 輸出格式
+
+```
+## Spec 文件更新
+
+偵測到以下模組變更：
+- indexing/ (+100, -30)
+- reasoning/ (+50, -20)
+
+需要更新的 spec：
+- docs/indexing-spec.md（最後更新：2026-01-28）
+- docs/reasoning-spec.md（最後更新：2026-01-15）
+
+關聯性檢查：
+- indexing-spec 較新，將以此為準調整 reasoning-spec 中的資料格式描述
+
+更新內容：
+1. indexing-spec.md: 新增 Embedding 模組說明
+2. reasoning_spec.md: 更新 payload schema 以符合 indexing-spec
+
+是否要更新？(y/n)
+```
+
+---
+
+## Docs 文件更新流程
+
+### Docs 文件自動偵測
+
+**偵測機制**：自動掃描 `docs/*.md`，排除 archive 和 spec 文件。
+
+```bash
+# 偵測所有活躍 docs 文件（排除 archive 和 spec）
+find docs -maxdepth 1 -name "*.md" ! -name "*spec*"
+find docs/architecture -name "*.md"
+```
+
+### 已知 Docs 文件對應表
+
+| Docs 文件 | 對應模組/功能 | 觸發條件 |
+|-----------|---------------|----------|
+| `docs/code-in-sqlite.md` | 程式碼索引工具 | `tools/indexer.py` 變更 |
+| `docs/user-auth-system-guide.md` | 使用者驗證系統 | `webserver/auth/`, `chat/` 驗證相關變更 |
+| `docs/architecture/state-machine-diagram-explained.md` | 狀態機說明 | `state-machine-diagram.md` 變更 |
+| `docs/scientific-skills-overview.md` | 科學技能概述 | `reasoning/`, 演算法相關變更 |
+| `docs/everything-cc-manual.md` | Claude Code 使用手冊 | `.claude/` 結構變更 |
+
+**新文件處理**：如果偵測到未在對應表中的 docs，根據檔名和內容推斷對應模組。
+
+### 更新流程
+
+1. **偵測需要更新的 docs**：根據 git diff 和對應表判斷
+2. **讀取相關程式碼/spec**：讀取變更的檔案
+3. **比較差異**：比較現有 docs 與實際功能
+4. **檢查一致性**：確保 docs 與對應 spec 一致
+5. **執行更新**：更新 docs 文件內容
+
+### 輸出格式
+
+```
+## Docs 文件更新
+
+偵測到以下功能變更：
+- tools/indexer.py (+30, -10)
+- webserver/auth/ (+50, -20)
+
+需要更新的 docs：
+- docs/code-in-sqlite.md（最後更新：2026-01-20）
+- docs/user-auth-system-guide.md（最後更新：2026-01-15）
+
+更新內容：
+1. code-in-sqlite.md: 新增 --refresh 參數說明
+2. user-auth-system-guide.md: 更新 session 管理流程
+
+是否要更新？(y/n)
+```
+
+---
 
 ## 文件格式規範
 
@@ -138,6 +355,45 @@ git commit -m "docs: update project documentation"
 
 ### state-machine-diagram.md 動態流程重點
 
-- Mermaid 狀態圖
+- Mermaid 狀態圖（10 個區塊）
 - 狀態轉換條件
 - 錯誤處理流程
+- 關鍵檔案對應表
+
+### Spec 文件格式重點
+
+- 模組概述
+- 核心元件說明
+- 資料流與介面
+- 設定參數
+- CLI 使用方式（如適用）
+- 最後更新日期
+
+### Docs 指南文件格式重點
+
+- 功能/工具概述
+- 使用方式與範例
+- 設定說明（如適用）
+- 常見問題與解決方案
+- 相關文件連結
+- 最後更新日期
+
+---
+
+## 完成後提醒
+
+完成後輸出：
+```
+文件更新完成。
+
+以下文件需要手動維護：
+- static/architecture.html - 請在瀏覽器中開啟並編輯視覺化架構圖
+
+是否要 commit 這些文件變更？(y/n)
+```
+
+若用戶同意，執行：
+```bash
+git add CLAUDE.md .claude/*.md docs/architecture/*.md docs/*.md
+git commit -m "docs: update project documentation"
+```

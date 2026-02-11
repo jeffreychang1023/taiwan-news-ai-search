@@ -2554,24 +2554,47 @@
             border-top: 2px solid var(--color-border-light);
         }
 
-        .citation-reference-title {
-            font-size: 16px;
-            font-weight: 600;
-            color: var(--color-text-secondary);
-            margin-bottom: 16px;
+        /* Collapsible toggle button */
+        .citation-reference-toggle {
             display: flex;
             align-items: center;
             gap: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            color: var(--color-text-secondary);
+            background: none;
+            border: 1px solid var(--color-border-light);
+            border-radius: var(--radius-md);
+            padding: 8px 14px;
+            cursor: pointer;
+            transition: all 0.2s;
+            margin-bottom: 0;
         }
 
-        .citation-reference-title::before {
-            content: '📚';
+        .citation-reference-toggle:hover {
+            border-color: var(--color-primary);
+            color: var(--color-primary);
         }
 
-        .citation-reference-list {
-            display: flex;
+        .citation-toggle-icon {
+            font-size: 12px;
+            transition: transform 0.2s;
+        }
+
+        .citation-reference-section.expanded .citation-toggle-icon {
+            transform: rotate(90deg);
+        }
+
+        /* Hidden by default, shown when expanded */
+        .citation-reference-section .citation-reference-list {
+            display: none;
             flex-direction: column;
             gap: 8px;
+            margin-top: 12px;
+        }
+
+        .citation-reference-section.expanded .citation-reference-list {
+            display: flex;
         }
 
         .citation-reference-item {
@@ -4190,6 +4213,31 @@
         body.large-font .option-chip {
             font-size: 17px;
             padding: 10px 20px;
+        }
+
+        /* Deep Research collapsible sections */
+        body.large-font .research-section-header .section-title {
+            font-size: 20px;
+        }
+
+        body.large-font .research-section-content {
+            font-size: 17px;
+        }
+
+        body.large-font .research-section-content h1 {
+            font-size: 24px;
+        }
+
+        body.large-font .research-section-content h2 {
+            font-size: 21px;
+        }
+
+        body.large-font .research-section-content h3 {
+            font-size: 19px;
+        }
+
+        body.large-font .btn-toggle-all {
+            font-size: 15px;
         }
 
         /* Timeline view */

@@ -212,3 +212,6 @@ MMR = λ * Relevance(doc, query) - (1-λ) * max(Similarity(doc, selected_docs))
 
 - vector: Document embedding (1536 dims)
 - ranking.score: LLM or XGBoost score
+---
+
+*更新：2026-02-04*

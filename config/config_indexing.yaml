@@ -17,6 +17,7 @@ chunking:
   merge_threshold: 0.80          # 動態合併：相鄰 chunks 相似度 > 0.8 時合併
   summary_max_length: 400
   extractive_summary_sentences: 3  # Extractive summary 選取句數
+  overlap_chars: 30              # Overlap 字數，用於 embedding 優化（2026-02）
 
 # Source Tiers 簡化：不再用於分塊閾值，僅用於品質標記
 source_tiers:
