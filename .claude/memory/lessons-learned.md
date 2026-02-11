@@ -72,6 +72,13 @@
 **檔案**：`core/utils/message_senders.py`
 **日期**：2025-11
 
+### 獨立 Dashboard Server 避免影響主服務
+**問題**：開發者 Dashboard（如 Indexing Dashboard）若整合到主 webserver，會增加主服務複雜度，且 Dashboard 重啟會影響使用者
+**解決方案**：Dashboard 使用獨立的 aiohttp server（如 Port 8001），與主服務完全隔離。好處：(1) 不影響主服務穩定性 (2) 可獨立開發/重啟 (3) 可獨立部署或不部署
+**信心**：中
+**檔案**：`code/python/indexing/dashboard_server.py`
+**日期**：2026-02
+
 ### 雙 Handler Pipeline 需要 API 層控制生命週期
 **問題**：Unified mode 需要串接兩個 handler（NLWebHandler → GenerateAnswer），但 `runQuery()` 結尾自動送 `end-nlweb-response` 和記錄 analytics，導致第二個 handler 開始前 SSE 就結束了。且錯誤路徑也有 `send_end_response(error=True)`，兩處都要處理
 **解決方案**：在第一個 handler 設 `skip_end_response = True`，讓 API 層（api.py）透過 `try/finally` 統一控制 end response 和 analytics。注入狀態時需轉移：`final_ranked_answers`、`items`、`query_id`、`conversation_id`、`connection_alive_event`、`decontextualized_query`。關鍵：baseHandler.py 的正常路徑和錯誤路徑都要檢查 `skip_end_response`
@@ -121,6 +128,13 @@
 **檔案**：`static/news-search.js`（`togglePinNewsCard()`、`togglePinMessage()`）
 **日期**：2026-01
 
+### 非同步產生的狀態必須即時持久化 + 切換前保存
+**問題**：深度搜尋報告完成後，切換到其他對話紀錄再切回，報告消失。原因：(1) 報告產生後只存在記憶體變數 `currentResearchReport`，沒有立即保存到 localStorage；(2) `loadSavedSession()` 直接覆蓋所有狀態，沒有先保存當前對話
+**解決方案**：雙重保護——(1) 非同步操作完成時立即保存：`displayDeepResearchResults()` 結尾加 `saveCurrentSession()`，防止關閉/刷新丟失；(2) 切換前保存：`loadSavedSession()` 呼叫前加 `if (sessionHistory.length > 0 || currentResearchReport) saveCurrentSession()`，防止後續操作（如 Free Conversation）丟失。通用規則：任何產生重要狀態的非同步操作完成時，必須觸發持久化
+**信心**：高
+**檔案**：`static/news-search.js`（`displayDeepResearchResults()`、三處 `loadSavedSession()` 呼叫點）
+**日期**：2026-02
+
 ### 頁面切換必須完整快照/還原所有 UI 狀態
 **問題**：`showFolderPage()` 反覆導致左側邊欄收合，因為函式中硬編碼了 `leftSidebar.classList.remove('visible')`。此外，快照只保存 4 個元素的 `style.display`，未保存 `chatContainer`/`chatInputContainer` 狀態，導致從資料夾返回後若原本在聊天模式，UI 不一致（空白畫面）
 **解決方案**：(1) 移除 `showFolderPage()` 中任何與左側邊欄相關的操作——資料夾頁不應改變側欄狀態。(2) 快照必須包含所有可能影響佈局的元素狀態（含 `chatContainer.classList.active`、`chatInputContainer.style.display`），離開時完整還原。通用規則：頁面切換函式只應影響自己的頁面元素，不可有側面效應修改其他區域的 UI
@@ -134,6 +148,18 @@
 **信心**：高
 **檔案**：`static/news-search.js`（`_folderModeActive`、`_preFolderState`）
 **日期**：2026-01
+
+### SSE 漸進式渲染 Pattern
+**問題**：長時間 SSE 流程（如搜尋需 10+ 秒），用戶等待期間只看到轉圈圈，感知延遲高、不知道系統在做什麼
+**解決方案**：三層架構——
+1. **立即回饋**：提交查詢後立即顯示 skeleton 佔位符（shimmer 動畫）+ typing indicator
+2. **後端進度訊息**：在關鍵步驟發送 `progress` SSE 訊息（如 `{message_type: "progress", stage: "searching", message: "搜尋資料庫中..."}`）
+3. **前端 callback 機制**：`handlePostStreamingRequest(url, body, query, signal, callbacks)` 支援 `{onProgress, onArticles, onAnswer, onComplete}`，每種 message_type 觸發對應 callback 即時更新 UI
+
+關鍵點：skeleton 在 `articles` 到達後才被替換，進度訊息持續更新直到 `complete`，讓用戶感知延遲從 10+ 秒降到 1-2 秒
+**信心**：中
+**檔案**：`static/news-search.js`（`renderSkeletonCards`、`handlePostStreamingRequest`）、`static/news-search.css`（skeleton 樣式）、`core/baseHandler.py`（`send_progress` 呼叫點）、`core/utils/message_senders.py`（`send_progress` 方法）
+**日期**：2026-02
 
 ---
 
@@ -154,6 +180,48 @@
 **信心**：中
 **檔案**：`code/python/indexing/dual_storage.py`
 **日期**：2026-01
+
+### 長時間任務進度回調需要節流
+**問題**：Crawler 處理每篇文章後都呼叫 `progress_callback` 並透過 WebSocket 廣播，高併發時（如 5 concurrent requests）會產生大量訊息，影響效能且前端更新太頻繁
+**解決方案**：在 callback 加節流機制，記錄 `_last_progress_update` 時間戳，間隔小於閾值（如 1 秒）時跳過。確保結束時一定會有最終更新
+```python
+def _report_progress(self):
+    if self.progress_callback is None:
+        return
+    now = time.time()
+    if now - self._last_progress_update < self._progress_update_interval:
+        return
+    self._last_progress_update = now
+    self.progress_callback(self.stats.copy())
+```
+**信心**：中
+**檔案**：`code/python/crawler/core/engine.py`
+**日期**：2026-02
+
+### [已淘汰] ID-Date Interpolation → 改用 Full Scan
+**問題**：ID-Date 插值嚴重低估 ID 範圍（UDN backfill 只得 1-3K/月，auto mode 得 28-29K/月，10x 差距）
+**解決方案**：放棄 interpolation，改用 `run_full_scan()` 掃描完整 ID 範圍（start_id → end_id）。不做 404 early-stop，只有 BLOCKED_CONSECUTIVE_LIMIT 停止。404 adaptive throttle 降速不停止
+**信心**：高
+**檔案**：`code/python/crawler/core/engine.py`（`FULL_SCAN_CONFIG`、`run_full_scan()`、`_full_scan_sequential()`、`_full_scan_date_based()`）
+**日期**：2026-02
+
+### 設計爬蟲策略前必須實際驗證資料來源
+**問題**：為 ESG_BusinessToday 設計 sitemap backfill，但 sitemap 實際最新文章是 2021-03-01，近 5 年完全沒更新。前一個 agent 調查時未實際抓取 sitemap 內容驗證，導致設計了無效的 backfill 策略
+**解決方案**：設計任何爬蟲策略前，必須：
+1. 實際 HTTP 請求 sitemap URL，確認回應正常
+2. 檢查 sitemap 內容的日期範圍（最舊/最新文章日期）
+3. 對 2-3 篇文章實際測試 parser
+4. 不可只看程式碼中的 URL 設定就假設有效
+**信心**：高
+**檔案**：`code/python/crawler/parsers/esg_businesstoday_parser.py`
+**日期**：2026-02
+
+### Auto mode 需要日期下界避免爬取過多歷史資料
+**問題**：Crawler auto mode 從最新 ID 往回爬，遇到 skip（已爬過）才停。但如果中間有大段 ID 未被爬過（如 LTN 3K 篇跨 10 年），auto mode 會一路爬到 2016 年。用戶只需要 2024-01-01 以後的資料
+**解決方案**：auto mode 應支援 `date_floor` 參數，文章日期早於此值時自動停止。或改用 date_range mode 明確指定範圍
+**信心**：中
+**檔案**：`code/python/crawler/core/engine.py`（`run_auto()`）
+**日期**：2026-02
 
 ---
 
@@ -187,7 +255,263 @@ else:
 **檔案**：`code/python/crawler/parsers/einfo_parser.py`、`esg_businesstoday_parser.py`
 **日期**：2026-01
 
+### [已更新] 編碼偵測：charset_normalizer 取代 response.text
+**問題**：curl_cffi 的 `response.text` 在 server 回傳 Big5/cp950 編碼時拋 `UnicodeDecodeError`。aiohttp 的 `response.text()` 較穩但也不完美。不同框架（Scrapy 用 w3lib/chardet，Trafilatura 內建偵測）各有方案
+**解決方案**：統一用 `charset_normalizer`（比 chardet 更準、更快）取代所有 `response.text`：
+```python
+from charset_normalizer import from_bytes
+detected = from_bytes(response.content).best()
+text = str(detected) if detected else response.content.decode('utf-8', errors='replace')
+```
+curl_cffi 和 aiohttp 兩個分支都改。此方案比原本的 try/except UnicodeDecodeError 更根本——不是「UTF-8 解碼失敗才補救」，而是「從 bytes 自動偵測正確編碼」
+**信心**：高（經 Trafilatura/Scrapy 三方比較驗證）
+**檔案**：`code/python/crawler/core/engine.py`（`_fetch()` 雙分支）
+**日期**：2026-02
+
+### 架構圖維護 - 檔案路徑必須徹底調查
+**問題**：之前 agent 自動填入架構圖的檔案路徑是錯的（如 `decomposer.py` 不存在，實際是 `decontextualize.py`；`tool_selector.py` 根本不存在）。錯誤的路徑會誤導後續開發
+**解決方案**：更新 `architecture-diagram.json` 前，必須用 `Glob` 工具確認檔案是否存在，不可依賴記憶或推測。特別注意：(1) 檔案名稱可能有底線/連字號差異 (2) 檔案可能在不同目錄 (3) 功能可能整合在其他檔案中而非獨立存在
+**信心**：高
+**檔案**：`static/architecture-diagram.json`
+**日期**：2026-02
+
+### 架構圖維護 - Source of Truth 優先順序
+**問題**：架構圖、spec 文件、程式碼之間可能不一致，不知道以誰為準
+**解決方案**：建立更新優先順序（高層級根據低層級更新）：
+1. L1: 程式碼（最終真相）
+2. L2: Spec 文件（`docs/*-spec.md`，貼近實作）
+3. L3: 架構文件（`state-machine-diagram.md`、`systemmap.md`、`architecture-diagram.json`）
+4. L4: 進度文件（`CONTEXT.md`、`PROGRESS.md`）
+
+當衝突時：程式碼 > Spec > 架構圖 > 進度文件。更新時從低層級往高層級推導
+**信心**：高
+**檔案**：`.claude/commands/update-docs/SKILL.md`
+**日期**：2026-02
+
+### 架構圖維護 - 必須先討論再執行
+**問題**：Agent 自行判斷節點「不存在」或「應該移除」，未經用戶確認就刪除。例如：nodePositions 引用的功能性節點（如 knowledge-gap）沒有在 nodes array 中定義，Agent 誤以為是錯誤而刪除，但實際上這些是用戶刻意規劃的重要功能模組
+**解決方案**：架構圖維護必須遵循「表格呈現 → 討論 → 執行」流程：
+1. **表格呈現**：用表格列出現有節點（ID、檔案、狀態、備註），以及發現的問題
+2. **討論**：逐一與用戶確認——哪些要保留、哪些要移除、哪些要新增、哪些要改狀態
+3. **執行**：用戶確認後才執行修改
+
+表格格式範例：
+```
+| 節點 | 檔案 | 狀態 | 備註 |
+|------|------|------|------|
+| xxx  | path ✓/❌ | done/notdone | 說明 |
+```
+
+**絕對禁止**：未經討論就刪除節點、移除 edges、或「清理」看似不一致的資料
+**信心**：高
+**檔案**：`static/architecture-diagram.json`
+**日期**：2026-02
+
+### Buffer Zone Top-Down 掃描陷阱
+**問題**：Sequential ID 掃描（從新到舊）加入 buffer 後，掃描起點在 buffer 頂端（`interpolated_end + buffer`）。Buffer zone 的 ID 全是 404，但 LTN buffer = 6,132 IDs，以 1.5s/request 計算需 153 分鐘才能通過。更糟的是，若 `max_consecutive_not_found < buffer`（如 2000 < 6132），掃描會在 buffer zone 就 early stop，永遠到不了真正的文章範圍
+**解決方案**：分離 buffer zone 和 main zone 的 early stop 策略：
+1. 記錄 `interpolated_end` 作為 buffer/main 分界點
+2. Buffer zone 用小 limit（50 個連續 404 就跳過），直接 `current_id = interpolated_end` 跳到主範圍
+3. Main zone 用較大 limit（如 500）
+4. 進入 main zone 時重置 `consecutive_not_found`
+**信心**：高
+**檔案**：`code/python/crawler/core/engine.py`（`_run_sequential_id_scan()`）
+**日期**：2026-02
+
+### 持久化任務狀態的 Zombie 處理（含 Subprocess Orphan）
+**問題**：Crawler task 狀態持久化到 JSON 檔案，status 包含 "running"/"stopping"。Server 重啟後，(1) task 永遠停在 "running"，阻擋同 source 新 task；(2) subprocess 模式下，孤兒 OS 進程繼續存活佔用資源；(3) auto-resume 為 zombie task 啟動新 subprocess → 同 source 雙重 crawler
+**解決方案**：3 層清理：
+1. **PID 持久化**：`_task_to_dict()` 保存 `pid`，重啟後可追蹤
+2. **`_load_tasks()` 三步清理**：(a) 建立 signal file 讓 subprocess graceful stop → (b) `_kill_orphan_process(pid)` 強制清理（Windows: `taskkill /F /PID`, Unix: `SIGTERM`）→ (c) 標記 failed
+3. **Auto-resume 在 orphan 清理後才啟動**：`_load_tasks()` 在 `__init__` 同步執行，`schedule_auto_resume()` 在 `on_startup` hook 異步執行
+通用規則：持久化「進行中」狀態 + subprocess 模式 = 必須同時清理狀態和 OS 進程
+**信心**：高
+**檔案**：`code/python/indexing/dashboard_api.py`（`_load_tasks()`、`_kill_orphan_process()`）
+**日期**：2026-02
+
+### Server 程式碼中的相對路徑陷阱
+**問題**：`TASKS_FILE = "data/crawler/crawler_tasks.json"` 依賴 CWD 解析。從 `code/python/` 啟動 server 時，檔案被創建在 `code/python/data/crawler/` 而非預期的 `nlweb/data/crawler/`，導致 dashboard 和 CLI 讀取不同檔案
+**解決方案**：用 `Path(__file__)` 計算絕對路徑：`TASKS_FILE = str(Path(__file__).parent.parent.parent.parent / "data" / "crawler" / "crawler_tasks.json")`。通用規則：server 程式碼中的資料檔案路徑，必須從 `__file__` 或環境變數推導，不可用相對路徑
+**信心**：高
+**檔案**：`code/python/indexing/dashboard_api.py`（`TASKS_FILE`）
+**日期**：2026-02
+
+### [已淘汰] Buffer Zone / Early Stop 複雜性 → 改用 Full Scan
+**問題**：Buffer zone skip、early stop、test mode 掃描耗盡等機制互相干擾（skipped articles 重置計數器、limit 永遠不觸發等），導致各種邊界問題
+**解決方案**：Full Scan 重構（2026-02-07）完全移除這些機制。新設計：掃描每一個 ID（ascending），不做 404 early-stop。Checkpoint 在 batch 完成後更新。簡單、可靠、無邊界問題。404 adaptive throttle 也已移除（2026-02-09），因為 404 不會造成 server 負擔
+**信心**：高
+**檔案**：`code/python/crawler/core/engine.py`（`_full_scan_sequential()`、`_full_scan_date_based()`）
+**日期**：2026-02
+
+### Zombie Task Auto-Resume：sync __init__ vs async resume
+**問題**：`IndexingDashboardAPI.__init__()` 是同步的（在 `get_api()` 中初始化），但 resume 需要 async（建立 session、啟動 crawler）。不能直接在 `__init__` 中 resume
+**解決方案**：在 `_load_tasks()` 中只收集候選 task ID 到 `_pending_auto_resume` list，不執行 resume。透過 aiohttp 的 `app.on_startup.append(on_startup)` hook 在 server 啟動後異步執行 `schedule_auto_resume()`。這是 aiohttp 官方的延遲初始化模式
+**信心**：中
+**檔案**：`code/python/indexing/dashboard_api.py`（`_load_tasks()`、`schedule_auto_resume()`、`setup_routes()`）
+**日期**：2026-02
+
+### Windows subprocess stdout 編碼陷阱（cp950 vs UTF-8）
+**問題**：Windows `sys.stdout.encoding` 預設 cp950。Subprocess IPC 用 stdout 傳 JSON，parent 用 UTF-8 解碼。兩個 cp950 汙染源：(1) logging.StreamHandler 預設輸出到 stdout（中文 log 以 cp950 編碼）；(2) `print(json.dumps(..., ensure_ascii=False))` 的 `print()` 也以 cp950 編碼輸出中文 JSON 值（如 `early_stop_reason: "連續 6 次請求被封鎖"`）。結果：parent 解碼為亂碼 `�s�� 6 ���ШD�Q����`
+**解決方案**：兩層修復——(1) `sys.stdout.reconfigure(encoding='utf-8')` 在 subprocess 入口強制 stdout 用 UTF-8，解決所有 `print()` 的編碼問題；(2) monkey-patch logger 重導到 stderr：
+```python
+_original_setup_logger = CrawlerEngine._setup_logger
+def _patched_setup_logger(self_engine):
+    _original_setup_logger(self_engine)
+    for handler in self_engine.logger.handlers:
+        if isinstance(handler, logging.StreamHandler) and handler.stream is not sys.stderr:
+            handler.stream = sys.stderr
+CrawlerEngine._setup_logger = _patched_setup_logger
+```
+加上 parent 端防禦：`line.decode("utf-8", errors="replace")`。通用規則：subprocess IPC 使用 stdout 時，必須確保所有 logging 和 print 都走 stderr
+**信心**：高
+**檔案**：`code/python/crawler/subprocess_runner.py`、`code/python/indexing/dashboard_api.py`
+**日期**：2026-02
+
+### 日期型 ID 爬蟲的 max_suffix 必須實際驗證 + 彈性掃描
+**問題**：CNA full scan 設 `max_suffix=100`（每天掃 0001~0100），但 CNA 實際每天發佈 300+ 篇文章（suffix 到 350+）。結果 95% 的天數被截斷在 suffix=100，漏了約 2/3 的文章。兩年掃描只得 ~50K 篇，實際應有 ~150K+
+**解決方案**：(1) 設定前必須實際 HTTP probe 目標網站多個日期的 suffix 邊界 (2) 改為 per-day adaptive scanning：設高上限（600），每天掃描時用 consecutive miss 偵測白工（連續 80 個 404 → 當天結束），接近上限仍有文章時自動擴展。兼顧覆蓋率和效率
+**信心**：高
+**檔案**：`code/python/crawler/core/engine.py`（`FULL_SCAN_CONFIG`、`_full_scan_date_based()`）、`code/python/crawler/core/settings.py`（`DATE_SCAN_MISS_LIMIT`、`DATE_SCAN_AUTO_EXTEND_STEP`）
+**日期**：2026-02
+
+### 大型升級計劃：先審計再實作，避免重複工作
+**問題**：接手 9 項修改的升級計劃（handoff prompt），逐一讀取檔案後發現 8 項已在前一個對話中實作完畢，只剩 2 處文件修正。若不先審計就開始「實作」，會花大量 token 重寫已有的程式碼
+**解決方案**：接手 handoff prompt 或升級計劃時，先逐一讀取目標檔案，與計劃逐項比對「已實作 vs 未實作」，再只做差異部分。對話上下文可能不完整（context 被壓縮），不可假設「計劃中的都還沒做」
+**信心**：高
+**檔案**：`docs/indexing-upgrade-handoff.md`
+**日期**：2026-02
+
+### simple_keyword_extraction 對中文無效
+**問題**：`TextProcessor.simple_keyword_extraction()` 用空格分詞再取 2-4 字，但中文文本沒有空格分隔，整個標題會變成一個超長「詞」被過濾掉。導致 einfo 54.6% 的文章 fallback 到此方法後仍然拿不到 keywords
+**解決方案**：改用中文標點切分標題取短語（`re.split(r'[，。、！？：；「」（）《》\s]+', title)`），再去除首尾停用詞，取 2-8 字片段。不依賴 jieba 等分詞器。效果：einfo keywords 45% → 78%
+**信心**：高
+**檔案**：`code/python/crawler/parsers/einfo_parser.py`（`_chinese_keyword_extraction()`）
+**日期**：2026-02
+
+### CNA 記者名在正文而非 HTML 元素
+**問題**：CNA parser `_extract_raw_author()` 只查 `.author`/`.reporter`/`.byline` CSS 選擇器，但 CNA 頁面完全沒有這些元素。記者名嵌在正文開頭：`（中央社記者XXX地名日專電）`。導致 68,837 篇文章 author 全部為空
+**解決方案**：新增 `_extract_author_from_body(paragraphs)` 方法，用 regex 從首段提取。記者名通常 2-3 字中文，後面跟地名，用 `re.match(r'([\u4e00-\u9fff]{2,3})', raw)` 分離。29.4% 是「綜合外電報導」天生無個人記者。效果：0% → 70.6%
+**信心**：高
+**檔案**：`code/python/crawler/parsers/cna_parser.py`（`_extract_author_from_body()`）
+**日期**：2026-02
+
+### Embedding 模型 docstring 與實際不一致
+**問題**：`indexing/embedding.py` docstring 寫 `bge-small-zh-v1.5`（512d），但 `_model_name` 實際是 `BAAI/bge-m3`（1024d）。Spec 文件也跟著寫錯。導致對系統維度的認知錯誤
+**解決方案**：修改 embedding 模型後，必須同步更新：(1) 程式碼 docstring (2) `get_embedding_dimension()` 回傳值 (3) spec 文件的模型/維度表格 (4) Qdrant collection 的 vector size 設定
+**信心**：高
+**檔案**：`code/python/indexing/embedding.py`、`docs/indexing-spec.md`
+**日期**：2026-02
+
+### Trafilatura/Scrapy vs Custom Parser：針對已知來源 Custom 大勝
+**問題**：考慮用 Trafilatura 或 Scrapy 替代/補充 custom parser，以提升穩定性和成功率
+**解決方案**：A/B 測試 20 篇 einfo 文章結果：Custom=20/20, Trafilatura=0/20（抓不到 title/date，Drupal 非標準結構）, Scrapy=1/20（泛用 CSS selector 抓不到 body）。**Custom parser 在已知來源大勝，低成功率是 403 封鎖和非文章頁面造成的，不是 parse 失敗**。但這些框架的「架構模式」值得學習：
+- **Trafilatura**：`charset_normalizer` 編碼偵測（已採用）、`htmldate` 日期偵測（已採用為 fallback）、`bare_extraction()` 當 custom parser 失敗的 fallback
+- **Scrapy**：AutoThrottle（基於回應延遲自動調速）、Middleware chain（可插拔的 request/response 處理）、信號系統（spider_opened/closed 等事件）
+不建議遷移到 Scrapy（Twisted 依賴重、async 支持仍是 wrapper），而是挑選最佳 pattern 整合到現有 asyncio 架構
+**信心**：高
+**檔案**：`code/python/crawler/parsers/einfo_parser.py`（A/B test 實作）、`code/python/crawler/core/engine.py`（charset_normalizer）
+**日期**：2026-02
+
+### Full Scan 速度瓶頸：delay-inside-semaphore 是 rate limiter，調參數而非改架構
+**問題**：Full scan 4 個爬蟲同時跑，LTN 理論 ~2.5 req/s 但實際只有 0.4 req/s（6 倍差距）。原因：`_process_one()` 在 semaphore 內 sleep（delay），佔著 concurrent slot 空轉。直覺想法是「把 delay 移到 semaphore 外」，但這與「提高併發數」互相衝突——兩個都做等於對伺服器壓力暴增
+**解決方案**：delay-inside-semaphore 本身就是 rate limiter，保留架構不動，改用 `FULL_SCAN_OVERRIDES` 針對 full scan 模式調參：
+- 提高併發（5→12）+ 縮短 delay（0.5-1.5s→0.1-0.3s）+ 縮短 timeout（10s→5s）
+- 不同來源不同設定（einfo 保守：3 併發 + 1-3s delay）
+- 不跳過 candidate URLs（100% coverage 優先於速度）
+
+通用規則：asyncio semaphore + delay 模式中，delay 位置決定了 rate limiting 語義。要加速時調參數（併發數、delay 值），不要同時改架構（移動 delay）又改參數（提高併發）
+**信心**：中
+**檔案**：`code/python/crawler/core/engine.py`（`_process_one()`、`_apply_full_scan_overrides()`）、`code/python/crawler/core/settings.py`（`FULL_SCAN_OVERRIDES`）
+**日期**：2026-02
+
 ---
 
-*最後更新：2026-01-30*
+### HTTP Server `--directory` 造成雙重路徑 404
+**問題**：用 `python -m http.server 8080 --directory static` 啟動開發 server，但 HTML 中引用 `/static/news-search.css`。Server 以 `static/` 為根目錄，路徑解析為 `static/static/news-search.css` → 404。CSS/JS 全部載不到，頁面空白，console 只顯示 404 錯誤
+**解決方案**：從專案根目錄啟動 server（不加 `--directory`）：`python -m http.server 8080`。這樣 `/static/news-search.css` 正確解析為 `./static/news-search.css`。通用規則：`--directory` 改變的是 server 根目錄，HTML 中的絕對路徑（`/static/...`）會從該根開始解析，容易造成路徑重複
+**信心**：高
+**檔案**：`static/news-search-prototype.html`（HTML 引用路徑）
+**日期**：2026-02
+
+### htmldate 比手寫 regex 更可靠的日期提取
+**問題**：每個 parser 各自手寫 `_parse_date()`，格式稍有不同就 return None，文章被丟掉
+**解決方案**：用 `htmldate.find_date(html, outputformat='%Y-%m-%d')` 作為 fallback。支援幾十種日期格式 + JSON-LD + meta tags + 啟發式偵測。在 einfo 實測，htmldate 成功找到所有日期（包括 custom regex 漏掉的）。用法：custom regex 先試，失敗才 fallback 到 htmldate，避免 htmldate 的計算開銷
+**信心**：高
+**檔案**：`code/python/crawler/parsers/einfo_parser.py`（`_custom_parse()` 中 htmldate fallback）
+**日期**：2026-02
+
+### run_auto 名義上有 concurrent_limit 但實際逐條處理
+**問題**：`run_auto` 設定了 `concurrent_limit=5`，但實際是 `for` 迴圈逐條 `await _process_article()`，完全沒有並行。UDN auto 只有 ~26 req/min，遠低於 full scan 的 ~100+ req/min（使用 semaphore+gather）
+**解決方案**：改為與 `_run_sequential_scan` 相同的 batch parallel 模式：收集一批 ID → `asyncio.Semaphore(concurrent_limit)` + `asyncio.gather()` 並行處理。Phase 1 收集（跳過已爬）→ Phase 2 並行處理 → 評估結果。通用規則：**設定 concurrent_limit 但沒有使用 semaphore+gather 的 async 函數等於白設定**，要逐一檢查
+**信心**：高
+**檔案**：`code/python/crawler/core/engine.py`（`run_auto()`）
+**日期**：2026-02
+
+### Dashboard API 多處 async 反模式：sequential awaits、sync I/O
+**問題**：Dashboard start/stop/resume 操作卡頓 30-90 秒。原因：(1) `start_full_scan` 逐一 auto-detect 3 個 sequential source 的 latest ID（每個最多 30s → 共 90s），(2) `schedule_auto_resume` 逐一 resume zombie tasks，(3) WebSocket broadcast 逐一 send，(4) `_save_tasks` 在 async handler 中同步寫檔
+**解決方案**：
+1. `_detect_latest_id()` 抽出為獨立方法 + `asyncio.gather()` 並行偵測
+2. `schedule_auto_resume` 用 `asyncio.gather()` 並行 resume
+3. `_broadcast_status` 用 `asyncio.gather()` + safe wrapper 並行 send
+4. `_save_tasks` JSON 序列化在主線程，`run_in_executor` 背景寫檔
+通用規則：**任何在 async 函數中的 `for item: await operation(item)` 都是潛在的效能殺手**，優先改成 `gather()`
+**信心**：高
+**檔案**：`code/python/indexing/dashboard_api.py`
+**日期**：2026-02
+
+### 爬蟲資料分布 ≠ 實際文章分布（生存者偏差）
+**問題**：分析 UDN 已爬文章的 ID 分布，發現 8.2M-9.1M 之間有大片空白，推測為「dead zone」。但這只是因為 auto（從 9.3M 往回）和 full scan（從 7.8M 往上）各自爬了一段，中間尚未覆蓋，並非文章不存在
+**解決方案**：分析爬蟲資料時，必須區分「已爬資料的分布」和「實際文章的分布」。缺少資料點不代表文章不存在——可能只是還沒掃到。只有在 ID 被實際掃過且回傳 404 時才能確認「不存在」
+**信心**：高
+**檔案**：N/A（分析方法論）
+**日期**：2026-02
+
+### 外部 HTTP probe 被 rate limit 會產生嚴重誤導
+**問題**：用 aiohttp 批量 probe CNA 600 個 suffix 來驗證每日文章數。結果顯示「190 篇/天，max suffix=200」。據此計算「47% 覆蓋率」，進而推導出「DATE_SCAN_MISS_LIMIT=80 導致過早截斷」的錯誤結論
+**實際情況**：probe 在發完 ~200 個請求後被 CNA rate limit，後續 suffix 全部回 404。實際 CNA 每天 ~307 篇，分布在 suffix 1-399。舊爬蟲只抓了 suffix 0-99（88 篇/天），full scan 正確補抓 suffix 100-399（218 篇/天）
+**教訓**：
+1. **probe 結果必須與 DB 交叉驗證**：光看 HTTP status code 不夠，要對照 crawled_articles 的 task_id 分組 + suffix 分布
+2. **rate limit 會截斷結果**：如果只有第一個日期有資料、後續全部 0，幾乎肯定是被封
+3. **不要輕信 agent 的根因分析**：agent 拿到被截斷的 probe 數據就推導出錯誤結論，必須獨立驗證
+**信心**：高
+**日期**：2026-02
+
+### 爬蟲覆蓋率分析必須按 task_id 拆分
+**問題**：看到 CNA 每月 ~2,700 篇就以為那是全部輸出。實際上 2,700 只是舊爬蟲（task_id=None）的 suffix 0-99 區間。Full scan 在 suffix 100-399 還找到 ~218 篇/天，但因為 full scan 才跑 19 天，這些新文章只存在於 January 2024
+**教訓**：分析爬蟲覆蓋率時：
+1. 先 `GROUP BY task_id` 看資料來源
+2. 比對不同 task 的 suffix 分布
+3. 不要把單一 task 的結果當作網站全部產量
+**信心**：高
+**日期**：2026-02
+
+### LTN 自動 redirect 使 candidate URLs 完全浪費
+**問題**：LTN full scan 設定 `max_candidate_urls=3`，每個 404 額外打 3 個 candidate URL（其他 category + 子站），導致請求量 ~1.6-4 倍放大。Full scan 掃描速度極慢
+**實際情況**：LTN 的 server **會自動 redirect** 到正確 category/subdomain。例如用 `news/life/5300000` 請求，server 自動 302 到 `health.ltn.com.tw/5300000`。因此 404 就是真的文章不存在，candidate URL 不可能成功
+**解決方案**：LTN 的 `max_candidate_urls` 應設為 **0**。redirect 機制已經保證任何 category 都能找到文章。驗證方法：`aiohttp session.get(url)` 預設 follow redirect，檢查 `resp.url != 原始 url` 即可確認
+**教訓**：新增 candidate URL 前，先測試 server 是否支援 redirect。如果支援，candidate 是浪費
+**信心**：高
+**檔案**：`code/python/crawler/parsers/ltn_parser.py`、`code/python/crawler/core/settings.py`（FULL_SCAN_OVERRIDES）
+**日期**：2026-02
+
+### Chinatimes URL 必須包含正確 category code（不像 CNA）
+**問題**：Chinatimes full scan 50 天只找到 247 篇文章（5 篇/天）。Primary URL 用 `-260402`（社會），candidate 只加 newspapers-260109 和 opinion-262101，完全沒覆蓋政治(260401)、生活(260405)、國際(260404)、科技(260408)、娛樂(260410)、體育(260412)等主要分類
+**對比**：CNA 不需要正確 category（`news/aipl/...` 和 `news/afe/...` 都能 resolve 同一篇文章）。但 Chinatimes 的 URL **必須**包含正確 category code，否則回 404
+**教訓**：每個新聞源的 URL routing 機制不同，不能假設都像 CNA 一樣 category-agnostic。加入新 parser 時必須測試：(1) 錯誤 category 是否 redirect？(2) 還是直接 404？
+**信心**：高
+**檔案**：`code/python/crawler/parsers/chinatimes_parser.py`（`get_url()`、`get_candidate_urls()`）
+**日期**：2026-02
+
+### 新聞源月產量驗證：必須用多種方法交叉確認
+**問題**：spec 中各來源「月均文章」數字嚴重偏離現實（UDN 寫 3,000 實際 28,000、LTN 寫 4,700 實際 27,000）。單一驗證方法（外部 probe、已爬資料統計、sitemap）各有盲點
+**解決方案**：正確的驗證流程需三步交叉：
+1. **DB 分析**：`GROUP BY task_id` 拆分不同爬蟲的貢獻，比較 suffix 分布
+2. **ID→日期映射**：probe 幾個代表性 ID，建立 ID 增長速率 × hit rate 的月產量估算
+3. **Sitemap/列表頁**：確認 sitemap 覆蓋範圍，但注意 sitemap 可能不完整
+任何一種方法單獨使用都可能嚴重偏差（probe 被 rate limit、DB 只反映已爬範圍、sitemap 只有近期）
+**信心**：高
+**檔案**：`docs/indexing-spec.md`（外部驗證數據段落）
+**日期**：2026-02
+
+*最後更新：2026-02-11*
 

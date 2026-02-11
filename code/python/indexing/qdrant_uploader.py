@@ -4,9 +4,9 @@ qdrant_uploader.py - Qdrant 向量上傳模組
 負責將 chunks 的 embedding 上傳到 Qdrant。
 """
 
-import hashlib
 import logging
 import os
+import uuid
 from dataclasses import dataclass
 from typing import Optional
 
@@ -34,7 +34,11 @@ class QdrantConfig:
 
     @classmethod
     def from_env(cls) -> "QdrantConfig":
-        """Load config from environment variables."""
+        """Load config from active Qdrant profile, falling back to environment variables."""
+        from core.qdrant_profile import get_active_qdrant_config
+        profile_config = get_active_qdrant_config()
+        if profile_config:
+            return profile_config
         return cls(
             url=os.environ.get("QDRANT_URL", "http://localhost:6333"),
             api_key=os.environ.get("QDRANT_API_KEY"),
@@ -162,14 +166,17 @@ class QdrantUploader:
 
         return total_uploaded
 
-    def _generate_point_id(self, chunk_id: str) -> int:
-        """
-        Generate a numeric point ID from chunk_id.
+    # Deterministic namespace for UUID5 generation (stable across restarts)
+    _UUID_NAMESPACE = uuid.uuid5(uuid.NAMESPACE_URL, "nlweb.chunk")
 
-        Qdrant requires numeric or UUID IDs. We use a hash of the chunk_id.
+    def _generate_point_id(self, chunk_id: str) -> str:
         """
-        hash_hex = hashlib.md5(chunk_id.encode()).hexdigest()[:16]
-        return int(hash_hex, 16)
+        Generate a UUID5 point ID from chunk_id.
+
+        UUID5 is deterministic (same chunk_id → same UUID) and based on SHA-1
+        (128-bit), making collisions effectively impossible.
+        """
+        return str(uuid.uuid5(self._UUID_NAMESPACE, chunk_id))
 
     def get_collection_info(self) -> dict:
         """Get collection statistics."""

@@ -161,6 +161,14 @@ class AppConfig:
         self.load_sites_config()
         self.load_conversation_storage_config()
         self.load_oauth_config()
+        self._apply_qdrant_profile()
+
+    def _apply_qdrant_profile(self):
+        """Apply Qdrant profile overrides if QDRANT_PROFILE env var is set."""
+        from core.qdrant_profile import load_qdrant_profile, apply_profile_to_config
+        profile = load_qdrant_profile(self.config_directory)
+        if profile:
+            apply_profile_to_config(profile, self)
 
     def _get_config_directory(self) -> str:
         """
