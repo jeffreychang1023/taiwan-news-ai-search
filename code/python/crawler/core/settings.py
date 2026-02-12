@@ -200,10 +200,9 @@ FULL_SCAN_OVERRIDES = {
         "concurrent_limit": 3,
         "delay_range": (1.0, 2.5),
         "request_timeout": 8,
-        # 每個 404 ID 嘗試 N 個 candidate category codes。值越高覆蓋率越好但請求放大越嚴重。
-        # 調查結果：Category 分佈均勻（前4各~19%），Top 6 = 96.6% 覆蓋率
-        # 4 = 前 4 個 category（~76% 覆蓋率），避免 Cloudflare 限速
-        "max_candidate_urls": 4,
+        # 調查結果：chinatimes 不在乎 category code，任何 category 都回同一篇文章。
+        # 因此 candidate URL 不需要，設 0 減少 79% 的 Cloudflare 請求量。
+        "max_candidate_urls": 0,
     },
     "moea": {
         "concurrent_limit": 2,
@@ -212,6 +211,26 @@ FULL_SCAN_OVERRIDES = {
         # MOEA requires correct kind+menu_id; low concurrency to avoid 429
     },
 }
+
+# ==================== 環境感知覆蓋 ====================
+# GCP e2-micro: shared vCPUs + 1GB RAM，降低併發避免 OOM
+CRAWLER_ENV = os.environ.get("CRAWLER_ENV", "default")
+
+if CRAWLER_ENV == "gcp":
+    for _source, _overrides in FULL_SCAN_OVERRIDES.items():
+        _overrides["concurrent_limit"] = min(_overrides.get("concurrent_limit", 3), 5)
+        if _overrides.get("delay_range", (0, 0))[0] < 0.3:
+            _overrides["delay_range"] = (0.3, 0.8)
+
+# ==================== Proxy 設定 ====================
+# 需要使用 proxy 的來源（IP 被封鎖時啟用）
+PROXY_SOURCES = ["einfo"]
+
+# Proxy pool 設定
+PROXY_REFRESH_INTERVAL = 600   # 10 分鐘刷新
+PROXY_VALIDATE_TIMEOUT = 5     # 驗證 timeout（秒）
+PROXY_MAX_POOL_SIZE = 20       # 最多保留 proxy 數量
+PROXY_MAX_RETRIES = 5          # Proxy source 重試次數（免費 proxy 不穩定，多試幾個）
 
 # ==================== 調試設定 ====================
 DEBUG = os.environ.get("NLWEB_DEBUG", "").lower() in ("true", "1", "yes")
