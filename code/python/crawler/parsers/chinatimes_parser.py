@@ -80,6 +80,14 @@ class ChinatimesParser(BaseParser):
         candidates.append(f"https://www.chinatimes.com/opinion/{article_id}-262101")
         return candidates
 
+    def get_sitemap_config(self) -> Optional[Dict[str, Any]]:
+        """Sitemap 爬取配置（1000 個 sub-sitemap，涵蓋全部歷史文章）"""
+        return {
+            'index_url': 'https://www.chinatimes.com/sitemaps/sitemap_article_all_index_0.xml',
+            'is_index': True,
+            'article_url_pattern': r'chinatimes\.com/(realtimenews|newspapers|opinion)/\d{14}-\d{6}',
+        }
+
     def get_list_page_config(self) -> Optional[Dict[str, Any]]:
         """列表頁爬取配置"""
         list_urls = [

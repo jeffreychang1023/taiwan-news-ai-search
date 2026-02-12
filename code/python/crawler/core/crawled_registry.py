@@ -11,6 +11,7 @@ crawled_registry.py - 已爬取文章的 SQLite 註冊表
 
 import hashlib
 import logging
+import re
 import sqlite3
 import threading
 from datetime import datetime
@@ -18,6 +19,13 @@ from pathlib import Path
 from typing import Optional, List, Dict, Any, Set
 
 from . import settings
+
+# Regex patterns for extracting article IDs from URLs
+_RE_MOEA_ID = re.compile(r'news_id=(\d+)')
+_RE_EINFO_ID = re.compile(r'/node/(\d+)')
+_RE_LTN_ID = re.compile(r'/breakingnews/(\d+)')
+_RE_UDN_ID = re.compile(r'/story/\d+/(\d+)')
+_RE_DATE_BASED_ID = re.compile(r'/(\d{12,14})(?:[./-]|\.aspx|$)')
 
 
 class CrawledRegistry:
@@ -679,6 +687,52 @@ class CrawledRegistry:
             (source_id,)
         )
         return {row['article_id'] for row in cursor}
+
+    def load_blocked_ids(self, source_id: str) -> Set[int]:
+        """Load article IDs that failed with 'blocked' (429) status.
+
+        These IDs were never actually fetched and should not be skipped
+        by watermark-based skip logic during re-scans.
+
+        Extracts numeric article IDs from URLs using source-specific patterns.
+        """
+        conn = self._get_conn()
+        cursor = conn.execute(
+            "SELECT url FROM failed_urls WHERE source_id = ? AND error_type = 'blocked'",
+            (source_id,)
+        )
+        blocked_ids = set()
+        for row in cursor:
+            url = row['url']
+            # Try source-specific patterns first, then date-based fallback
+            m = (_RE_MOEA_ID.search(url)
+                 or _RE_EINFO_ID.search(url)
+                 or _RE_LTN_ID.search(url)
+                 or _RE_UDN_ID.search(url)
+                 or _RE_DATE_BASED_ID.search(url))
+            if m:
+                blocked_ids.add(int(m.group(1)))
+        return blocked_ids
+
+    def load_blocked_dates(self, source_id: str) -> Set[str]:
+        """Load dates (YYYY-MM-DD) that have blocked URLs for date-based sources.
+
+        Used to prevent day-level watermark skip from skipping days
+        that have blocked (429) URLs needing retry.
+        """
+        conn = self._get_conn()
+        cursor = conn.execute(
+            "SELECT url FROM failed_urls WHERE source_id = ? AND error_type = 'blocked'",
+            (source_id,)
+        )
+        blocked_dates = set()
+        for row in cursor:
+            # Extract 8-digit date from article ID in URL (YYYYMMDD)
+            m = _RE_DATE_BASED_ID.search(row['url'])
+            if m:
+                yyyymmdd = m.group(1)[:8]  # First 8 digits = YYYYMMDD
+                blocked_dates.add(f"{yyyymmdd[:4]}-{yyyymmdd[4:6]}-{yyyymmdd[6:8]}")
+        return blocked_dates
 
     def get_not_found_count(self, source_id: Optional[str] = None) -> int:
         """Get count of 404 records (for stats/debug)."""

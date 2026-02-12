@@ -44,6 +44,12 @@ FULL_SCAN_CONFIG = {
     "moea": {"type": "sequential", "name": "Ministry of Economic Affairs", "start_id": 110_000, "default_end_id": 122_000},
 }
 
+# Sources that auto-restart after early_stop (e.g., rate-limit recovery).
+# Maps source_id -> delay in seconds before restarting.
+AUTO_RESTART_DELAY = {
+    "moea": 900,  # 15 minutes — rate limit recovery
+}
+
 
 @dataclass
 class CrawlerTask:
@@ -131,26 +137,31 @@ class IndexingDashboardAPI:
             return {"total_articles": 0, "by_source": {}, "date_ranges": {}, "error": str(e)}
 
     async def _get_qdrant_stats(self) -> Dict[str, Any]:
-        """Get statistics from Qdrant (if available)"""
+        """Get statistics from Qdrant (if available).
+
+        Runs synchronous QdrantClient in executor to avoid blocking event loop.
+        """
         try:
-            # Try to get Qdrant collection info
             from qdrant_client import QdrantClient
             import os
 
             qdrant_url = os.environ.get("QDRANT_URL", "http://localhost:6333")
-            client = QdrantClient(url=qdrant_url, timeout=5)
-
-            # Get collection info
             collection_name = os.environ.get("QDRANT_COLLECTION", "nlweb")
-            try:
-                info = client.get_collection(collection_name)
-                return {
-                    "vectors_count": info.vectors_count,
-                    "points_count": info.points_count,
-                    "collection": collection_name
-                }
-            except Exception:
-                return {"vectors_count": 0, "points_count": 0, "error": "Collection not found"}
+
+            def _sync_qdrant():
+                client = QdrantClient(url=qdrant_url, timeout=3)
+                try:
+                    info = client.get_collection(collection_name)
+                    return {
+                        "vectors_count": info.vectors_count,
+                        "points_count": info.points_count,
+                        "collection": collection_name
+                    }
+                except Exception:
+                    return {"vectors_count": 0, "points_count": 0, "error": "Collection not found"}
+
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(None, _sync_qdrant)
 
         except ImportError:
             return {"vectors_count": 0, "error": "qdrant-client not installed"}
@@ -315,18 +326,26 @@ class IndexingDashboardAPI:
         # Must run from code/python/ directory for imports to work
         code_dir = str(Path(__file__).parent.parent)
 
+        # Redirect stderr to per-task log files instead of piping through event loop.
+        # Piping stderr from 6+ subprocesses saturates the asyncio event loop on Windows,
+        # starving HTTP handlers and causing API timeouts.
+        log_dir = signal_dir  # reuse signal dir for log files
+        stderr_log_path = log_dir / f"{task.task_id}.stderr.log"
+        stderr_log_file = open(stderr_log_path, "w", encoding="utf-8")
+
         proc = await asyncio.create_subprocess_exec(
             sys.executable, "-m", "crawler.subprocess_runner",
             "--params", params_json,
             "--task-id", task.task_id,
             "--signal-dir", str(signal_dir),
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+            stderr=stderr_log_file,
             cwd=code_dir,
         )
         task._process = proc
         task._pid = proc.pid
-        logger.info(f"Subprocess launched: PID={proc.pid} for task {task.task_id}")
+        task._stderr_log_file = stderr_log_file
+        logger.info(f"Subprocess launched: PID={proc.pid} for task {task.task_id} (stderr -> {stderr_log_path})")
 
         try:
             async for line in proc.stdout:
@@ -356,6 +375,7 @@ class IndexingDashboardAPI:
                     if task.scan_end is None and "scan_end" in stats:
                         task.scan_end = str(stats["scan_end"])
                     asyncio.create_task(self._broadcast_status(task))
+                    await asyncio.sleep(0)  # Yield to event loop
 
                 elif msg_type == "completed":
                     task.stats = msg["stats"]
@@ -374,20 +394,28 @@ class IndexingDashboardAPI:
                     logger.error(f"Subprocess error: task {task.task_id}: {task.error}")
 
             await proc.wait()
+            # Close stderr log file
+            if hasattr(task, '_stderr_log_file') and task._stderr_log_file:
+                try:
+                    task._stderr_log_file.close()
+                except Exception:
+                    pass
 
             # If process exited with error but we didn't get an error message
             if proc.returncode != 0 and task.status == CrawlerTaskStatus.RUNNING:
-                stderr_output = await proc.stderr.read()
                 task.status = CrawlerTaskStatus.FAILED
-                task.error = stderr_output.decode("utf-8", errors="replace")[-500:]
+                task.error = f"Subprocess exited with code {proc.returncode}"
                 task.finished_at = time.time()
                 logger.error(f"Subprocess exited with code {proc.returncode}: {task.task_id}")
 
         except asyncio.CancelledError:
-            # Reader task cancelled (shouldn't normally happen)
-            if task.status == CrawlerTaskStatus.RUNNING:
-                task.status = CrawlerTaskStatus.STOPPING
-                task.finished_at = time.time()
+            # Reader task cancelled — happens when force-killing a subprocess
+            # (Windows pipes may not close cleanly after proc.kill())
+            if task.status in (CrawlerTaskStatus.RUNNING, CrawlerTaskStatus.STOPPING):
+                task.status = CrawlerTaskStatus.FAILED
+                task.error = task.error or "Subprocess force-terminated"
+                task.finished_at = task.finished_at or time.time()
+                logger.info(f"Reader task cancelled for {task.task_id}")
 
         except Exception as e:
             task.status = CrawlerTaskStatus.FAILED
@@ -396,6 +424,12 @@ class IndexingDashboardAPI:
             logger.error(f"Subprocess reader error: {task.task_id}: {e}", exc_info=True)
 
         finally:
+            # Close stderr log file if still open
+            if hasattr(task, '_stderr_log_file') and task._stderr_log_file:
+                try:
+                    task._stderr_log_file.close()
+                except Exception:
+                    pass
             # Clean up signal file
             signal_file = signal_dir / f".stop_{task.task_id}"
             if signal_file.exists():
@@ -403,7 +437,39 @@ class IndexingDashboardAPI:
                     signal_file.unlink()
                 except OSError:
                     pass
+            self._save_tasks()
             await self._broadcast_status(task)
+
+            # Schedule auto-restart for early_stopped sources (e.g., MOEA rate-limit recovery)
+            if task.status == CrawlerTaskStatus.EARLY_STOPPED:
+                delay = AUTO_RESTART_DELAY.get(task.source)
+                if delay:
+                    logger.info(f"Auto-restart: {task.source} will restart in {delay}s (task {task.task_id})")
+                    asyncio.create_task(self._delayed_restart(task.task_id, delay))
+
+    async def _delayed_restart(self, old_task_id: str, delay: float) -> None:
+        """Wait `delay` seconds, then auto-resume an early_stopped task from its checkpoint."""
+        try:
+            old_task = self._crawler_tasks.get(old_task_id)
+            source = old_task.source if old_task else old_task_id
+            logger.info(f"Auto-restart: waiting {delay}s before restarting {source}...")
+            await asyncio.sleep(delay)
+
+            # Check if source already has a running task (user may have manually restarted)
+            for task in self._crawler_tasks.values():
+                if task.source == source and task.status == CrawlerTaskStatus.RUNNING:
+                    logger.info(f"Auto-restart: skipping {old_task_id}, {source} already running")
+                    return
+
+            new_task_id = await self._auto_resume_task(old_task_id)
+            if new_task_id:
+                logger.info(f"Auto-restart: {source} restarted as {new_task_id}")
+            else:
+                logger.warning(f"Auto-restart: failed to restart {source} from {old_task_id}")
+        except asyncio.CancelledError:
+            logger.info(f"Auto-restart: cancelled for {old_task_id}")
+        except Exception as e:
+            logger.error(f"Auto-restart: error restarting {old_task_id}: {e}", exc_info=True)
 
     async def _run_crawler_inprocess(self, task: CrawlerTask, params: Dict[str, Any]) -> None:
         """Run crawler in-process (legacy fallback)."""
@@ -726,7 +792,15 @@ class IndexingDashboardAPI:
             await asyncio.sleep(timeout)
             if proc.returncode is None:
                 logger.warning(f"Force terminating subprocess for task {task_id}")
-                proc.terminate()
+                try:
+                    proc.kill()
+                except ProcessLookupError:
+                    pass
+                # Cancel the reader task to unblock the stdout pipe reader
+                # On Windows, proc.terminate()/kill() may not close pipes cleanly,
+                # causing `async for line in proc.stdout` to hang indefinitely.
+                if hasattr(task, '_reader_task') and task._reader_task:
+                    task._reader_task.cancel()
 
         if task._process and task._process.returncode is None:
             asyncio.create_task(_force_kill_after(task._process))

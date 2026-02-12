@@ -265,6 +265,61 @@ Resume：  start_id=8,500,001, end_id=9,313,000
          → 從 checkpoint 繼續
 ```
 
+#### stderr 處理（2026-02-12 更新）
+
+Subprocess 的 stderr 改為 **file redirect**（非 asyncio.PIPE），避免 event loop starvation：
+
+```python
+stderr_log_path = log_dir / f"{task.task_id}.stderr.log"
+stderr_log_file = open(stderr_log_path, "w", encoding="utf-8")
+proc = await asyncio.create_subprocess_exec(
+    ...,
+    stdout=asyncio.subprocess.PIPE,   # JSON protocol, low-frequency
+    stderr=stderr_log_file,            # file redirect, bypasses event loop
+)
+```
+
+**原因**：6 個 subprocess 同時運行時，12 concurrent pipe readers（6 stdout + 6 stderr）搶佔 Windows ProactorEventLoop，HTTP handlers 永遠排不到。stderr 改為 file redirect 後完全不經 event loop，Dashboard 穩定運行 4+ 小時。
+
+**stderr log 位置**：`data/crawler/signals/{task_id}.stderr.log`
+
+> **規則**：高頻輸出（logging）用 file redirect，只有低頻結構化輸出（JSON progress）才用 asyncio.PIPE。
+
+#### Force Kill & Pipe Cleanup（2026-02-12）
+
+Windows 上 `proc.kill()` 不會自動關閉 pipes，`async for line in proc.stdout` 可能永遠 hang。修復：
+
+```python
+async def _force_kill_after(proc, timeout=10):
+    await asyncio.sleep(timeout)
+    if proc.returncode is None:
+        proc.kill()
+        # Cancel stdout reader to prevent hang
+        if hasattr(task, '_reader_task') and task._reader_task:
+            task._reader_task.cancel()
+```
+
+#### Auto-Restart for Early-Stopped Sources（2026-02-12）
+
+某些 source（如 MOEA）因 rate limit 觸發 `BLOCKED_CONSECUTIVE_LIMIT` 而 early_stop，等待一段時間後可恢復。
+
+**配置**：
+```python
+AUTO_RESTART_DELAY = {
+    "moea": 900,  # 15 minutes
+}
+```
+
+**流程**：
+1. `_run_crawler_subprocess` 偵測到 `early_stopped`
+2. 查 `AUTO_RESTART_DELAY` 是否有該 source
+3. 有 → `asyncio.create_task(_delayed_restart(task_id, delay))`
+4. `_delayed_restart()`: sleep → 檢查無同 source running → `_auto_resume_task()`
+
+**安全機制**：
+- 若使用者已手動重啟，delay 期間偵測到同 source running → 跳過
+- 複用既有 `_auto_resume_task()` 邏輯（從 checkpoint 建新 task）
+
 #### 404 Skip 加速（2026-02-10）
 
 Full Scan 啟動時載入三層 skip 資料，避免重複 HTTP request：

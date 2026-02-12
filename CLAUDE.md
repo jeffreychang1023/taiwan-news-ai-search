@@ -102,6 +102,8 @@
 
 ### 已完成（2026-02）
 
+✅ **Dashboard 穩定性 + Watermark Skip Bug 修復**（stderr→file、blocked URLs 不再被跳過、sitemap OOM、throttle ceiling）
+✅ **Subprocess 穩定性 + Auto-Restart**（stderr pipe buffer 修復、MOEA auto-restart、自動化監控迴圈）
 ✅ **Dashboard Bug Fixes + Full Scan 穩定性**（MOEA 限速修復、scan_start/scan_end 初始化、task cleanup）
 ✅ **UDN Sitemap Backfill + curl_cffi 清理**（sitemap mode 串接、fail fast、shim 移除）
 ✅ **Qdrant Profile 切換系統**（online/offline 環境切換）
@@ -121,7 +123,8 @@
 
 ### 目前工作
 
-🔄 **全量 Backfill**：6 source 從 checkpoint 續跑中（UDN 用 sitemap 獨立處理）
+🔄 **全量 Backfill**：LTN/CNA/einfo running、MOEA targeted rescan、Chinatimes/UDN sitemap mode、ESG BT completed
+🔄 **Blocked URL 回補**：全 source 需跑一輪 full_scan 回補被 watermark skip 誤跳的 blocked URLs
 🔄 **效能優化**：延遲分析、token 減少、引用 UX 改進
 
 **規劃**：見 `.claude/NEXT_STEPS.md` 與 `.claude/CONTEXT.md`

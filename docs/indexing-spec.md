@@ -1126,21 +1126,31 @@ def add_overlap(chunks: list[Chunk], overlap_chars: int = 30) -> list[Chunk]:
 - Checkpoint 在每個 batch 完成後更新（不是 gather 前），避免 crash 跳過未完成 ID
 - `crawled_registry` 自動跳過已爬取的文章
 
-#### Full Scan 404 Skip（三層加速機制，2026-02-10）
+#### Full Scan 404 Skip（三層加速機制，2026-02-10，watermark skip 修復 2026-02-12）
 
 重掃已覆蓋範圍時，透過三層 skip 避免重複 HTTP request：
 
 | 層級 | 檢查 | 成本 | 說明 |
 |------|------|------|------|
-| **Watermark** | `id <= last_scanned_id` | O(1) int | 低於 watermark 的 ID 表示已在上一輪掃過，全部跳過 |
+| **Watermark** | `id <= last_scanned_id AND id NOT IN blocked_ids` | O(1) int + O(1) set | 低於 watermark 且非 blocked 的 ID 才跳過 |
 | **not_found_ids** | `id in Set[int]` | O(1) set | 本輪或歷史確認的 404 article ID（持久化到 `not_found_articles` 表）|
 | **crawled_ids** | URL 生成 + set lookup | O(k) | 已成功爬取的文章 URL |
 
+**Watermark Skip Bug 修復（2026-02-12）**：
+
+原始實作中，watermark skip 條件為 `current_id <= watermark_id`，會將所有低於 watermark 的 ID 視為「已掃描」直接跳過。但 HTTP 429 blocked URLs 雖然記錄在 `failed_urls` 表中，實際上從未成功抓取。這導致 4,581 個 blocked URLs（跨 7 個 source）被永久跳過。
+
+修復方式：
+- **Sequential sources**：載入 `_blocked_ids`（從 `failed_urls` 表中 `error_type='blocked'` 的 URL 解析出 article ID），skip 條件改為 `id <= watermark AND id NOT IN blocked_ids`
+- **Date-based sources**：載入 `_blocked_dates`（從 blocked URL 解析出日期），skip 條件改為 `day <= watermark_date AND day NOT IN blocked_dates`
+- 新增 `crawled_registry.load_blocked_ids()` 和 `load_blocked_dates()` 方法
+- 使用 regex cascade 解析各 source URL 格式（MOEA `news_id=`, LTN `/breakingnews/`, einfo `/node/`, UDN `/story/`, CNA/chinatimes/ESG BT date-based ID）
+
 **資料流**：
-- `_apply_full_scan_overrides()` 啟動時從 DB 載入 watermark + not_found_ids
+- `_apply_full_scan_overrides()` 啟動時從 DB 載入 watermark + not_found_ids + blocked_ids/blocked_dates
 - `_process_article()` 在真正 404 路徑記錄 article_id 到記憶體 set + DB
 - `flush_not_found()` 在每個 batch 結束時與 watermark 一起 commit（非逐筆 commit）
-- Date-based sources 以整天為單位跳過（`current_day <= watermark_date`）
+- Date-based sources 以整天為單位跳過（`current_day <= watermark_date AND day NOT IN blocked_dates`）
 
 **新增 DB table**：
 ```sql
@@ -1152,7 +1162,7 @@ CREATE TABLE IF NOT EXISTS not_found_articles (
 );
 ```
 
-**預期效果**：UDN 重掃 7.8M→9.3M，若 watermark=9.0M，則 7.8M~9.0M 全部秒跳過（int 比較，無 HTTP request）。
+**預期效果**：UDN 重掃 7.8M→9.3M，若 watermark=9.0M，則 7.8M~9.0M 全部秒跳過（int 比較，無 HTTP request）。重掃時 blocked URLs 不會被跳過，可透過正常 full_scan 流程自動回補。
 
 #### Qdrant 儲存估算
 

@@ -148,6 +148,9 @@ class CrawlerEngine:
             else:
                 self.session_type = SessionType.AIOHTTP
 
+        # Proxy mode for IP-blocked sources
+        self._use_proxy = parser.source_name in settings.PROXY_SOURCES
+
         # 設定日誌
         self.logger = logging.getLogger(f"CrawlerEngine_{parser.source_name}")
         self._setup_logger()
@@ -155,6 +158,8 @@ class CrawlerEngine:
         self.logger.info(f"Engine initialized with session type: {self.session_type.value}")
         self.logger.info(f"   Concurrent limit: {self.concurrent_limit}")
         self.logger.info(f"   Delay range: {self.min_delay:.1f}s - {self.max_delay:.1f}s")
+        if self._use_proxy:
+            self.logger.info(f"   Proxy mode: ENABLED")
         if chunk_size > 0:
             self.logger.info(f"   Chunk size: {chunk_size} articles per file")
         if chunk_by_month:
@@ -189,6 +194,8 @@ class CrawlerEngine:
         self._full_scan_mode = False
         self._max_candidate_urls = None  # None = unlimited
         self._not_found_ids: Set[int] = set()  # Known 404 article IDs (loaded for full scan)
+        self._blocked_ids: Set[int] = set()  # IDs that failed with 429 (need retry, not skip)
+        self._blocked_dates: Set[str] = set()  # Dates (YYYY-MM-DD) with blocked URLs (date-based)
         self._watermark_id: Optional[int] = None   # Previous scan progress (sequential)
         self._watermark_date: Optional[str] = None  # Previous scan progress (date-based)
 
@@ -376,6 +383,17 @@ class CrawlerEngine:
         self.rate_limit_hit = False
         self.logger.info(f"Cooldown completed, resuming...")
 
+    async def _get_proxy(self) -> Optional[str]:
+        """Get a proxy from the global ProxyPool (lazy init on first call)."""
+        from .proxy_pool import get_proxy_pool
+        pool = await get_proxy_pool()
+        return await pool.get_proxy()
+
+    def _remove_bad_proxy(self, proxy_url: str) -> None:
+        """Remove a failed proxy from the global pool."""
+        from .proxy_pool import remove_from_pool
+        remove_from_pool(proxy_url)
+
     async def _fetch(
         self,
         url: str,
@@ -388,16 +406,23 @@ class CrawlerEngine:
                 await asyncio.sleep(wait_time)
 
         retry_count = 0
-        max_retries = settings.MAX_RETRIES
+        max_retries = settings.PROXY_MAX_RETRIES if self._use_proxy else settings.MAX_RETRIES
         got_blocked_response = False
 
         while retry_count <= max_retries:
+            proxy_url = None
+            proxy_failed = False
             try:
                 headers = self._get_headers()
                 t0 = time.monotonic()
 
+                # Per-request proxy for IP-blocked sources
+                if self._use_proxy:
+                    proxy_url = await self._get_proxy()
+                proxy_kw = {'proxy': proxy_url} if proxy_url else {}
+
                 if self.session_type == SessionType.CURL_CFFI:
-                    response = await session.get(url, headers=headers)
+                    response = await session.get(url, headers=headers, **proxy_kw)
                     self._record_latency(time.monotonic() - t0)
                     status = response.status_code
 
@@ -414,17 +439,20 @@ class CrawlerEngine:
                     elif status == 404:
                         return (None, CrawlStatus.NOT_FOUND)
                     elif status in (403, 429):
+                        proxy_failed = True
                         got_blocked_response = True
                         await self._handle_rate_limit()
                     elif status in (500, 502, 503, 504):
-                        pass  # 繼續重試
+                        proxy_failed = True  # 繼續重試
                     else:
+                        proxy_failed = True
                         return (None, CrawlStatus.BLOCKED)
                 else:
                     async with session.get(
                         url,
                         headers=headers,
-                        timeout=aiohttp.ClientTimeout(total=self.request_timeout)
+                        timeout=aiohttp.ClientTimeout(total=self.request_timeout),
+                        **proxy_kw
                     ) as response:
                         self._record_latency(time.monotonic() - t0)
                         if response.status == 200:
@@ -440,19 +468,27 @@ class CrawlerEngine:
                         elif response.status == 404:
                             return (None, CrawlStatus.NOT_FOUND)
                         elif response.status in (403, 429):
+                            proxy_failed = True
                             got_blocked_response = True
                             await self._handle_rate_limit()
                         elif response.status in (500, 502, 503, 504):
-                            pass  # 繼續重試
+                            proxy_failed = True  # 繼續重試
                         else:
+                            proxy_failed = True
                             return (None, CrawlStatus.BLOCKED)
 
             except asyncio.TimeoutError:
+                proxy_failed = True
                 self.logger.debug(f"Timeout for {url}")
                 return (None, CrawlStatus.NOT_FOUND)
 
             except Exception as e:
+                proxy_failed = True
                 self.logger.debug(f"Network error fetching {url}: {str(e)}")
+
+            finally:
+                if proxy_url and proxy_failed:
+                    self._remove_bad_proxy(proxy_url)
 
             retry_count += 1
             if retry_count <= max_retries:
@@ -481,20 +517,27 @@ class CrawlerEngine:
 
         target_delay = self._avg_latency / settings.AUTOTHROTTLE_TARGET_CONCURRENCY
         new_delay = (self._current_delay + target_delay) / 2.0
-        # Clamp to per-source hard limits
-        new_delay = max(self.min_delay, min(new_delay, self.max_delay))
+        # Clamp: respect min_delay, but allow exceeding max_delay if backoff pushed it higher
+        effective_max = max(self.max_delay, self._current_delay)
+        new_delay = max(self.min_delay, min(new_delay, effective_max))
         self._current_delay = new_delay
 
         # Add small jitter (±10%) to avoid synchronized bursts
         jitter = new_delay * 0.1
         actual = new_delay + random.uniform(-jitter, jitter)
-        actual = max(self.min_delay, min(actual, self.max_delay))
+        actual = max(self.min_delay, actual)
 
         await asyncio.sleep(actual)
 
     def _throttle_backoff(self):
-        """Increase current delay on error (403/429/5xx) responses."""
-        self._current_delay = min(self._current_delay * 2.0, self.max_delay)
+        """Increase current delay on error (403/429/5xx) responses.
+
+        Allows delay to exceed max_delay (up to 4x) on repeated 429s.
+        The normal max_delay cap prevents adaptive throttle from backing off
+        enough for aggressive rate limiters (e.g. MOEA 429s at 4s delay).
+        """
+        backoff_ceiling = self.max_delay * 4.0
+        self._current_delay = min(self._current_delay * 2.0, backoff_ceiling)
 
     async def _process_article(
         self,
@@ -957,6 +1000,8 @@ class CrawlerEngine:
 
         # Always load skip data (watermark + known 404s) regardless of overrides
         self._not_found_ids = self.registry.load_not_found_ids(source_name)
+        self._blocked_ids = self.registry.load_blocked_ids(source_name)
+        self._blocked_dates = self.registry.load_blocked_dates(source_name)
         wm = self.registry.get_scan_watermark(source_name)
         self._watermark_id = wm['last_scanned_id'] if wm and wm.get('last_scanned_id') else None
         self._watermark_date = wm['last_scanned_date'] if wm and wm.get('last_scanned_date') else None
@@ -965,6 +1010,8 @@ class CrawlerEngine:
         self.logger.info(
             f"Full scan skip data: "
             f"known_404s={len(self._not_found_ids):,}, "
+            f"blocked_ids={len(self._blocked_ids):,}, "
+            f"blocked_dates={len(self._blocked_dates):,}, "
             f"watermark_id={self._watermark_id}, watermark_date={self._watermark_date}"
         )
 
@@ -1091,8 +1138,10 @@ class CrawlerEngine:
                 batch_ids = []
                 while current_id <= end_id and len(batch_ids) < batch_size:
                     # Watermark check first (O(1), covers most IDs in re-scans)
+                    # BUT: exclude blocked IDs (429) — they were never actually fetched
                     already_scanned = (
-                        (self._watermark_id is not None and current_id <= self._watermark_id)
+                        (self._watermark_id is not None and current_id <= self._watermark_id
+                         and current_id not in self._blocked_ids)
                         or self._is_any_url_crawled(current_id)
                         or current_id in self._not_found_ids
                     )
@@ -1206,9 +1255,11 @@ class CrawlerEngine:
                 current_day_str = current_day.strftime('%Y-%m-%d')
 
                 # Watermark skip: entire day already scanned in previous run
+                # BUT: don't skip days that have blocked (429) URLs needing retry
                 day_below_watermark = (
                     self._watermark_date is not None
                     and current_day_str <= self._watermark_date
+                    and current_day_str not in self._blocked_dates
                 )
                 if day_below_watermark:
                     self.logger.debug(f"Day {date_prefix}: below watermark {self._watermark_date}, skipping")
@@ -1559,7 +1610,31 @@ class CrawlerEngine:
             self.session = await self._create_session()
 
         try:
-            total_urls_to_crawl = []
+            semaphore = asyncio.Semaphore(self.concurrent_limit)
+            batch_size = 100
+            total_crawled = 0
+
+            async def process_with_semaphore(url: str):
+                async with semaphore:
+                    await self._random_delay()
+                    return await self._process_url(url, self.session)
+
+            async def _crawl_url_batch(urls: List[str]) -> int:
+                """Crawl a batch of URLs incrementally. Returns number crawled."""
+                nonlocal total_crawled
+                crawled_in_batch = 0
+                for i in range(0, len(urls), batch_size):
+                    batch = urls[i:i + batch_size]
+                    tasks = [process_with_semaphore(url) for url in batch]
+                    await asyncio.gather(*tasks, return_exceptions=True)
+                    crawled_in_batch += len(batch)
+                    total_crawled += len(batch)
+                    self.stats['progress'] = total_crawled
+                    self.logger.info(f"Progress: {total_crawled} crawled")
+
+                    if limit > 0 and total_crawled >= limit:
+                        return crawled_in_batch
+                return crawled_in_batch
 
             if is_index:
                 # Sitemap Index: 獲取所有子 sitemap URLs
@@ -1575,7 +1650,7 @@ class CrawlerEngine:
                     sitemap_urls = self._filter_sitemaps_by_date(sitemap_urls, date_from, date_to)
                     self.logger.info(f"After date filter: {len(sitemap_urls)} sitemap files")
 
-                # 逐個處理 sitemap
+                # 逐個處理 sitemap — 下載後立即爬取，不累積 URL
                 for sub_sitemap_url in sitemap_urls:
                     url_tuples = await self._fetch_sitemap_urls(sub_sitemap_url, article_pattern)
                     if url_tuples:
@@ -1586,13 +1661,15 @@ class CrawlerEngine:
 
                         new_urls = [url for url in article_urls if not self._is_crawled(url)]
                         self.stats['skipped'] += len(article_urls) - len(new_urls)
-                        total_urls_to_crawl.extend(new_urls)
                         self.stats['sitemaps_processed'] += 1
                         self.logger.info(f"Sitemap {self.stats['sitemaps_processed']}/{len(sitemap_urls)}: "
                                        f"{total_in_sitemap} total, {len(article_urls)} in range, {len(new_urls)} new")
 
-                    if limit > 0 and len(total_urls_to_crawl) >= limit:
-                        total_urls_to_crawl = total_urls_to_crawl[:limit]
+                        # 立即爬取這批 URL（不累積到記憶體）
+                        if new_urls:
+                            await _crawl_url_batch(new_urls)
+
+                    if limit > 0 and total_crawled >= limit:
                         self.logger.info(f"Reached limit of {limit} URLs")
                         break
             else:
@@ -1607,38 +1684,20 @@ class CrawlerEngine:
 
                     new_urls = [url for url in article_urls if not self._is_crawled(url)]
                     self.stats['skipped'] += len(article_urls) - len(new_urls)
-                    total_urls_to_crawl = new_urls
                     self.stats['sitemaps_processed'] = 1
                     self.logger.info(f"Single sitemap: {total_before} total, {len(article_urls)} in range, {len(new_urls)} new")
 
-                    if limit > 0 and len(total_urls_to_crawl) > limit:
-                        total_urls_to_crawl = total_urls_to_crawl[:limit]
+                    if limit > 0:
+                        new_urls = new_urls[:limit]
                         self.logger.info(f"Applied limit of {limit} URLs")
 
-            self.logger.info(f"Total URLs to crawl: {len(total_urls_to_crawl)}")
+                    if new_urls:
+                        await _crawl_url_batch(new_urls)
 
-            if not total_urls_to_crawl:
+            self.logger.info(f"Sitemap crawl complete: {total_crawled} URLs crawled")
+
+            if total_crawled == 0:
                 self.logger.info("No new URLs to crawl")
-                return self.stats
-
-            # 爬取文章
-            self.stats['total'] = len(total_urls_to_crawl)
-
-            semaphore = asyncio.Semaphore(self.concurrent_limit)
-
-            async def process_with_semaphore(url: str):
-                async with semaphore:
-                    await self._random_delay()
-                    return await self._process_url(url, self.session)
-
-            batch_size = 100
-            for i in range(0, len(total_urls_to_crawl), batch_size):
-                batch = total_urls_to_crawl[i:i + batch_size]
-                tasks = [process_with_semaphore(url) for url in batch]
-                await asyncio.gather(*tasks, return_exceptions=True)
-
-                self.stats['progress'] = min(i + batch_size, len(total_urls_to_crawl))
-                self.logger.info(f"Progress: {self.stats['progress']}/{len(total_urls_to_crawl)}")
 
         finally:
             if need_close:
@@ -1664,16 +1723,24 @@ class CrawlerEngine:
             return []
 
         try:
-            async with self.session.get(
-                index_url,
-                headers=self._get_headers(),
-                timeout=aiohttp.ClientTimeout(total=30)
-            ) as response:
-                if response.status != 200:
-                    self.logger.error(f"Failed to fetch sitemap index: HTTP {response.status}")
+            if self.session_type == SessionType.CURL_CFFI:
+                response = await self.session.get(
+                    index_url, headers=self._get_headers()
+                )
+                if response.status_code != 200:
+                    self.logger.error(f"Failed to fetch sitemap index: HTTP {response.status_code}")
                     return []
-
-                content = await response.text()
+                content = response.text
+            else:
+                async with self.session.get(
+                    index_url,
+                    headers=self._get_headers(),
+                    timeout=aiohttp.ClientTimeout(total=30)
+                ) as response:
+                    if response.status != 200:
+                        self.logger.error(f"Failed to fetch sitemap index: HTTP {response.status}")
+                        return []
+                    content = await response.text()
 
             # 解析 sitemap URLs
             # 格式: <loc>https://...</loc>
@@ -1702,21 +1769,30 @@ class CrawlerEngine:
             List of (url, lastmod_yyyymm) tuples. lastmod_yyyymm 為 None 若無法解析。
         """
         try:
-            async with self.session.get(
-                sitemap_url,
-                headers=self._get_headers(),
-                timeout=aiohttp.ClientTimeout(total=30)
-            ) as response:
-                if response.status != 200:
-                    self.logger.warning(f"Failed to fetch sitemap {sitemap_url}: HTTP {response.status}")
+            if self.session_type == SessionType.CURL_CFFI:
+                response = await self.session.get(
+                    sitemap_url, headers=self._get_headers()
+                )
+                if response.status_code != 200:
+                    self.logger.warning(f"Failed to fetch sitemap {sitemap_url}: HTTP {response.status_code}")
                     return []
+                content_bytes = response.content
+            else:
+                async with self.session.get(
+                    sitemap_url,
+                    headers=self._get_headers(),
+                    timeout=aiohttp.ClientTimeout(total=30)
+                ) as response:
+                    if response.status != 200:
+                        self.logger.warning(f"Failed to fetch sitemap {sitemap_url}: HTTP {response.status}")
+                        return []
+                    content_bytes = await response.read()
 
-                # Handle BOM encoding
-                content_bytes = await response.read()
-                try:
-                    content = content_bytes.decode('utf-8-sig')
-                except UnicodeDecodeError:
-                    content = content_bytes.decode('utf-8', errors='replace')
+            # Handle BOM encoding
+            try:
+                content = content_bytes.decode('utf-8-sig')
+            except UnicodeDecodeError:
+                content = content_bytes.decode('utf-8', errors='replace')
 
             # 解析 <url> 區塊，提取 loc 和 lastmod
             # 格式: <url><loc>...</loc><lastmod>2024-01-07T12:03:01+08:00</lastmod>...</url>
