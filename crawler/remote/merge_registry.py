@@ -6,6 +6,7 @@ merge_registry.py - 合併兩個 crawled_registry.db
 策略：
   - crawled_articles: INSERT OR IGNORE（不覆蓋已有的）
   - not_found_articles: INSERT OR IGNORE
+  - failed_urls: 匯入遠端失敗的 URL（排除本地已成功的）
   - scan_watermarks: 取較大的 watermark（確保不倒退）
 
 Usage:
@@ -50,6 +51,15 @@ def merge_registries(source_path: str, target_path: str, dry_run: bool = False):
     source_nf = target_conn.execute("SELECT COUNT(*) FROM source_db.not_found_articles").fetchone()[0]
     print(f"not_found_articles — target: {target_nf:,}, source: {source_nf:,}")
 
+    # Check if failed_urls table exists in source
+    has_failed = target_conn.execute(
+        "SELECT COUNT(*) FROM source_db.sqlite_master WHERE type='table' AND name='failed_urls'"
+    ).fetchone()[0]
+    if has_failed:
+        target_failed = target_conn.execute("SELECT COUNT(*) FROM failed_urls").fetchone()[0]
+        source_failed = target_conn.execute("SELECT COUNT(*) FROM source_db.failed_urls").fetchone()[0]
+        print(f"failed_urls — target: {target_failed:,}, source: {source_failed:,}")
+
     if dry_run:
         print("\n[DRY RUN] No changes made.")
         target_conn.close()
@@ -70,6 +80,17 @@ def merge_registries(source_path: str, target_path: str, dry_run: bool = False):
     """)
     nf_inserted = result.rowcount
     print(f"not_found_articles: inserted {nf_inserted:,} new rows")
+
+    # --- Merge failed_urls (skip URLs already successfully crawled in target) ---
+    if has_failed:
+        result = target_conn.execute("""
+            INSERT OR IGNORE INTO failed_urls (url, source_id, error_type, error_message, failed_at, retry_count)
+            SELECT f.url, f.source_id, f.error_type, f.error_message, f.failed_at, f.retry_count
+            FROM source_db.failed_urls f
+            WHERE f.url NOT IN (SELECT url FROM crawled_articles)
+        """)
+        failed_inserted = result.rowcount
+        print(f"failed_urls: inserted {failed_inserted:,} new rows (skipped already-crawled)")
 
     # --- Merge scan_watermarks (take the larger value) ---
     source_watermarks = target_conn.execute(
