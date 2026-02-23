@@ -100,32 +100,16 @@
 
 ## 目前開發重點
 
-### 已完成（2026-02）
+### 已完成
 
-✅ **Dashboard 穩定性 + Watermark Skip Bug 修復**（stderr→file、blocked URLs 不再被跳過、sitemap OOM、throttle ceiling）
-✅ **Subprocess 穩定性 + Auto-Restart**（stderr pipe buffer 修復、MOEA auto-restart、自動化監控迴圈）
-✅ **Dashboard Bug Fixes + Full Scan 穩定性**（MOEA 限速修復、scan_start/scan_end 初始化、task cleanup）
-✅ **UDN Sitemap Backfill + curl_cffi 清理**（sitemap mode 串接、fail fast、shim 移除）
-✅ **Qdrant Profile 切換系統**（online/offline 環境切換）
-✅ **E2E 驗證基礎設施**（MCP wrapper、Streaming 改進、E2E 測試框架）
-✅ **Search Mode 優化**（統一搜尋 UX、前端 UI/UX 改進）
-✅ **M0 Indexing 資料工廠**（Crawler 7 Parser + Subprocess 隔離 + Indexing Pipeline）
-✅ Reasoning 系統（Actor-Critic、4 個 agents、幻覺防護）
-✅ Deep Research（時間範圍、澄清、引用）
-✅ XGBoost ML Ranking（Phase A/B/C）
-✅ BM25 + MMR 演算法
-✅ Analytics 基礎設施（SQLite + PostgreSQL）
-✅ Tier 6 API 整合（Stock, Weather, Wikipedia）
-✅ Free Conversation Mode（Deep Research 後續 Q&A）
-✅ Phase 2 CoV（Chain of Verification 事實查核）
+Track A-T 共 20 個完成項目，涵蓋 Analytics、BM25、MMR、Reasoning、XGBoost、Crawler Subprocess、Dashboard 穩定性、三機協作等。
 
 **詳細資訊**：見 `.claude/COMPLETED_WORK.md`
 
 ### 目前工作
 
-🔄 **全量 Backfill**：LTN/CNA/einfo running、MOEA targeted rescan、Chinatimes/UDN sitemap mode、ESG BT completed
-🔄 **Blocked URL 回補**：全 source 需跑一輪 full_scan 回補被 watermark skip 誤跳的 blocked URLs
-🔄 **效能優化**：延遲分析、token 減少、引用 UX 改進
+🔄 **三機 Backfill 收尾**：GCP UDN 完成 → Chinatimes 雙機協作中，桌機=Chinatimes sitemap + einfo，筆電=待 MOEA+UDN sitemap
+🔄 **效能優化**（Backfill 完成後）：Reasoning 延遲分析、token 減少
 
 **規劃**：見 `.claude/NEXT_STEPS.md` 與 `.claude/CONTEXT.md`
 
@@ -133,7 +117,19 @@
 
 ## 重要開發規則
 
-### ### 以盡速debug為前提，不可以Silent Fail
+### Debug 與問題診斷：先讀 Memory
+
+**關鍵**：被要求 debug 或診斷問題時，**必須**先讀取 memory 相關檔案，再開始調查。
+
+**流程**：
+1. 先讀 `~/.claude/projects/C--users-user-nlweb/memory/MEMORY.md`（專案 memory）
+2. 再讀 `~/.claude/memory/lessons-learned.md`（歷史問題/解法記錄）
+3. 確認是否為已知問題或類似 pattern
+4. 若為新問題，才開始從程式碼調查
+
+**為什麼**：過去許多 bug 有重複 pattern（如 Windows pipe buffer、watermark skip、curl_cffi fallback）。先讀 memory 可避免重複踩坑，大幅加速 debug。
+
+### 以盡速debug為前提，不可以Silent Fail
 
  **關鍵**：讓錯誤情況自然浮現，不可以silently catch errors/exceptions
 

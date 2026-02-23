@@ -2,7 +2,7 @@
 
 ## 概述
 
-桌機關機期間（春節及之後），使用家用筆電 24/7 運行 crawler + dashboard。
+三機協作分散爬取負載。筆電負責中量任務（UDN sitemap gap fill + MOEA backfill）。
 筆電只負責爬取（crawler-only），不跑 indexing pipeline。
 TSV 收集後回桌機跑 indexing → Qdrant。
 
@@ -121,20 +121,14 @@ Win+R → shell:startup → 貼入 start-dashboard.bat 的捷徑
 **注意**：`start-dashboard.bat` 裡的路徑寫的是 `C:\Users\User\`，
 筆電上要改成 `C:\Users\Mounai\`。
 
-### 啟動 Full Scan
+### 啟動任務
 
 ```powershell
-# LTN（填補桌機與 GCP 之間的空隙）
-Invoke-RestMethod -Method POST -Uri "http://localhost:8001/api/indexing/fullscan/start" -ContentType "application/json" -Body '{"sources":["ltn"],"overrides":{"ltn":{"start_id":4887000,"end_id":7000000}}}'
+# Step 1: MOEA backfill — 填補 2024-01 ~ 2025-03 缺口（先跑，2-4 小時）
+Invoke-RestMethod -Method POST -Uri "http://localhost:8001/api/indexing/fullscan/start" -ContentType "application/json" -Body '{"sources":["moea"],"start_id":100000,"end_id":122000}'
 
-# CNA（填補桌機與 GCP 之間）
-Invoke-RestMethod -Method POST -Uri "http://localhost:8001/api/indexing/fullscan/start" -ContentType "application/json" -Body '{"sources":["cna"],"overrides":{"cna":{"start_date":"2024-12-04","end_date":"2025-05-31"}}}'
-
-# UDN（桌機到 8.2M，GCP 從 8.8M）
-Invoke-RestMethod -Method POST -Uri "http://localhost:8001/api/indexing/fullscan/start" -ContentType "application/json" -Body '{"sources":["udn"],"overrides":{"udn":{"start_id":8217000,"end_id":8800000}}}'
-
-# Chinatimes（桌機到 2024-02-22，繼續往後）
-Invoke-RestMethod -Method POST -Uri "http://localhost:8001/api/indexing/fullscan/start" -ContentType "application/json" -Body '{"sources":["chinatimes"],"overrides":{"chinatimes":{"start_date":"2024-02-23"}}}'
+# Step 2: UDN sitemap — 填補 2024-10 ~ 2025-02 缺口（MOEA 完成後再跑）
+Invoke-RestMethod -Method POST -Uri "http://localhost:8001/api/indexing/crawler/start" -ContentType "application/json" -Body '{"source":"udn","mode":"sitemap","date_from":"202410","date_to":"202502"}'
 ```
 
 ### 停止 Crawler
@@ -159,30 +153,33 @@ Get-Process python | Select-Object Name, WorkingSet64
 
 ---
 
-## 分割範圍（三機協作）
+## 分割範圍（三機協作，2026-02-13 更新）
 
 ### 總覽
 
+**重要**：Sitemap 模式從**最新往最舊**處理（newest → oldest）。
+
 ```
-桌機 watermark        筆電範圍              GCP 範圍
-─────────────────    ─────────────────    ─────────────────
-LTN:   4,886,777 →  4,887,000 → 7,000,000  → 7,000,000 → 9,500,000
-CNA:   2024-12-03 →  2024-12-04 → 2025-05-31 → 2025-06-01 → 2026-02-12
-UDN:   8,216,842 →  8,217,000 → 8,800,000  → 8,800,000 → 9,400,000
-MOEA:  121,298   →  （略，量太少）         → 121,300 → 121,900
-Chinatimes: 2024-02-22 → 2024-02-23 → 開放  → （不跑）
+桌機（主力）               筆電（中量）              GCP（輕量）
+─────────────────        ─────────────────        ─────────────────
+Chinatimes sitemap       MOEA backfill             UDN sitemap Phase 1
+  ~15M 篇                  ID 100K → 122K            2025-03 → 2025-07
+einfo full_scan            ≈500 篇                   ~150 篇/分鐘, 97% hit
+  238K → 270K（proxy）   UDN sitemap               UDN sitemap Phase 2
+LTN ✅ 完成                 2024-10 → 2025-02         2024-01 → 2024-09
+  693K 篇                   gap fill                  cron 自動接力
+CNA ✅ 完成
+  242K 篇
 ```
 
-### Source 排程建議
+### 筆電 Source 排程
 
-| 順序 | Source | 範圍 | 說明 |
-|------|--------|------|------|
-| 1 | **LTN** | 4,887,000 → 7,000,000 | ~60% hit rate，產量最高，已在跑 |
-| 2 | **CNA** | 2024-12-04 → 2025-05-31 | date-based，接著跑 |
-| 3 | **Chinatimes** | 2024-02-23 → 開放 | 高產量（月 ~10K 篇） |
-| 4 | **UDN** | 8,217,000 → 8,800,000 | 或改用 sitemap |
+| 順序 | Source | 範圍 | 預估量 | 說明 |
+|------|--------|------|--------|------|
+| 1 | **MOEA backfill** | ID 100,000 → 122,000 | ~500 篇 | 小量，2-4 小時完成 |
+| 2 | **UDN sitemap** | 2024-10 → 2025-02 | ~30K 篇 | 100% hit rate，MOEA 完成後再跑 |
 
-一個跑完再切下一個。
+一個跑完再切下一個。一次只跑一個 source。
 
 ---
 
@@ -218,7 +215,58 @@ Win+R → netplwiz → 取消勾選「必須輸入使用者名稱和密碼」→
 
 ## 遠端存取
 
-### Chrome Remote Desktop
+### SSH（主要監控方式）
+
+桌機已設定 SSH key 免密碼登入，可從 Claude Code 直接監控。
+
+**連線資訊**：
+| 項目 | 值 |
+|------|-----|
+| IP | `192.168.1.109`（區網） |
+| 使用者 | `mounai` |
+| 認證 | ED25519 key（桌機 `~/.ssh/id_ed25519`） |
+| 公鑰位置 | 筆電 `C:\ProgramData\ssh\administrators_authorized_keys` |
+
+**筆電 SSH Server 設定**（已完成）：
+```powershell
+# 管理員 PowerShell
+Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
+Start-Service sshd
+Set-Service -Name sshd -StartupType Automatic
+```
+
+**注意**：筆電使用者有管理員權限，Windows OpenSSH 會忽略 `~\.ssh\authorized_keys`，
+必須用 `C:\ProgramData\ssh\administrators_authorized_keys`。
+
+### SSH 監控指令（從桌機執行）
+
+```bash
+# 測試連線
+ssh mounai@192.168.1.109 "echo connected && hostname"
+
+# 查 Full Scan 狀態
+ssh mounai@192.168.1.109 "curl -s http://localhost:8001/api/indexing/fullscan/status"
+
+# 查 Crawler 狀態
+ssh mounai@192.168.1.109 "curl -s http://localhost:8001/api/indexing/crawler/status"
+
+# 查 Python 程序
+ssh mounai@192.168.1.109 "tasklist | findstr python"
+
+# 查記憶體使用
+ssh mounai@192.168.1.109 "powershell -c \"Get-Process python | Select-Object Name, WorkingSet64\""
+
+# 查 TSV 產出
+ssh mounai@192.168.1.109 "dir C:\Users\Mounai\nlweb\data\crawler\articles\"
+```
+
+**IP 變動時**：筆電 IP 由 DHCP 分配，可能會變。重新確認：
+```powershell
+# 在筆電上
+ipconfig
+```
+
+### Chrome Remote Desktop（備用 GUI 存取）
 
 1. 筆電安裝 Chrome + Chrome Remote Desktop（remotedesktop.google.com）
 2. 設定遠端存取（設定 PIN）
@@ -226,6 +274,13 @@ Win+R → netplwiz → 取消勾選「必須輸入使用者名稱和密碼」→
 
 ### 日常巡檢（每天 2 分鐘）
 
+**方式 A：SSH（推薦，從桌機 Claude Code 直接查）**
+```bash
+ssh mounai@192.168.1.109 "curl -s http://localhost:8001/api/indexing/fullscan/status"
+```
+確認 running 任務的 progress 持續增長、success 數字正常。
+
+**方式 B：Chrome Remote Desktop（需要 GUI 操作時）**
 1. Chrome Remote Desktop 連進筆電
 2. 開 `http://localhost:8001` 看 Dashboard
 3. 確認 Found 數字持續增長

@@ -2,6 +2,161 @@
 
 ## 最近里程碑
 
+### 2026-02-15：Chinatimes 雙機協作 + Sitemap Date Filter 修復 ✅
+
+**3 項改進**
+
+1. **Chinatimes 雙機協作部署**
+   - `engine.py` `run_sitemap()` 新增 `sitemap_offset` + `sitemap_count` 參數
+   - `subprocess_runner.py` forward 新參數
+   - `scripts/gcp-chinatimes-sitemap.sh` 自管理 long-running 腳本
+   - GCP 從 sub-sitemap #980 往回跑，桌機從 #1 往前跑
+   - 適應性批次大小：空區間 x3（max 200）、密集區 /2（min 5）
+   - State file crash recovery、coverage 報告、PID file
+   - 停止條件：距桌機 50 sub-sitemap 或連續 3 次 task failed
+
+2. **Sitemap Date Filter Bug 修復**（`engine.py` `_filter_article_urls_by_date()`）
+   - **根因**：Chinatimes lastmod 日期為 sitemap 重新產生日期（2024-02-27），不是文章發布日期
+   - 2010 年文章的 lastmod=2024 → 通過 date_from=202401 filter → 錯誤爬取
+   - **修復**：改為 URL 日期優先（從 URL 提取 YYYYMMDD），lastmod 僅作 fallback
+   - 修復後測試：5 個 2010-era sub-sitemap 正確 exclude 全部 44,364 篇，0 new articles
+
+3. **桌機 Chinatimes 重啟**
+   - 停止舊 task（53K success, 298K skipped, 23 sitemaps）
+   - 用 fixed code 重啟，已爬文章快速 skip（~30K/min）
+   - GCP UDN Phase 2 + Retry 已全部完成
+
+---
+
+### 2026-02-13：LTN/CNA 完成 + GCP Phase 2 自動接力 + 監控 Agent 清理 ✅
+
+**4 項改進**
+
+1. **LTN/CNA 全量掃描完成**
+   - LTN：693,273 篇，watermark 5,342,046（第一輪完成）
+   - CNA：242,011 篇，watermark 2026-02-12（第一輪完成）
+   - 桌機轉至 Chinatimes sitemap + einfo full_scan
+
+2. **GCP Phase 2 自動接力腳本**（`scripts/gcp-udn-next.sh`）
+   - 每 2 小時 cron 檢查 2025-03~07 月文章數 > 27K
+   - 全部達標 → 自動 API 啟動 UDN sitemap 202401→202409
+   - 觸發後自我從 cron 移除
+   - 已部署至 GCP 並驗證（test script + cron 設定完成）
+
+3. **監控 Agent 停止**
+   - `scripts/crawler-monitor/monitor-loop.sh` 已停止
+   - 該 Agent 曾 41 次重啟 UDN、19 次重啟 Dashboard（違反手動停止意圖）
+   - monitoring-log.md 清理：59 次 check（268KB）→ 12 次有效 check（60KB）
+
+4. **UDN 覆蓋規劃修正**
+   - 確認 sitemap newest→oldest 處理順序
+   - 三機 UDN 覆蓋：桌機 2025-08+（完成）→ GCP 2025-03~07（Phase 1）+ 2024-01~09（Phase 2）→ 筆電 2024-10~2025-02
+
+---
+
+### 2026-02-12（深夜）：GCP UDN Sitemap 啟動 + overrides Bug 修復 ✅
+
+**3 項改進**
+
+1. **GCP UDN sitemap 啟動**
+   - 範圍 2025-03 → 2025-07（5 個月缺口）
+   - 速率 ~150 篇/分鐘，hit rate 97%
+   - GCP Dashboard 重啟（用 `/tmp/start-dash.sh` 腳本解決工作目錄問題）
+
+2. **overrides 格式 bug 修復**（3 個檔案）
+   - `dashboard_api.py` 完全不讀 `overrides` 欄位（0 references）
+   - `start_id`/`end_id` 必須放 JSON body 最外層
+   - 修復：`crawler-deployment-prompt.md`、`laptop-crawler-spec.md`、`gcp-crawler-spec.md`
+   - 影響：MOEA 會掃 0 篇（watermark 122,001 > end 122,000）、einfo 範圍錯
+
+3. **merge_registry.py 更新至 GCP**
+   - 確認桌機版已有 `failed_urls` 合併邏輯（第 84-93 行）
+   - GCP 版是舊的（tar 上傳時沒有此功能）→ scp 更新
+
+---
+
+### 2026-02-12（晚）：三機協作規劃 + merge_registry 強化 ✅
+
+**3 項改進**
+
+1. **三機分工規劃與部署文件**（`docs/crawler-deployment-prompt.md`）
+   - 桌機：LTN/CNA/einfo 收尾 → 全力 Chinatimes
+   - 筆電：MOEA backfill → UDN sitemap 202410→202502
+   - GCP：UDN sitemap 202503→202507
+   - 各 source 覆蓋缺口總覽、桌機 checkpoint 狀態
+
+2. **merge_registry.py 支援 failed_urls**（`crawler/remote/merge_registry.py`）
+   - `failed_urls` 表合併，排除本地已成功的 URL
+   - 遠端機器的 transient failures 可統一收回桌機 retry
+
+3. **Tasks 清理與重整**
+   - 移除 UDN/Chinatimes/ESG_BT 歷史 tasks（57 筆）
+   - Dashboard kill 導致 tasks.json 截斷 → 建立乾淨空檔案
+   - Watermarks 完好無損（crawled_registry.db 不受影響）
+
+---
+
+### 2026-02-12：Dashboard 穩定性 + Watermark Skip Bug 修復 + Sitemap OOM 修復 ✅
+
+**6 項重大修復**
+
+1. **Watermark Skip Bug — Blocked (429) URLs 被誤跳過**（`engine.py`, `crawled_registry.py`）
+   - **根因**：watermark skip 條件 `current_id <= watermark_id` 將所有低於 watermark 的 ID 視為「已掃描」
+   - 但 HTTP 429 blocked URLs **從未被實際抓取**，不應被跳過
+   - **影響**：全 7 source 共 4,581 blocked URLs（chinatimes 1,726, MOEA 1,411, CNA 866, einfo 332, UDN 97, LTN 81, ESG BT 69）
+   - **修復**：`load_blocked_ids()` + `load_blocked_dates()` 從 `failed_urls` 載入 blocked ID/日期集合
+   - Sequential skip: `current_id <= watermark AND current_id NOT IN blocked_ids`
+   - Date-based skip: `current_day <= watermark AND current_day NOT IN blocked_dates`
+   - **驗證**：MOEA 重掃 119K-122K 從 0 success（全跳過）→ 22 success / 40 processed = 55% hit rate
+
+2. **stderr→file + Event Loop Starvation 修復**（`dashboard_api.py`）
+   - **根因**：12 concurrent asyncio pipe readers（6 stdout + 6 stderr）搶佔 event loop，HTTP handlers 永遠排不到
+   - **修復**：stderr 改為 file redirect（`stderr=stderr_log_file`），完全不經 event loop
+   - Dashboard 穩定運行 4+ 小時、6 concurrent subprocesses，API 持續回應
+
+3. **Adaptive Throttle Backoff Ceiling 修復**（`engine.py`）
+   - **根因**：`_throttle_backoff()` 上限為 `max_delay`（MOEA=4.0s），429 反覆觸發但 delay 不再增加
+   - **修復**：允許 backoff 至 `max_delay * 4`，`_adaptive_delay()` 尊重 elevated delay
+   - MOEA 後續 tasks 全部 blocked=0
+
+4. **Sitemap Incremental Processing — OOM 修復**（`engine.py`）
+   - **根因**：`run_sitemap()` 下載所有 sub-sitemaps 後累積全部 URLs 到記憶體（chinatimes ~15M URLs → 870MB OOM）
+   - **修復**：逐 sub-sitemap 處理（download → crawl → discard → next），記憶體 ~130MB
+
+5. **Windows Pipe Hang on Force Kill**（`dashboard_api.py`）
+   - **根因**：Windows `proc.kill()` 不會關閉 pipes，`async for line in proc.stdout` 永遠 hang
+   - **修復**：`_force_kill_after()` 在 kill 後 cancel `task._reader_task`
+
+6. **Qdrant Stats Non-blocking**（`dashboard_api.py`）
+   - **根因**：`_get_qdrant_stats()` 用 sync QdrantClient 阻塞 event loop 5s
+   - **修復**：`loop.run_in_executor()` 移至 thread pool
+
+---
+
+### 2026-02-12（早）：整夜監控 + stderr Pipe Buffer 修復 + Auto-Restart ✅
+
+**3 項改進**
+
+1. **stderr Pipe Buffer 死鎖修復**（`dashboard_api.py`）
+   - **根因**：`_run_crawler_subprocess()` 用 `stderr=asyncio.subprocess.PIPE` 但從未讀取
+   - 快速爬蟲填滿 Windows 65KB pipe buffer → subprocess 阻塞 → 計數器凍結
+   - 整夜發生 9 次凍結，第 8 次 check 找到 root cause
+   - **修復**：新增 `_drain_stderr()` async task 與 stdout reader 同時運行
+   - 修復後 72+ 分鐘零凍結（後續進一步改為 stderr→file redirect）
+
+2. **MOEA Auto-Restart 機制**（`dashboard_api.py`）
+   - `AUTO_RESTART_DELAY = {"moea": 900}` — early_stop 後 15 分鐘自動重啟
+   - `_delayed_restart()`: 等待 → 檢查無同 source running → `_auto_resume_task()`
+   - 解決 MOEA 因 rate limit early_stop 後需手動重啟的問題
+
+3. **自動化監控迴圈**（`scripts/crawler-monitor/`）
+   - `monitor-loop.sh`: 外部 bash loop，每 30 分鐘啟動新 Claude CLI session
+   - `monitoring-plan.md`: 356 行完整 prompt（角色定義、6 source 參考、異常規則、修復流程）
+   - `monitoring-log.md`: 持久化 log（12 次 check，01:04→09:48）
+   - ESG BT backfill 確認完成
+
+---
+
 ### 2026-02-11：Dashboard Bug Fixes + Full Scan 穩定性 ✅
 
 **4 項修復**
@@ -259,7 +414,7 @@
 | `ltn` | 自由時報 | Sequential ID | AIOHTTP |
 | `udn` | 聯合報 | Sequential ID | AIOHTTP |
 | `cna` | 中央社 | Date-based ID | CURL_CFFI |
-| `moea` | 經濟部 | List-based | AIOHTTP |
+| `moea` | 經濟部 | Sequential ID | CURL_CFFI |
 | `einfo` | 環境資訊中心 | Sequential ID | CURL_CFFI |
 | `esg_businesstoday` | 今周刊 ESG | Date-based ID | CURL_CFFI |
 | `chinatimes` | 中國時報 | Date-based ID (14位) | CURL_CFFI |
@@ -444,66 +599,18 @@ python -m indexing.pipeline data.tsv --site udn --resume
 
 ---
 
-## 已完成功能
-
-### 核心搜尋
-- ✅ 多輪對話支援
-- ✅ OAuth 認證（Google/Facebook/Microsoft/GitHub）
-- ✅ SSE 即時串流
-- ✅ 多種搜尋模式（list/summarize/generate）
-- ✅ Query rewrite
-- ✅ Qdrant 向量搜尋
-- ✅ LLM-based ranking
-
-### Analytics & Monitoring
-- ✅ PostgreSQL analytics database
-- ✅ 查詢日誌與完整生命週期追蹤
-- ✅ 使用者互動追蹤
-- ✅ 多點擊支援
-- ✅ Parent Query ID 連結
-- ✅ Analytics 儀表板
-- ✅ CSV 匯出
-
----
-
-## 目前重點
-
-### 2026-01：Reasoning 系統強化 + Production 優化
-
-所有主要 tracks（A-F）完成，新增 Reasoning 強化功能：
-- ✅ **Free Conversation Mode**：Deep Research 報告後續 Q&A
-- ✅ **Phase 2 CoV**：Chain of Verification 事實查核
-- **Production 監控**：追蹤 reasoning 系統效能指標
-- **UX 迭代**：根據使用者回饋精煉澄清流程
-- **引用品質**：改善來源連結與格式
-- **成本優化**：分析並減少 agent prompt token 使用
-
----
-
-## Bug 修復
-
-### Foreign Key 約束違規（已解決）
-- ✅ Async queue race condition → log_query_start() 改同步
-- ✅ Cache 提前返回 → 分析移至 cache 檢查前
-- ✅ 缺少 parent_query_id 欄位 → 手動 ALTER TABLE
-- ✅ UUID 後綴不一致 → 改用簡單 timestamp 格式
-
-### 點擊追蹤問題（已解決）
-- ✅ 多點擊支援 → 新增 auxclick 和 contextmenu 監聽
-- ✅ Batch handler 缺少點擊 → 新增 result_clicked case
-- ✅ Decimal 序列化 → 轉換為 float
-
----
-
 ## 部署歷史
 
 | 日期 | 版本 | 說明 | 狀態 |
 |------|------|------|------|
+| 2026-02 | Crawler v2.0 | 三機協作 + Subprocess 隔離 + Dashboard | ✅ 已部署 |
 | 2026-01 | Tier 6 API | Knowledge Enrichment APIs | ✅ 已部署 |
 | 2025-12 | Reasoning v1.0 | Actor-Critic + 4 Agents | ✅ 已部署 |
 | 2025-12 | XGBoost v1.0 | ML Ranking Phase C | ✅ 已部署 |
 | 2025-11 | Analytics v2.0 | Parent Query ID + 多點擊 | ✅ 已部署 |
 
+**完整已完成 Track 記錄**：見 `.claude/COMPLETED_WORK.md`
+
 ---
 
-*更新：2026-02-12*
+*更新：2026-02-23*

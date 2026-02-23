@@ -123,6 +123,8 @@ async def main(params: dict, task_id: str, signal_dir: str):
                 date_from=params.get("date_from"),
                 date_to=params.get("date_to"),
                 limit=params.get("limit", 0),
+                sitemap_offset=params.get("sitemap_offset", 0),
+                sitemap_count=params.get("sitemap_count", 0),
             )
         else:
             _send({"type": "error", "error": f"Unknown mode: {mode}"})

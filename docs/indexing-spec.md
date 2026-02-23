@@ -181,11 +181,14 @@ curl -X POST http://localhost:8001/api/indexing/crawler/start \
 # date_from: 起始年月（YYYYMM），過濾 sitemap 中的 URL
 # date_to: 結束年月（YYYYMM），可選
 # limit: 限制爬取數量（0=不限），測試用
+# sitemap_offset: 從第幾個 sub-sitemap 開始（0-based，多機分工用）
+# sitemap_count: 處理幾個 sub-sitemap（0=全部，多機分工用）
 ```
 
-**適用來源**：UDN（有完整 sitemap index，343 個子 sitemap covering 2024+，~99 萬 URL）。
-**優勢**：UDN full_scan 命中率僅 6%（94% ID 為空洞），sitemap 命中率 100%，效率提升 ~16 倍。
-**引擎實作**：`engine.run_sitemap()` 支援 date filtering、dedup（跳過已爬 URL）、batch processing（每批 100 URL）。
+**適用來源**：UDN（343 個子 sitemap，~99 萬 URL）、Chinatimes（1000 個子 sitemap，~15M URL）。
+**優勢**：UDN full_scan 命中率僅 6%，sitemap 100%，效率 ~16 倍。Chinatimes sitemap 避免 Cloudflare 封鎖。
+**引擎實作**：`engine.run_sitemap()` 支援 date filtering、dedup、batch processing、multi-machine offset/count slicing。
+**日期過濾**：優先從 URL 提取發布日期（YYYYMMDD），lastmod 僅作 fallback（Chinatimes lastmod 不可靠）。
 
 ### 來源特殊處理
 
@@ -1163,6 +1166,35 @@ CREATE TABLE IF NOT EXISTS not_found_articles (
 ```
 
 **預期效果**：UDN 重掃 7.8M→9.3M，若 watermark=9.0M，則 7.8M~9.0M 全部秒跳過（int 比較，無 HTTP request）。重掃時 blocked URLs 不會被跳過，可透過正常 full_scan 流程自動回補。
+
+#### 多機協作與資料合併
+
+多台機器（桌機/筆電/GCP）分散爬取時，各機器產出獨立的 `crawled_registry.db` 和 `articles/` TSV 檔案。完成後需合併回桌機。
+
+**合併工具**：`crawler/remote/merge_registry.py`
+
+```bash
+# 合併遠端 registry 到本地（dry-run 預覽）
+python crawler/remote/merge_registry.py <remote-registry.db> data/crawler/crawled_registry.db --dry-run
+
+# 實際合併
+python crawler/remote/merge_registry.py <remote-registry.db> data/crawler/crawled_registry.db
+```
+
+**合併策略**：
+
+| Table | 策略 | 說明 |
+|-------|------|------|
+| `crawled_articles` | INSERT OR IGNORE | 不覆蓋已有的成功記錄 |
+| `not_found_articles` | INSERT OR IGNORE | 不重複記錄 404 |
+| `failed_urls` | INSERT OR IGNORE + 排除已成功 | 遠端失敗但本地已成功的 URL 不匯入 |
+| `scan_watermarks` | 取較大值 | 確保 watermark 不倒退 |
+
+**Retry 流程**：合併後在桌機執行 `retry` mode，統一重試所有機器的暫時性失敗（timeout、blocked 等）。
+
+**部署指南**：`docs/crawler-deployment-prompt.md`（筆電/GCP 操作步驟）
+
+---
 
 #### Qdrant 儲存估算
 

@@ -39,9 +39,9 @@
 
 | 要修改 | 先讀 |
 |--------|------|
-| Reasoning 相關 | `docs/algo/reasoning_system.md` |
-| Ranking 相關 | `docs/algo/ranking_pipeline.md` |
-| 查詢分析相關 | `docs/algo/query_analysis.md` |
+| Reasoning 相關 | `.claude/systemmap.md` Reasoning 章節 |
+| Ranking 相關 | `algo/BM25_implementation.md`、`algo/XGBoost_implementation.md`、`algo/MMR_implementation.md` |
+| 查詢分析相關 | `.claude/systemmap.md` Pre-Retrieval 章節 |
 | API 相關 | `.claude/API_ENDPOINTS.md` |
 | 資料流 | `.claude/systemmap.md` 的 Data Flow 章節 |
 
@@ -54,7 +54,7 @@
 當需要了解某功能時，依序執行：
 
 ```
-1. 讀設計文件 → docs/algo/*.md
+1. 讀設計文件 → algo/*.md
          ↓
 2. 讀模組總覽 → .claude/systemmap.md 對應段落
          ↓

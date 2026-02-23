@@ -4,6 +4,37 @@
 
 ---
 
+## ✅ Track T：Chinatimes 雙機協作 + Date Filter 修復（2026-02-15）
+
+**目標**：桌機+GCP 雙機夾擊加速 Chinatimes sitemap backfill
+
+### 修改檔案
+
+| 檔案 | 改動 |
+|------|------|
+| `crawler/core/engine.py` | `run_sitemap()` +`sitemap_offset`/`sitemap_count` 參數 + date filter 修復 |
+| `crawler/subprocess_runner.py` | Forward 2 新參數 |
+| `scripts/gcp-chinatimes-sitemap.sh` | GCP 自管理腳本（新建） |
+| `docs/gcp-crawler-spec.md` | 工作分配更新 |
+
+### Date Filter Bug 修復
+
+- **根因**：`_filter_article_urls_by_date()` 優先使用 lastmod 日期
+- Chinatimes lastmod = sitemap 重新產生日期（2024-02-27），非文章發布日期
+- 2010 年文章的 lastmod=2024 → 通過 `date_from=202401` filter
+- **修復**：改為 URL 日期優先（提取 YYYYMMDD），lastmod 僅作 fallback
+- **驗證**：5 個 2010-era sub-sitemap 正確 exclude 44,364 篇
+
+### GCP 腳本設計
+
+- 從 sub-sitemap #980 往回跑（桌機從 #1 往前）
+- 適應性批次：空區間 x3（max 200）、密集區 /2（min 5）
+- State file crash recovery（`chinatimes_gcp_state.json`）
+- 停止條件：距桌機 50 sub-sitemap 或連續 3 次 failed
+- Coverage 報告（每批次查詢 registry 月份分佈）
+
+---
+
 ## ✅ Track A：Analytics 日誌基礎設施
 
 **成就**：完整 analytics 系統部署至 production，含 PostgreSQL 後端、Schema v2、parent query ID 連結。
@@ -408,6 +439,100 @@ python -m indexing.pipeline data.tsv --site udn --resume
   2. `_kill_orphan_process(pid)`（Windows: `taskkill /F /PID`, Unix: `SIGTERM`）
   3. 標記 failed → 收集 auto-resume 候選
 - **結果**：重啟後先 kill 舊 subprocess，再從 checkpoint 啟動新的，不會重複
+
+---
+
+## ✅ Track U：三機協作 + merge_registry 強化（2026-02-12）
+
+**目標**：規劃三機分工 backfill，強化跨機器資料合併工具
+
+**已建置**：
+
+1. **三機分工規劃**（`docs/crawler-deployment-prompt.md`）
+   - 桌機：LTN/CNA/einfo 收尾 → Chinatimes 全力
+   - 筆電：UDN sitemap（65K gap）+ MOEA backfill（500 篇）
+   - GCP：暫緩（einfo 已在桌機用 proxy pool 處理）
+   - 完整部署指南含環境設定、API 指令、監控與異常排除
+
+2. **merge_registry.py 支援 failed_urls**（`crawler/remote/merge_registry.py`）
+   - 新增 `failed_urls` 表合併：`INSERT OR IGNORE ... WHERE url NOT IN (SELECT url FROM crawled_articles)`
+   - 表存在性檢查（`sqlite_master`），相容無 `failed_urls` 表的舊 DB
+   - pre-merge stats 顯示 failed_urls 數量
+   - 遠端 transient failures 統一收回桌機 retry
+
+3. **Tasks 清理**
+   - 移除 UDN/Chinatimes/ESG_BT 歷史 tasks
+   - 重建乾淨 tasks.json，watermarks 不受影響
+
+---
+
+## ✅ Track S：Dashboard 穩定性 + Watermark Skip Bug 修復（2026-02-12）
+
+**目標**：修復 Dashboard event loop 阻塞、watermark skip 誤殺 blocked URLs、sitemap OOM
+
+**已建置**：
+
+1. **Watermark Skip Bug 修復**（`engine.py`, `crawled_registry.py`）
+   - `load_blocked_ids(source_id)`: 從 `failed_urls` 提取 blocked article IDs（通用 URL regex 支援全 7 source）
+   - `load_blocked_dates(source_id)`: 提取 blocked URLs 的日期集合（date-based sources）
+   - Sequential skip 條件加入 `AND current_id NOT IN blocked_ids`
+   - Date-based skip 條件加入 `AND current_day NOT IN blocked_dates`
+   - 影響：4,581 blocked URLs 不再被誤跳過
+
+2. **stderr→file Event Loop 修復**（`dashboard_api.py`）
+   - `stderr=asyncio.subprocess.PIPE` → `stderr=stderr_log_file`（file redirect）
+   - 12 concurrent pipe readers → 6（只保留 stdout），全部低頻
+   - Dashboard 穩定 4+ 小時、6 concurrent subprocesses
+
+3. **Adaptive Throttle Backoff Ceiling**（`engine.py`）
+   - `_throttle_backoff()`: 上限從 `max_delay` 提升至 `max_delay * 4`
+   - `_adaptive_delay()`: effective_max = max(max_delay, current_delay)
+   - 解決 MOEA 429 無效 backoff 迴圈
+
+4. **Sitemap Incremental Processing**（`engine.py`）
+   - `run_sitemap()` 重構：逐 sub-sitemap 處理（download → crawl → discard）
+   - 記憶體從 870MB crash 降至 ~130MB
+
+5. **Windows Force Kill Pipe Fix**（`dashboard_api.py`）
+   - `_force_kill_after()` 在 `proc.kill()` 後 cancel `task._reader_task`
+
+6. **Qdrant Stats Non-blocking**（`dashboard_api.py`）
+   - `_get_qdrant_stats()` 移至 `run_in_executor()`
+
+---
+
+## ✅ Track R：整夜監控 + Subprocess 穩定性 + Auto-Restart（2026-02-12）
+
+**目標**：自動化監控整夜 backfill + 修復穩定性問題
+
+**已建置**：
+
+1. **stderr Pipe Buffer 死鎖修復**（`dashboard_api.py`）
+   - **根因**：`_run_crawler_subprocess()` 建立 subprocess 時 `stderr=asyncio.subprocess.PIPE` 但從未讀取 stderr
+   - 快速爬蟲（LTN/CNA）log 填滿 Windows 65KB pipe buffer → subprocess 阻塞在 write → stdout 同步停止 → parent 看到計數器凍結
+   - **修復**：新增 `_drain_stderr()` async task，與 stdout reader loop 並行：
+   ```python
+   async def _drain_stderr():
+       async for line in proc.stderr:
+           logger.debug(f"[{task.task_id}] {line.decode()[:300]}")
+   stderr_task = asyncio.create_task(_drain_stderr())
+   ```
+   - 修復後連續 72+ 分鐘零凍結
+
+2. **MOEA Auto-Restart 機制**（`dashboard_api.py`）
+   - `AUTO_RESTART_DELAY = {"moea": 900}` — early_stop 後 15 分鐘自動從 checkpoint 重啟
+   - `_delayed_restart()`: `asyncio.sleep(delay)` → 檢查無同 source running → `_auto_resume_task()`
+   - 解決 MOEA 因政府網站 rate limit 導致 early_stop 後需人工重啟的問題
+
+3. **自動化監控迴圈**（`scripts/crawler-monitor/`）
+   - `monitor-loop.sh`: 外部 bash loop，每 30 分鐘啟動新 Claude CLI session（Ralph Wiggums pattern）
+   - `monitoring-plan.md`: 完整 monitoring prompt（356 行）
+   - `monitoring-log.md`: 持久化跨 session log
+   - 整夜執行 12 次 check（01:04→09:48），自主修復 9 次凍結
+
+4. **trafilatura 2.0 相容修復**（`engine.py`）
+   - `bare_extraction()` 在 trafilatura 2.0+ 回傳 `Document` 物件而非 dict
+   - 修復：`if hasattr(result, 'as_dict'): result = result.as_dict()`
 
 ---
 

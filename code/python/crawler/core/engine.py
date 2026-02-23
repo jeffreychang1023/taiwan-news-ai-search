@@ -178,6 +178,7 @@ class CrawlerEngine:
 
         # 載入歷史記錄（去重）- 使用內存 Set 加速查詢
         self.crawled_ids: Set[str] = set()
+        self.crawled_numeric_ids: Set[int] = set()  # 數字 ID 去重（跨 URL pattern）
         self._load_history()
 
         # 統計資訊
@@ -283,8 +284,21 @@ class CrawlerEngine:
             # Load URLs from SQLite into memory set for fast lookup
             self.crawled_ids = self.registry.load_urls_for_source(source_name)
 
+            # Build numeric ID set for cross-URL-pattern dedup
+            # (e.g., chinatimes article crawled as realtimenews/XXX-260405
+            #  should be detected when full_scan checks realtimenews/XXX-260402)
+            numeric_count = 0
+            for url in self.crawled_ids:
+                nid = self.parser.extract_id_from_url(url)
+                if nid is not None:
+                    self.crawled_numeric_ids.add(nid)
+                    numeric_count += 1
+
             count = len(self.crawled_ids)
             self.logger.info(f"Loaded {count:,} crawled URLs from SQLite registry")
+            if numeric_count > 0:
+                unique_ids = len(self.crawled_numeric_ids)
+                self.logger.info(f"  Numeric ID index: {unique_ids:,} unique IDs (from {numeric_count:,} URLs)")
             return count
 
         except Exception as e:
@@ -296,7 +310,15 @@ class CrawlerEngine:
         return url in self.crawled_ids
 
     def _is_any_url_crawled(self, article_id: int) -> bool:
-        """Check if article has been crawled under any URL variant."""
+        """Check if article has been crawled under any URL variant.
+
+        Uses numeric ID dedup first (fast, catches cross-URL-pattern duplicates),
+        then falls back to exact URL matching.
+        """
+        # Fast path: check by numeric ID (catches all URL variants)
+        if article_id in self.crawled_numeric_ids:
+            return True
+        # Fallback: exact URL matching (for sources without numeric ID extraction)
         primary = self.parser.get_url(article_id)
         if self._is_crawled(primary):
             return True
@@ -318,6 +340,11 @@ class CrawlerEngine:
             data: 文章解析資料（包含 datePublished, dateModified, articleBody 等）
         """
         self.crawled_ids.add(url)
+
+        # Also update numeric ID index
+        nid = self.parser.extract_id_from_url(url)
+        if nid is not None:
+            self.crawled_numeric_ids.add(nid)
 
         self.registry.mark_crawled(
             url=url,
@@ -479,8 +506,7 @@ class CrawlerEngine:
 
             except asyncio.TimeoutError:
                 proxy_failed = True
-                self.logger.debug(f"Timeout for {url}")
-                return (None, CrawlStatus.NOT_FOUND)
+                self.logger.debug(f"Timeout for {url} (retry {retry_count}/{max_retries})")
 
             except Exception as e:
                 proxy_failed = True
@@ -1564,7 +1590,9 @@ class CrawlerEngine:
         sitemap_index_url: Optional[str] = None,
         date_from: Optional[str] = None,
         date_to: Optional[str] = None,
-        limit: int = 0
+        limit: int = 0,
+        sitemap_offset: int = 0,
+        sitemap_count: int = 0,
     ) -> Dict[str, Any]:
         """
         從 Sitemap 爬取文章。
@@ -1577,6 +1605,8 @@ class CrawlerEngine:
             date_from: 起始日期 (YYYYMM 格式，如 "202301")，None 表示不限
             date_to: 結束日期 (YYYYMM 格式，如 "202312")，None 表示不限
             limit: 最大爬取數量，0 表示不限
+            sitemap_offset: 從第幾個 sub-sitemap 開始（0-based），0 表示從頭
+            sitemap_count: 處理幾個 sub-sitemap，0 表示全部
 
         Returns:
             爬取結果統計
@@ -1600,6 +1630,10 @@ class CrawlerEngine:
             self.logger.info(f"  Date to: {date_to}")
         if limit > 0:
             self.logger.info(f"  Limit: {limit}")
+        if sitemap_offset > 0:
+            self.logger.info(f"  Sitemap offset: {sitemap_offset}")
+        if sitemap_count > 0:
+            self.logger.info(f"  Sitemap count: {sitemap_count}")
 
         # 重置統計
         self._reset_stats(sitemaps_processed=0, early_stopped=False, early_stop_reason=None)
@@ -1649,6 +1683,14 @@ class CrawlerEngine:
                 if date_from or date_to:
                     sitemap_urls = self._filter_sitemaps_by_date(sitemap_urls, date_from, date_to)
                     self.logger.info(f"After date filter: {len(sitemap_urls)} sitemap files")
+
+                # 多機分工：offset + count 切片
+                if sitemap_offset > 0:
+                    sitemap_urls = sitemap_urls[sitemap_offset:]
+                    self.logger.info(f"After offset={sitemap_offset}: {len(sitemap_urls)} sitemaps remaining")
+                if sitemap_count > 0:
+                    sitemap_urls = sitemap_urls[:sitemap_count]
+                    self.logger.info(f"Processing {len(sitemap_urls)} sitemaps (count={sitemap_count})")
 
                 # 逐個處理 sitemap — 下載後立即爬取，不累積 URL
                 for sub_sitemap_url in sitemap_urls:
@@ -1906,22 +1948,24 @@ class CrawlerEngine:
             else:
                 url, lastmod_ym = item, None
 
-            # 優先使用 lastmod 日期
-            url_ym = lastmod_ym
+            # 優先從 URL 提取 YYYYMMDD（實際發布日期，比 lastmod 更可靠）
+            # lastmod 可能是 sitemap 重新產生的日期，不代表文章發布日期
+            url_ym = None
+            matches = re.findall(r'(\d{8,14})', url)
+            for m in matches:
+                try:
+                    year = int(m[:4])
+                    month = int(m[4:6])
+                    day = int(m[6:8])
+                    if 2000 <= year <= 2030 and 1 <= month <= 12 and 1 <= day <= 31:
+                        url_ym = f"{year:04d}{month:02d}"
+                        break
+                except (ValueError, IndexError):
+                    continue
 
-            # 若無 lastmod，嘗試從 URL 提取 YYYYMMDD
+            # 若 URL 無日期，fallback 到 lastmod
             if not url_ym:
-                matches = re.findall(r'(\d{8,14})', url)
-                for m in matches:
-                    try:
-                        year = int(m[:4])
-                        month = int(m[4:6])
-                        day = int(m[6:8])
-                        if 2000 <= year <= 2030 and 1 <= month <= 12 and 1 <= day <= 31:
-                            url_ym = f"{year:04d}{month:02d}"
-                            break
-                    except (ValueError, IndexError):
-                        continue
+                url_ym = lastmod_ym
 
             # 無法判斷日期的 URL 排除（避免爬到範圍外的資料）
             if not url_ym:

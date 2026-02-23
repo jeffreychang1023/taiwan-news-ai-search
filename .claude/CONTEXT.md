@@ -1,22 +1,19 @@
 # 專案上下文
 
-## 目前狀態（2026-02-12）
+## 目前狀態（2026-02-15）
 
 ### 目前重點
-**全 Source Backfill（2024-02 起）— 7 source 全部從 checkpoint 續跑中**
+**三機協作 Backfill — LTN/CNA 完成，桌機+GCP 雙機跑 Chinatimes sitemap，GCP UDN Phase 2 + Retry 完成**
 
 ### 最近完成
-- ✅ **Dashboard Bug Fixes + Full Scan 穩定性**（2026-02-11）
-  - MOEA FULL_SCAN_OVERRIDES 調整（concurrent=2, delay=2-4s）— 解決 429 限速
-  - `null -> null` 顯示 bug 修正（3 層修復：start_crawler + progress handler + engine stats）
-  - Task cleanup 自動化（124→13 tasks）
-  - 所有 6 source 從 checkpoint 續跑
-- ✅ **indexing-spec.md 全面更新**（2026-02-11）
-  - MOEA session type 更正、UDN sitemap 推薦、Sitemap Mode 文件、CURL_CFFI_SOURCES 文件
-- ✅ **UDN Sitemap Backfill 串接**（2026-02-11）
-- ✅ **curl_cffi Reward Hack 清理**（2026-02-11）
-- ✅ **Qdrant Profile 切換系統**（2026-02-11）
-- ✅ **Crawler 效能與 Dashboard 優化**（2026-02-10）
+- ✅ **GCP UDN Phase 2 + Retry 完成**（UDN sitemap 202401→202409 + failed URL retry）
+- ✅ **Chinatimes 雙機協作部署**（`scripts/gcp-chinatimes-sitemap.sh`）
+  - engine.py `run_sitemap()` 新增 `sitemap_offset` + `sitemap_count` 參數
+  - GCP 自管理腳本從 sub-sitemap #980 往回跑，桌機從 #1 往前跑
+  - 適應性批次大小（空區間 x3、密集區 /2）、crash recovery、coverage 報告
+- ✅ **Sitemap Date Filter 修復**（`engine.py` `_filter_article_urls_by_date()`）
+  - 修復 lastmod 日期優先於 URL 日期的 bug（Chinatimes lastmod=2024 但文章實為 2010）
+  - 改為 URL 日期優先、lastmod fallback
 
 ---
 
@@ -24,29 +21,36 @@
 
 ### 🔄 進行中
 
-1. **全量 Backfill（2024-02 起）** — 6 source 從 checkpoint 續跑中
-   - **LTN**: full_scan（ID 4.55M→5.34M），checkpoint=4,557,184
-   - **CNA**: full_scan（date 2024-02-19→now），checkpoint=2024-02-19
-   - **Chinatimes**: full_scan（date 2024-02-23→now），checkpoint=2024-02-23
-   - **einfo**: full_scan（ID 234,701→270K），checkpoint=234,701
-   - **ESG BT**: full_scan（date 2024-06-22→now），checkpoint=2024-06-22
-   - **MOEA**: full_scan（ID 119,190→121.9K），新設定 ok=8（不再 429）
+1. **桌機 — Chinatimes sitemap**（重啟，使用 fixed date filter）
+   - 已爬 ~53K 篇，298K skipped，重啟後快速 skip 已爬文章
+   - 2024+ 文章集中在前 ~30 個 sub-sitemap
+
+2. **GCP — Chinatimes sitemap 雙機協作**（自動腳本運行中）
+   - 從 sub-sitemap #980 往回跑，date_from=202401 正確過濾舊文章
+   - 自動加速掃過空區間（batch 20→200），與桌機保持 50 緩衝區
+   - 腳本：`scripts/gcp-chinatimes-sitemap.sh`
+
+3. **桌機 — einfo full_scan**
+   - full_scan + proxy pool，ID 238K → 270K
 
 ### 📋 待處理
 
-1. **效能優化** — Reasoning 延遲分析與 token 減少
-2. **E2E 測試覆蓋** — 端到端測試完善
+1. **筆電 MOEA backfill** — `{"sources":["moea"],"start_id":100000,"end_id":122000}`
+2. **筆電 UDN sitemap** — MOEA 完成後，`{"source":"udn","mode":"sitemap","date_from":"202410","date_to":"202502"}`
+3. **效能優化** — Reasoning 延遲分析與 token 減少
 
 ---
 
 ## 下一步
 
 ### 短期
-- 監控 backfill 進度，確保各 source 完成
-- 完成 E2E 測試覆蓋
+- 桌機全力 Chinatimes sitemap（2024+ 文章集中在前 ~30 個 sub-sitemap，幾天內可完成）
+- GCP 自動掃過舊區間，到達桌機附近自動停止
+- 筆電先跑 MOEA backfill，再跑 UDN sitemap 202410→202502
 
 ### 中期
-- Crawler 自動化排程
+- Chinatimes/einfo 完成後，所有 source 第一輪完成
+- GCP 資料收回（merge_registry.py）
 - 效能優化：延遲分析、token 減少
 
 詳見 `.claude/NEXT_STEPS.md`
@@ -63,4 +67,4 @@
 
 ---
 
-*更新：2026-02-12*
+*更新：2026-02-15*

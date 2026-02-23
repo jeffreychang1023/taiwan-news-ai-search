@@ -513,5 +513,69 @@ CrawlerEngine._setup_logger = _patched_setup_logger
 **檔案**：`docs/indexing-spec.md`（外部驗證數據段落）
 **日期**：2026-02
 
-*最後更新：2026-02-11*
+### stderr Pipe Buffer Deadlock（subprocess 未讀取 stderr 導致死鎖）
+**問題**：`dashboard_api.py` 的 `_run_crawler_subprocess()` 建立 subprocess 時用 `stderr=asyncio.subprocess.PIPE` 但從未讀取 stderr。快速爬蟲的 log 輸出填滿 Windows 65KB pipe buffer → subprocess 在 `write()` 阻塞 → stdout 也跟著停（同一進程）→ parent 看到計數器凍結。症狀：subprocess 隨機凍結，重啟後短暫恢復，快速爬蟲（LTN/CNA）更容易觸發。整晚發生 9 次凍結才找到 root cause
+**解決方案**：為每個 subprocess 建立 `_drain_stderr()` async task，與 stdout reader 同時運行：
+```python
+async def _drain_stderr():
+    while True:
+        line = await process.stderr.readline()
+        if not line:
+            break
+stderr_task = asyncio.create_task(_drain_stderr())
+```
+通用規則：**使用 `subprocess.PIPE` 時，所有被 PIPE 的 fd（stdout + stderr）都必須被讀取**。只需要 stdout 時，stderr 應設為 `DEVNULL` 或建立 drain task。Windows 65KB buffer 比 Linux 更容易觸發此問題
+**信心**：高
+**檔案**：`code/python/indexing/dashboard_api.py`（`_run_crawler_subprocess()`）
+**日期**：2026-02
+
+### Watermark 設為未來日期導致掃描靜默跳過
+**問題**：ESG BT 的 `last_scanned_date` 被設為 2026-02-13（未來日期），導致 full scan 啟動時 `scan_start = last_scanned_date + 1 day = 2026-02-14`，而 `scan_end = today = 2026-02-12`。因為 `scan_start > scan_end`，整個掃描範圍為空，task 立即完成且 success=0。沒有錯誤訊息，看起來像「正常完成但找不到文章」
+**解決方案**：(1) 啟動 full scan 前，用 `registry.get_scan_watermark(source_id)` 檢查 watermark 是否合理（不是未來日期、不是 NULL 等）；(2) 重置 watermark：`UPDATE scan_watermarks SET last_scanned_date = NULL WHERE source_id = 'xxx'`；(3) `update_scan_watermark()` 只允許 forward（不會自動修復），設計上是正確的，但意味著手動錯誤無法自動恢復
+**信心**：高
+**檔案**：`code/python/crawler/core/crawled_registry.py`（`update_scan_watermark()`、`get_scan_watermark()`）
+**日期**：2026-02
+
+### 修改 long-running process 管理的檔案：必須先停程序
+**問題**：Dashboard 在記憶體中持有 `crawler_tasks.json` 全部內容，定期 `_save_tasks()` 寫回檔案。外部直接修改 JSON 檔案後，Dashboard 下次寫檔時以記憶體內容覆蓋修改。更嚴重的是，`taskkill` force kill Dashboard 時如果正好在寫檔，檔案會被截斷為 0 bytes（連備份也來不及保存）
+**解決方案**：
+1. **修改前必須停程序**：確認 `curl localhost:8001` 無回應後才改檔案
+2. **備份在停程序前做**：`shutil.copy2()` 要在程序還活著時就備份，不能等 kill 後才備份已截斷的檔案
+3. **或提供 API**：理想方案是加 DELETE/cleanup API endpoint，從記憶體內操作
+4. **驗證已停**：Windows 上 terminal 關閉不等於 process 結束，用 `Get-Process python*` 確認
+**信心**：高
+**檔案**：`data/crawler/crawler_tasks.json`、`code/python/indexing/dashboard_api.py`（`_save_tasks()`）
+**日期**：2026-02
+
+### Dashboard API `overrides` 欄位完全無效 — start_id/end_id 必須 top-level
+**問題**：呼叫 `/api/indexing/fullscan/start` 時，用 `{"sources":["moea"],"overrides":{"moea":{"start_id":100000,"end_id":122000}}}` 格式傳 start_id/end_id。API 返回 200 但使用了 watermark（122,001）和 config 預設值（end 122,000），導致 start > end → 掃描 0 篇文章。三個文件（deployment prompt + 兩個 spec）都寫了錯誤格式
+**根因**：`dashboard_api.py` 中 `overrides` 一詞出現 **0 次**。第 83 行：`start_id = body.get("start_id") or default_start` — 直接從 body top-level 讀取，完全不看 nested overrides
+**解決方案**：`start_id`/`end_id` 必須放在 JSON body 最外層：`{"sources":["moea"],"start_id":100000,"end_id":122000}`。`overrides` 結構只存在於 `settings.py` 的 `FULL_SCAN_OVERRIDES`（控制 concurrent_limit/delay_range），不是 API 參數
+**信心**：高
+**檔案**：`code/python/indexing/dashboard_api.py`（`start_full_scan()`，第 83-84 行）
+**日期**：2026-02
+
+### gcloud SSH `pkill -f` 會殺死 SSH session 自身
+**問題**：`gcloud compute ssh --command="pkill -f dashboard_server"` 返回 exit code 128。`pkill -f` 匹配的是 process 的完整命令行，而 SSH session 的命令行包含 `dashboard_server` 字串，導致 pkill 把 SSH session 自己也殺了
+**解決方案**：(1) 用 `pgrep -f` 先找 PID，再 `kill <PID>` 精確殺；(2) 或用 `pkill` 但接受 exit 128（session 斷但 pkill 已生效）；(3) 複雜操作寫成 VM 上的 shell script（`/tmp/start-dash.sh`），避免長命令行被 SSH 截斷或解析錯誤
+**信心**：高
+**檔案**：N/A（GCP 操作模式）
+**日期**：2026-02
+
+### GCP nohup 啟動服務：必須 script 化，不能裸 command
+**問題**：`gcloud ssh --command="nohup python -m indexing.dashboard_server &"` 失敗，因為 (1) 工作目錄是 `$HOME` 不是 `code/python/`；(2) `source venv/bin/activate` 在 `--command` 中不穩定；(3) 複雜命令串（`cd && source && nohup ... &`）常因引號嵌套失敗
+**解決方案**：先用簡單 `--command` 建立 script：
+```bash
+echo '#!/bin/bash
+cd /home/User/nlweb/code/python
+export CRAWLER_ENV=gcp
+/home/User/nlweb/venv/bin/python -m indexing.dashboard_server' > /tmp/start-dash.sh
+chmod +x /tmp/start-dash.sh
+```
+再用 `nohup /tmp/start-dash.sh > log 2>&1 &` 啟動。所有路徑用絕對路徑，不依賴 `source activate`
+**信心**：高
+**檔案**：N/A（GCP 操作模式）
+**日期**：2026-02
+
+*最後更新：2026-02-12*
 

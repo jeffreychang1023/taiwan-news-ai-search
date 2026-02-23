@@ -64,20 +64,17 @@ class ChinatimesParser(BaseParser):
         return f"https://www.chinatimes.com/realtimenews/{article_id}-260402"
 
     def get_candidate_urls(self, article_id: int) -> List[str]:
-        """嘗試不同 category code 和 section。
+        """嘗試不同 section path。
 
-        Chinatimes URL 必須包含正確的 category code（不像 CNA 可以任意 category resolve）。
-        Primary URL 用 260402（社會），這裡列出其他 realtimenews categories + newspapers/opinion。
+        Chinatimes 同一 section 內 category code 不影響結果（任何 code 都回同篇文章），
+        但不同 section（realtimenews/newspapers/opinion）是不同文章。
+        Primary URL = realtimenews，candidates 優先試 newspapers 和 opinion。
         """
-        candidates = []
-        # 其他 realtimenews category codes（跳過 primary 260402）
-        for code in self.REALTIMENEWS_CATEGORY_CODES:
-            if code == '260402':
-                continue  # Already tried via get_url()
-            candidates.append(f"https://www.chinatimes.com/realtimenews/{article_id}-{code}")
-        # 不同 section
-        candidates.append(f"https://www.chinatimes.com/newspapers/{article_id}-260109")
-        candidates.append(f"https://www.chinatimes.com/opinion/{article_id}-262101")
+        candidates = [
+            # 不同 section 優先（各自有獨立文章，非重複）
+            f"https://www.chinatimes.com/newspapers/{article_id}-260109",
+            f"https://www.chinatimes.com/opinion/{article_id}-262101",
+        ]
         return candidates
 
     def get_sitemap_config(self) -> Optional[Dict[str, Any]]:

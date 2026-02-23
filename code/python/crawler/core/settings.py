@@ -200,8 +200,9 @@ FULL_SCAN_OVERRIDES = {
         "concurrent_limit": 3,
         "delay_range": (1.0, 2.5),
         "request_timeout": 8,
-        # 調查結果：chinatimes 不在乎 category code，任何 category 都回同一篇文章。
-        # 因此 candidate URL 不需要，設 0 減少 79% 的 Cloudflare 請求量。
+        # realtimenews 是萬用路徑 — 任何 section 的文章都可透過 realtimenews 存取。
+        # 不需要 candidate URLs（newspapers/opinion 路徑是冗餘的）。
+        # 去重改用 numeric ID（engine.crawled_numeric_ids），不依賴 URL pattern。
         "max_candidate_urls": 0,
     },
     "moea": {
@@ -224,7 +225,7 @@ if CRAWLER_ENV == "gcp":
 
 # ==================== Proxy 設定 ====================
 # 需要使用 proxy 的來源（IP 被封鎖時啟用）
-PROXY_SOURCES = ["einfo"]
+PROXY_SOURCES = ["einfo", "moea"]
 
 # Proxy pool 設定
 PROXY_REFRESH_INTERVAL = 600   # 10 分鐘刷新

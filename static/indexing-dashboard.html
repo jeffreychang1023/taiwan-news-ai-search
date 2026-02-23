@@ -1698,6 +1698,24 @@
                 const progress = task.total > 0 ? (task.progress / task.total * 100).toFixed(0) : 0;
                 const duration = formatDuration(task.duration_seconds);
 
+                // Build checkpoint display for full_scan tasks
+                let checkpointHtml = '';
+                if (task.mode === 'full_scan') {
+                    let checkpointText = '';
+                    if (task.last_scanned_id) {
+                        checkpointText = `ID: ${formatNumber(task.last_scanned_id)} / ${task.scan_start} → ${task.scan_end}`;
+                    } else if (task.last_scanned_date) {
+                        checkpointText = `Date: ${task.last_scanned_date} / ${task.scan_start} → ${task.scan_end}`;
+                    }
+                    if (checkpointText) {
+                        const elapsed = task.duration_seconds || 1;
+                        const totalProcessed = (task.stats?.success || 0) + (task.stats?.failed || 0) +
+                            (task.stats?.not_found || 0) + (task.stats?.skipped || 0);
+                        const speed = (totalProcessed / elapsed).toFixed(1);
+                        checkpointHtml = `<div class="checkpoint-info" style="color: #94a3b8; font-size: 12px; margin-top: 4px;">${checkpointText} | ${speed} req/s</div>`;
+                    }
+                }
+
                 return `
                     <div class="task-item" data-task-id="${task.task_id}">
                         <div class="task-header">
@@ -1716,12 +1734,15 @@
                                 <span>${task.progress} / ${task.total}</span>
                                 <span>${duration}</span>
                             </div>
+                            ${checkpointHtml}
                         </div>
 
                         <div class="task-stats">
                             <span class="success">Success: ${task.stats?.success || 0}</span>
                             <span class="failed">Failed: ${task.stats?.failed || 0}</span>
                             <span class="skipped">Skipped: ${task.stats?.skipped || 0}</span>
+                            ${task.stats?.not_found ? `<span class="not-found" style="color: #94a3b8;">404: ${task.stats.not_found}</span>` : ''}
+                            ${task.stats?.blocked ? `<span class="blocked" style="color: #f59e0b;">Blocked: ${task.stats.blocked}</span>` : ''}
                             ${task.stats?.out_of_range ? `<span style="color: #94a3b8;">Out of Range: ${task.stats.out_of_range}</span>` : ''}
                             ${task.stats?.sitemaps_processed ? `<span style="color: #6366f1;">Sitemaps: ${task.stats.sitemaps_processed}</span>` : ''}
                             ${task.stats?.list_pages_processed ? `<span style="color: #8b5cf6;">List Pages: ${task.stats.list_pages_processed}</span>` : ''}
@@ -1841,10 +1862,43 @@
                 statsEl.querySelector('.success').textContent = `Success: ${task.stats?.success || 0}`;
                 statsEl.querySelector('.failed').textContent = `Failed: ${task.stats?.failed || 0}`;
                 statsEl.querySelector('.skipped').textContent = `Skipped: ${task.stats?.skipped || 0}`;
+                // Update optional stats if elements exist
+                const nfEl = statsEl.querySelector('.not-found');
+                if (nfEl && task.stats?.not_found) nfEl.textContent = `404: ${task.stats.not_found}`;
+                const blEl = statsEl.querySelector('.blocked');
+                if (blEl && task.stats?.blocked) blEl.textContent = `Blocked: ${task.stats.blocked}`;
 
                 const progressText = existingTask.querySelector('.progress-text');
                 progressText.children[0].textContent = `${task.progress} / ${task.total}`;
                 progressText.children[1].textContent = formatDuration(task.duration_seconds);
+
+                // Update checkpoint display for full_scan tasks
+                if (task.mode === 'full_scan') {
+                    let checkpointText = '';
+                    if (task.last_scanned_id) {
+                        checkpointText = `ID: ${formatNumber(task.last_scanned_id)} / ${task.scan_start} → ${task.scan_end}`;
+                    } else if (task.last_scanned_date) {
+                        checkpointText = `Date: ${task.last_scanned_date} / ${task.scan_start} → ${task.scan_end}`;
+                    }
+                    if (checkpointText) {
+                        const elapsed = task.duration_seconds || 1;
+                        const totalProcessed = (task.stats?.success || 0) + (task.stats?.failed || 0) +
+                            (task.stats?.not_found || 0) + (task.stats?.skipped || 0);
+                        const speed = (totalProcessed / elapsed).toFixed(1);
+                        const fullText = `${checkpointText} | ${speed} req/s`;
+                        let cpEl = existingTask.querySelector('.checkpoint-info');
+                        if (cpEl) {
+                            cpEl.textContent = fullText;
+                        } else {
+                            const progressDiv = existingTask.querySelector('.task-progress');
+                            cpEl = document.createElement('div');
+                            cpEl.className = 'checkpoint-info';
+                            cpEl.style.cssText = 'color: #94a3b8; font-size: 12px; margin-top: 4px;';
+                            cpEl.textContent = fullText;
+                            progressDiv.appendChild(cpEl);
+                        }
+                    }
+                }
 
                 // Remove stop button if not running
                 if (task.status !== 'running') {
