@@ -231,10 +231,17 @@ class CrawlerEngine:
                 'delay_range', (settings.MIN_DELAY, settings.MAX_DELAY)
             )
             self.min_delay, self.max_delay = delay_range
+            # Per-source blocked tolerance (for sources with frequent 429)
+            self._source_blocked_limit = source_config.get('blocked_limit')
+            self._source_blocked_cooldown = source_config.get('blocked_cooldown')
+            self._source_rate_limit_cooldown = source_config.get('rate_limit_cooldown')
         else:
             self.concurrent_limit = settings.CONCURRENT_REQUESTS
             self.min_delay = settings.MIN_DELAY
             self.max_delay = settings.MAX_DELAY
+            self._source_blocked_limit = None
+            self._source_blocked_cooldown = None
+            self._source_rate_limit_cooldown = None
 
     def _setup_logger(self) -> None:
         """設置日誌處理器"""
@@ -399,7 +406,7 @@ class CrawlerEngine:
     async def _handle_rate_limit(self) -> None:
         """處理 429 Rate Limit 錯誤"""
         self.rate_limit_hit = True
-        cooldown = settings.RATE_LIMIT_COOLDOWN
+        cooldown = self._source_rate_limit_cooldown or settings.RATE_LIMIT_COOLDOWN
 
         self.logger.warning(f"Rate limit detected (429), cooling down for {cooldown}s...")
         self.rate_limit_cooldown_until = time.time() + cooldown
@@ -465,8 +472,12 @@ class CrawlerEngine:
                         return (text, CrawlStatus.SUCCESS)
                     elif status == 404:
                         return (None, CrawlStatus.NOT_FOUND)
-                    elif status in (403, 429):
-                        proxy_failed = True
+                    elif status == 403:
+                        proxy_failed = True  # IP banned, remove proxy
+                        got_blocked_response = True
+                        await self._handle_rate_limit()
+                    elif status == 429:
+                        # 429 = rate limit, proxy is fine — don't remove it
                         got_blocked_response = True
                         await self._handle_rate_limit()
                     elif status in (500, 502, 503, 504):
@@ -494,8 +505,12 @@ class CrawlerEngine:
                             return (text, CrawlStatus.SUCCESS)
                         elif response.status == 404:
                             return (None, CrawlStatus.NOT_FOUND)
-                        elif response.status in (403, 429):
-                            proxy_failed = True
+                        elif response.status == 403:
+                            proxy_failed = True  # IP banned, remove proxy
+                            got_blocked_response = True
+                            await self._handle_rate_limit()
+                        elif response.status == 429:
+                            # 429 = rate limit, proxy is fine — don't remove it
                             got_blocked_response = True
                             await self._handle_rate_limit()
                         elif response.status in (500, 502, 503, 504):
@@ -874,9 +889,25 @@ class CrawlerEngine:
                 miss_count += 1
         return hit_count, miss_count
 
+    def _get_blocked_limit(self) -> int:
+        """Get blocked consecutive limit: full_scan > per-source > global default."""
+        if self._full_scan_mode:
+            return settings.FULL_SCAN_BLOCKED_LIMIT
+        if self._source_blocked_limit is not None:
+            return self._source_blocked_limit
+        return settings.BLOCKED_CONSECUTIVE_LIMIT
+
+    def _get_blocked_cooldown(self) -> float:
+        """Get blocked cooldown: full_scan > per-source > global default."""
+        if self._full_scan_mode:
+            return settings.FULL_SCAN_BLOCKED_COOLDOWN
+        if self._source_blocked_cooldown is not None:
+            return self._source_blocked_cooldown
+        return settings.BLOCKED_COOLDOWN
+
     def _check_blocked_stop(self) -> bool:
         """Check if we should stop due to consecutive blocked requests. Returns True if stopped."""
-        limit = settings.FULL_SCAN_BLOCKED_LIMIT if self._full_scan_mode else settings.BLOCKED_CONSECUTIVE_LIMIT
+        limit = self._get_blocked_limit()
         if self.consecutive_failures >= limit:
             self.logger.warning(f"Stopping: {self.consecutive_failures} consecutive blocked requests (limit={limit})")
             self.stats['early_stopped'] = True
@@ -1004,11 +1035,13 @@ class CrawlerEngine:
 
                     # Cooldown when blocked responses detected
                     if self.consecutive_failures > 0:
+                        cooldown = self._get_blocked_cooldown()
+                        limit = self._get_blocked_limit()
                         self.logger.warning(
-                            f"Blocked: {self.consecutive_failures}/{settings.BLOCKED_CONSECUTIVE_LIMIT}, "
-                            f"cooling down {settings.BLOCKED_COOLDOWN}s"
+                            f"Blocked: {self.consecutive_failures}/{limit}, "
+                            f"cooling down {cooldown}s"
                         )
-                        await asyncio.sleep(settings.BLOCKED_COOLDOWN)
+                        await asyncio.sleep(cooldown)
 
                 if should_stop:
                     break
@@ -1204,8 +1237,8 @@ class CrawlerEngine:
 
                 # Cooldown when blocked responses detected (prevent escalating to full block)
                 if self.consecutive_failures > 0:
-                    cooldown = settings.FULL_SCAN_BLOCKED_COOLDOWN if self._full_scan_mode else settings.BLOCKED_COOLDOWN
-                    limit = settings.FULL_SCAN_BLOCKED_LIMIT if self._full_scan_mode else settings.BLOCKED_CONSECUTIVE_LIMIT
+                    cooldown = self._get_blocked_cooldown()
+                    limit = self._get_blocked_limit()
                     self.logger.warning(
                         f"Blocked: {self.consecutive_failures}/{limit}, "
                         f"cooling down {cooldown}s"
@@ -1340,8 +1373,8 @@ class CrawlerEngine:
 
                     # Cooldown when blocked responses detected
                     if self.consecutive_failures > 0:
-                        cooldown = settings.FULL_SCAN_BLOCKED_COOLDOWN if self._full_scan_mode else settings.BLOCKED_COOLDOWN
-                        limit = settings.FULL_SCAN_BLOCKED_LIMIT if self._full_scan_mode else settings.BLOCKED_CONSECUTIVE_LIMIT
+                        cooldown = self._get_blocked_cooldown()
+                        limit = self._get_blocked_limit()
                         self.logger.warning(
                             f"Blocked: {self.consecutive_failures}/{limit}, "
                             f"cooling down {cooldown}s"

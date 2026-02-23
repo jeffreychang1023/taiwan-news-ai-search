@@ -111,21 +111,28 @@ SOURCES = [
 ]
 
 
+async def _safe_run(source_name: str, runner, kwargs: dict) -> tuple:
+    """Wrap a runner with exception handling, return (source_name, result)."""
+    try:
+        result = await runner(**kwargs)
+        return source_name, result
+    except Exception as e:
+        print(f"  [{source_name}] FATAL: {e}")
+        return source_name, {"success": 0, "failed": 1, "error": str(e)}
+
+
 async def main():
     print(f"\n{'=' * 60}")
     print(f"  Daily News Collector — {time.strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"{'=' * 60}")
+    print(f"  Mode: parallel ({len(SOURCES)} sources)")
 
     total_start = time.time()
-    results = {}
 
-    for source_name, runner, kwargs in SOURCES:
-        print(f"\n>>> {source_name}")
-        try:
-            results[source_name] = await runner(**kwargs)
-        except Exception as e:
-            print(f"  [{source_name}] FATAL: {e}")
-            results[source_name] = {"success": 0, "failed": 1, "error": str(e)}
+    # Run all sources in parallel
+    tasks = [_safe_run(name, runner, kwargs) for name, runner, kwargs in SOURCES]
+    completed = await asyncio.gather(*tasks)
+    results = dict(completed)
 
     # Summary
     elapsed = time.time() - total_start

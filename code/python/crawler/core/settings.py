@@ -124,7 +124,10 @@ NEWS_SOURCES = {
     "einfo": {
         "name": "環境資訊中心",
         "concurrent_limit": 1,
-        "delay_range": (5.0, 10.0),
+        "delay_range": (8.0, 15.0),
+        "blocked_limit": 50,            # einfo 頻繁 429，需要高容忍度（同 full_scan）
+        "blocked_cooldown": 120.0,      # 長冷卻讓 rate limit window 重置
+        "rate_limit_cooldown": 30.0,    # einfo 429 後需等 30s（預設 10s 太短）
     },
     "esg_businesstoday": {
         "name": "今周刊 ESG",
@@ -197,13 +200,13 @@ FULL_SCAN_OVERRIDES = {
         "max_candidate_urls": 0,
     },
     "chinatimes": {
-        "concurrent_limit": 3,
-        "delay_range": (1.0, 2.5),
+        "concurrent_limit": 5,
+        "delay_range": (0.8, 2.0),
         "request_timeout": 8,
-        # realtimenews 是萬用路徑 — 任何 section 的文章都可透過 realtimenews 存取。
-        # 不需要 candidate URLs（newspapers/opinion 路徑是冗餘的）。
-        # 去重改用 numeric ID（engine.crawled_numeric_ids），不依賴 URL pattern。
-        "max_candidate_urls": 0,
+        # 每篇文章只有其正確 category code 能存取（260402 不是萬用路徑）。
+        # 需嘗試多個 category — parser 提供 top 40 categories（覆蓋 95.6%）。
+        # 去重用 numeric ID（engine.crawled_numeric_ids），不同 category URL 不會重爬。
+        "max_candidate_urls": 39,
     },
     "moea": {
         "concurrent_limit": 2,
@@ -225,7 +228,7 @@ if CRAWLER_ENV == "gcp":
 
 # ==================== Proxy 設定 ====================
 # 需要使用 proxy 的來源（IP 被封鎖時啟用）
-PROXY_SOURCES = ["einfo", "moea"]
+PROXY_SOURCES = ["moea"]  # einfo IP ban 已解除 (2026-02-23)，直連更快更穩
 
 # Proxy pool 設定
 PROXY_REFRESH_INTERVAL = 600   # 10 分鐘刷新
