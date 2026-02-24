@@ -1,19 +1,21 @@
 # 專案上下文
 
-## 目前狀態（2026-02-15）
+## 目前狀態（2026-02-23）
 
 ### 目前重點
-**三機協作 Backfill — LTN/CNA 完成，桌機+GCP 雙機跑 Chinatimes sitemap，GCP UDN Phase 2 + Retry 完成**
+**SEC-6 Lossless Agent Isolation Phase 1 完成 — Reasoning context 路由隔離**
 
 ### 最近完成
-- ✅ **GCP UDN Phase 2 + Retry 完成**（UDN sitemap 202401→202409 + failed URL retry）
-- ✅ **Chinatimes 雙機協作部署**（`scripts/gcp-chinatimes-sitemap.sh`）
-  - engine.py `run_sitemap()` 新增 `sitemap_offset` + `sitemap_count` 參數
-  - GCP 自管理腳本從 sub-sitemap #980 往回跑，桌機從 #1 往前跑
-  - 適應性批次大小（空區間 x3、密集區 /2）、crash recovery、coverage 報告
-- ✅ **Sitemap Date Filter 修復**（`engine.py` `_filter_article_urls_by_date()`）
-  - 修復 lastmod 日期優先於 URL 日期的 bug（Chinatimes lastmod=2024 但文章實為 2010）
-  - 改為 URL 日期優先、lastmod fallback
+- ✅ **SEC-6 Phase 1：Agent Isolation Context 路由**（4 檔案）
+  - Feature flag `agent_isolation: false`（預設關閉，零行為變更）
+  - Gap search 後只傳新文件給 Analyst（`start_id` offset）
+  - Critic 收到 reference sheet（僅被引用的 source）而非 full context
+  - Analyst re-run 傳 `previous_draft` 保持分析連續性
+  - Writer draft 長度監控 + citation 驗證
+  - Code review 修復 3 項 bug（stale fallback context、tautological assertion、silent fail）
+- ✅ **全專案 Code Review 修復**（21 檔案、47 項）
+  - 詳細: `docs/code-review-0223.md`
+- ✅ **Chinatimes Multi-Category 修復已部署 GCP**
 
 ---
 
@@ -21,37 +23,40 @@
 
 ### 🔄 進行中
 
-1. **桌機 — Chinatimes sitemap**（重啟，使用 fixed date filter）
-   - 已爬 ~53K 篇，298K skipped，重啟後快速 skip 已爬文章
-   - 2024+ 文章集中在前 ~30 個 sub-sitemap
+1. **GCP — Chinatimes full_scan（新版，multi-category）**
+   - Task ID: `fullscan_chinatimes_29_1771827084`
+   - 從 2025-06-30 開始掃描（sitemap 覆蓋至 ~mid-2025）
+   - 預期覆蓋率：~95.6%（vs 舊版 ~13%）
+   - 需監控確認效果
 
-2. **GCP — Chinatimes sitemap 雙機協作**（自動腳本運行中）
-   - 從 sub-sitemap #980 往回跑，date_from=202401 正確過濾舊文章
-   - 自動加速掃過空區間（batch 20→200），與桌機保持 50 緩衝區
-   - 腳本：`scripts/gcp-chinatimes-sitemap.sh`
-
-3. **桌機 — einfo full_scan**
-   - full_scan + proxy pool，ID 238K → 270K
+2. **桌機 — einfo**（背景運行）
+   - proxy pool 模式
 
 ### 📋 待處理
 
-1. **筆電 MOEA backfill** — `{"sources":["moea"],"start_id":100000,"end_id":122000}`
-2. **筆電 UDN sitemap** — MOEA 完成後，`{"source":"udn","mode":"sitemap","date_from":"202410","date_to":"202502"}`
-3. **效能優化** — Reasoning 延遲分析與 token 減少
+1. **Code Review 後續**
+   - SEC-1/9/18/19：JWT 認證（等登入系統設定完成）
+   - RNK-7：BM25 corpus stats 重建（title weighting 改變）
+   - RSN-4 前端：讀取 verification_status 顯示未驗證提示
+2. **SEC-6 Phase 2**：Extracted Knowledge（LLM 結構化輸出，Phase 1 驗證有效後）
+3. **監控 GCP 新 full_scan 效果**：確認 hit rate 提升至預期水準
+4. **GCP 完成後合併**：`merge_registry.py` 將 GCP 資料合併至桌機
+5. **效能優化** — Reasoning 延遲分析與 token 減少
 
 ---
 
 ## 下一步
 
 ### 短期
-- 桌機全力 Chinatimes sitemap（2024+ 文章集中在前 ~30 個 sub-sitemap，幾天內可完成）
-- GCP 自動掃過舊區間，到達桌機附近自動停止
-- 筆電先跑 MOEA backfill，再跑 UDN sitemap 202410→202502
+- **測試 SEC-6 Phase 1**：啟用 `agent_isolation: true`，觀察 gap search 查詢的 log
+- Code Review 後續：BM25 corpus stats 重建、前端 verification alert
+- 監控 GCP Chinatimes multi-category full_scan 效果
 
 ### 中期
-- Chinatimes/einfo 完成後，所有 source 第一輪完成
-- GCP 資料收回（merge_registry.py）
-- 效能優化：延遲分析、token 減少
+- SEC-6 Phase 2：Extracted Knowledge（`ExtractedFact` schema + 累積邏輯）
+- JWT 認證系統（SEC-1/9/18/19）
+- 效能優化：Reasoning 延遲分析、token 減少
+- 所有 source 第一輪完成後啟動 XGBoost retrain
 
 詳見 `.claude/NEXT_STEPS.md`
 
@@ -67,4 +72,4 @@
 
 ---
 
-*更新：2026-02-15*
+*更新：2026-02-23*

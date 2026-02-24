@@ -2,6 +2,138 @@
 
 ## 最近里程碑
 
+### 2026-02-23：SEC-6 Lossless Agent Isolation Phase 1 ✅
+
+**Reasoning Orchestrator context 路由隔離 — 防止 gap resolution 迴圈 context 無限增長**
+
+1. **Feature Flag 架構**（`config/config_reasoning.yaml`）
+   - `agent_isolation: false` 預設關閉，零行為變更
+   - 配置：draft_length_warning_threshold、critic_reference_sheet_min_chars/citations
+
+2. **Context 路由**（`reasoning/orchestrator.py`）
+   - `_format_context_shared()` +`start_id` 參數：新文件 ID 從既有 max+1 開始
+   - Gap search 成功後：isolation on = 只傳新 docs，off = 全部重格式化
+   - Gap resolution enriched re-run：isolation on = 新 items + previous_draft，off = 全部
+
+3. **Critic Reference Sheet**（`reasoning/orchestrator.py`）
+   - `_build_critic_reference_sheet()` 新方法：只取 Analyst 引用的 source
+   - 安全閥：太小時 fallback full context（從 current_context 重建，非 stale self.formatted_context）
+
+4. **Analyst 介面擴充**（`reasoning/agents/analyst.py` + `prompts/analyst.py`）
+   - `previous_draft` 參數：讓 Analyst 知道前幾輪分析了什麼
+   - Prompt 注入先前草稿 section
+
+5. **Code Review 修復 3 項 bug**
+   - BUG-2 (High): Critic fallback 用 stale context → 從 current_context 重建
+   - BUG-3 (Medium): Tautological dict assertion → merge 前 overlap 檢查
+   - STYLE-1 (Low): bare except → warning log
+
+**檔案**：`config/config_reasoning.yaml`、`reasoning/orchestrator.py`、`reasoning/agents/analyst.py`、`reasoning/prompts/analyst.py`
+
+---
+
+### 2026-02-23：全專案 Code Review 修復（47 項） ✅
+
+**範圍**：21 個檔案、47 項修復（7 CRITICAL → 5 修 2 延、17 HIGH → 14 修 1 延 1 無需 1 不修、35 MEDIUM + 24 LOW 大部分修復）
+
+**Security 修復**：
+- SEC-2: CORS 白名單（移除 wildcard `*`，改 origin 反射 + Render pattern）
+- SEC-3: SQL 注入防禦（table/column 白名單）
+- SEC-5: Analyst citation 驗證 ⊆ source_map（防幻覺）
+- SEC-10: XSS 防護（DOMPurify CDN + 4 處 innerHTML sanitize）
+- SEC-13: OAuth state TTL 600s
+- SEC-20: OAuth URL encode
+- SEC-24: DB connection cleanup
+
+**Bug 修復（Crawler）**：
+- ENG-1: save 失敗回傳正確狀態
+- ENG-4: stats failed 雙重計數
+- ENG-7: parse exception 不再算 BLOCKED
+- ENG-8/17: _process_url 加 _ensure_date
+- ENG-9: crawled_ids 改 SQLite 查詢（不 OOM）
+- ENG-10/11/12: FileHandler cleanup + Big5 fallback + close error handling
+
+**Bug 修復（Indexing）**：
+- IDX-1: QdrantClient 連線洩漏
+- IDX-3: _save_tasks 原子寫入
+- IDX-4: Resumable mode flush Qdrant
+- IDX-5: embed_texts retry with backoff
+- IDX-6: SQLite RLock 保護
+- IDX-7: mark_failed 原子 upsert
+- IDX-8/9/10: WebSocket set + buffer swap
+- IDX-11/12/13/14/15/16/17: 多項穩定性修復
+
+**Bug 修復（Ranking）**：
+- RNK-1/9: cache 分離 + params key
+- RNK-2: MMR 預計算 similarity matrix
+- RNK-3: XGBoost dict/object 雙模式
+- RNK-4: rankedAnswers gather return
+- RNK-7: BM25 title boost（不膨脹 doc_length）
+- RNK-10/14/15: 多項小修
+
+**Bug 修復（Reasoning）**：
+- RSN-1: 空 draft 攔截
+- RSN-2: inner timeout < outer timeout
+- RSN-4: CoV 失敗主動 alert
+- RSN-5: system hints 每輪重建
+- RSN-7/10/11/12: 多項防禦性修復
+- RSN-8: writer 用 PromptBuilder
+
+**延後**：SEC-1/9/18/19（JWT 未設定）、SEC-6（獨立架構重構）
+
+**詳細報告**：`docs/code-review-0223.md`
+
+---
+
+### 2026-02-23：Chinatimes Multi-Category 修復 + TimeoutError Bug Fix ✅
+
+**Chinatimes full_scan 覆蓋率根因調查與修復**
+
+1. **根因發現：260402 不是萬用路徑**
+   - 同 100 篇文章：260402 = 12% 成功，正確 category = 96%
+   - 136 個唯一 category，top 40 覆蓋 95.6%
+   - `?chdtv` 參數和 session rotation 均無影響
+   - 這是 full_scan ~3K/月 vs sitemap ~50K/月 差距的根因
+
+2. **Multi-Category 修復**
+   - `chinatimes_parser.py`: `REALTIMENEWS_CATEGORY_CODES` 擴展至 40 個
+   - `settings.py`: `max_candidate_urls=39`, `concurrent_limit=5`
+   - `engine.py`: per-source blocked tolerance
+
+3. **TimeoutError → NOT_FOUND Bug 修復**
+   - `engine.py:512`: timeout 不再永久跳過，改為進入 retry 迴圈
+
+4. **GCP 部署與驗證**
+   - 清除 1,069,846 筆舊 not_found + watermark 重設至 2025-06-30
+   - 新 task 啟動，初步驗證 15 秒 11 success（舊版 1-2）
+
+---
+
+### 2026-02-23：Registry 合併 + daily-news-collector 平行化 ✅
+
+**3 項改進**
+
+1. **筆電 registry 合併至桌機**
+   - SCP 筆電 `crawled_registry.db`（20MB）至桌機
+   - `ATTACH DATABASE` + `INSERT OR IGNORE` 合併（crawled_articles + failed_urls + not_found_urls）
+   - 結果：+36,631 crawled_articles（MOEA +5,805、UDN +30,752）、+13,975 failed_urls、+8 not_found
+   - 桌機 registry **總計達 1,910,520 筆**
+
+2. **daily-news-collector.py 平行化**（`scripts/daily-news-collector.py`）
+   - `main()` 從串列 `for` 迴圈改為 `asyncio.gather()` 並行執行
+   - 新增 `_safe_run()` wrapper：每個 source 獨立 try/except，單一失敗不影響其他
+   - 預期執行時間：~60 分鐘 → ~20 分鐘
+
+3. **今日新聞收集**（parallel 化前的最後一次串列執行）
+   - ltn=1,407、chinatimes=986、udn=899、cna=53、moea=4、esg_bt=3、einfo=1
+   - 合計 3,353 篇新文章
+
+**GCP 狀態**（同日）：
+- Chinatimes full_scan 持續運行：18,396 success、blocked=0
+- 掃描進度 2025-09-10 → 2026-02-14，目標完成日 2026-02-19
+
+---
+
 ### 2026-02-15：Chinatimes 雙機協作 + Sitemap Date Filter 修復 ✅
 
 **3 項改進**

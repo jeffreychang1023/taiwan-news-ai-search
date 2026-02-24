@@ -2,36 +2,48 @@
 
 ## 目前重點（2026-02）
 
-### 🔄 進行中：三機 Backfill 收尾
+### 🔄 進行中：Backfill 收尾
 
 **目標**：完成所有 7 source 的歷史資料爬取
 
 **已完成 Sources**：
 - ✅ LTN：693,273 篇（watermark 5,342,046）
 - ✅ CNA：242,011 篇（watermark 2026-02-12）
-- ✅ UDN 桌機：2025-08+（完成）
+- ✅ UDN：桌機 2025-08+、GCP 2024-01→2025-07、筆電 2024-10→2025-02（全部合併）
 - ✅ ESG BT：backfill 完成
+- ✅ MOEA：5,805 篇（筆電，已合併至桌機）
+- ✅ 筆電資料合併至桌機（registry 總計 1,910,520 筆）
 
 **進行中**：
-1. **桌機 — Chinatimes sitemap**（重啟，fixed date filter）
-   - 已爬 ~53K 篇，2024+ 文章集中前 ~30 sub-sitemap
-2. **GCP — Chinatimes sitemap 雙機協作**（自動腳本運行中）
-   - 從 sub-sitemap #980 往回跑，自動加速空區間
-   - GCP UDN Phase 2 + Retry 已完成
-3. **桌機 — einfo full_scan**
-   - ID 238K → 270K，proxy pool
-4. **筆電待部署**
-   - MOEA backfill（start_id=100000, end_id=122000）
-   - UDN sitemap 2024-10→2025-02
+1. **GCP — Chinatimes full_scan（新版 multi-category）**
+   - Task: `fullscan_chinatimes_29_1771827084`
+   - **修復後重啟**：清除 1M+ 舊 not_found、watermark 重設至 2025-06-30
+   - 預期覆蓋率 ~95.6%（舊版 ~13%，top 40 category codes）
+   - 需持續監控確認效果
+2. **桌機 — einfo**（背景，proxy pool）
 
 ### 📋 Backfill 完成後
 
-1. **資料收回**：筆電/GCP 資料 merge_registry.py + retry failed_urls
-2. **效能優化**：Reasoning 延遲分析、token 減少
+1. **監控 GCP 新 full_scan**：確認 hit rate 從 ~2.5% 提升至預期水準
+2. **GCP 資料收回**：`merge_registry.py` 將 GCP Chinatimes 資料合併至桌機
+3. **效能優化**：Reasoning 延遲分析、token 減少
 
 ---
 
 ## 短期任務（Backfill 完成後）
+
+### 0. SEC-6 Phase 1 驗證與 Phase 2
+**優先級**：高
+
+**Phase 1 已完成**（`agent_isolation: false`，待驗證）：
+- 啟用 `agent_isolation: true`
+- 觀察 gap search 查詢的 SEC-6 log（context 不增長、reference sheet reduction %）
+- 比對 flag on/off 的引用覆蓋率
+
+**Phase 2（Phase 1 驗證後）**：
+- `ExtractedFact` schema（fact + source_ids + relevance）
+- Orchestrator 累積邏輯（dedup by fact+source_ids，cap 50）
+- Analyst prompt 注入 accumulated_knowledge
 
 ### 1. 效能優化
 **優先級**：高
@@ -86,7 +98,7 @@
 
 ## 已完成
 
-Track A-T（共 20 個）已完成。詳見 `.claude/COMPLETED_WORK.md`。
+Track A-W（共 23 個）已完成。詳見 `.claude/COMPLETED_WORK.md`。
 
 ---
 

@@ -4,6 +4,106 @@
 
 ---
 
+## ✅ Track Y：SEC-6 Lossless Agent Isolation Phase 1（2026-02-23）
+
+**目標**：防止 `reasoning/orchestrator.py` gap resolution 迴圈中 `current_context` 無限增長，超出 LLM token 上限。每個 agent 只注入它需要的 context，零 LLM 行為變更。
+
+### 修改檔案
+
+| 檔案 | 改動摘要 |
+|------|----------|
+| `config/config_reasoning.yaml` | Feature flag `agent_isolation: false` + 配置區塊（thresholds） |
+| `reasoning/orchestrator.py` | `_format_context_shared()` +`start_id` 參數；`_build_critic_reference_sheet()` 新方法；gap loop context 路由；critic reference sheet；writer draft 長度監控；citation 驗證 |
+| `reasoning/agents/analyst.py` | `research()` +`previous_draft` 參數 |
+| `reasoning/prompts/analyst.py` | `build_research_prompt()` +`previous_draft` 參數，注入先前草稿 |
+
+### 核心設計
+
+1. **Feature Flag 控制**：`reasoning.features.agent_isolation`（預設 false）
+   - Flag off = 完全保持既有行為（所有 `else` branch 為原始碼）
+   - Flag on = context 路由隔離
+
+2. **Gap Search 隔離**（SEARCH_REQUIRED 路徑）
+   - `_format_context_shared(new_context, start_id=N)` 只格式化新文件
+   - `source_map.update()` 累積全部 source，`formatted_context` 只有新批次
+   - ID collision 檢查在 merge 前執行
+
+3. **Gap Resolution 隔離**（Stage 5 enriched re-run）
+   - 只傳新 context items + `previous_draft`（讓 Analyst 知道前幾輪分析了什麼）
+   - Prompt 注入：「你之前的分析草稿（參考用）」
+
+4. **Critic Reference Sheet**
+   - `_build_critic_reference_sheet(citations_used)` 只取被引用的 source
+   - 安全閥：ref_sheet < 1000 chars 或 citations < 2 → fallback full context（從 `current_context` 重建）
+   - Log reduction %
+
+5. **監控**
+   - Citation 驗證：`citations_used` vs `source_map`，invalid → error log
+   - Writer draft 長度超過 20K → warning
+   - SEC-6 prefix 的 structured log
+
+### Code Review 修復（同 session）
+
+| Bug | 嚴重度 | 修復 |
+|-----|--------|------|
+| Critic fallback 用 stale `self.formatted_context`（isolation mode 下只有最新 batch） | High | 改為從 `current_context` 重建 full context |
+| Dict keys 永遠唯一的 tautological assertion | Medium | 改為 merge 前 overlap 檢查 |
+| `_build_critic_reference_sheet` bare except 無 log | Low | 新增 warning log |
+
+### 注意事項
+
+- **Phase 2 待做**：`ExtractedFact` schema + accumulated_knowledge 累積邏輯（Phase 1 驗證有效後）
+- **`seen_citation_ids`** 已追蹤但未使用（Phase 2 prep）
+- **驗證方式**：啟用 `agent_isolation: true` 後，觀察 SEC-6 開頭的 log
+
+---
+
+## ✅ Track X：全專案 Code Review 修復（2026-02-23）
+
+**目標**：修復 code review 報告中的 47 項 Security、Bug、效能問題
+
+### 修改檔案
+
+| 檔案 | 修復 ID | 改動摘要 |
+|------|---------|----------|
+| `crawler/core/engine.py` | ENG-1,4,5,7,8,9,10,11 | save 狀態修正、double count、asyncio deprecated、parse≠blocked、_ensure_date、crawled_ids→SQLite、FileHandler cleanup、Big5 fallback |
+| `crawler/core/crawled_registry.py` | IDX-6,7,10,15,16 | RLock SQL 保護、atomic upsert、buffer swap、precise LIKE、close flush |
+| `crawler/subprocess_runner.py` | ENG-12 | engine.close() try/except |
+| `indexing/dashboard_api.py` | IDX-1,3,8,9,11,12,18,19 | Qdrant close、atomic save、WebSocket set、task prune、fd leak、int validation、asyncio fix |
+| `indexing/pipeline.py` | IDX-4,13,14 | resumable flush、buffer rotate、checkpoint off-by-one |
+| `indexing/qdrant_uploader.py` | IDX-5,17,21 | embed retry、len check、docstring |
+| `webserver/middleware/cors.py` | SEC-2 | CORS origin 白名單 + Render pattern |
+| `webserver/routes/oauth.py` | SEC-13,20 | state TTL 600s、URL encode |
+| `core/query_logger.py` | SEC-3,24 | SQL 白名單、connection cleanup |
+| `core/retriever.py` | RNK-1,9,11,12 | cache 分離、params key、移除 pip install、移除讀 lock |
+| `core/ranking.py` | RNK-4,10,14,15 | gather return、name init、off-by-one、get() |
+| `core/mmr.py` | RNK-2,5 | 預計算 similarity matrix、dimension warning |
+| `core/xgboost_ranker.py` | RNK-3,8 | dict attribute、NaN handling |
+| `core/bm25.py` | RNK-7 | title boost multiplier（不膨脹 doc_length） |
+| `training/feature_engineering.py` | RNK-20 | bare except → except Exception |
+| `reasoning/orchestrator.py` | SEC-5,RSN-1,5,7,10,11,12 | citation 驗證、空 draft 攔截、hints rebuild、response init、tracer safe、no-results、div-by-zero |
+| `reasoning/agents/base.py` | RSN-2 | inner timeout < outer |
+| `reasoning/agents/writer.py` | RSN-8 | 統一用 PromptBuilder |
+| `reasoning/agents/critic.py` | RSN-4 | CoV 失敗 → verification_status alert |
+| `static/news-search.js` | SEC-10 | DOMPurify.sanitize() × 4 處 |
+| `static/news-search-prototype.html` | SEC-10 | DOMPurify CDN script tag |
+
+### 延後項目
+
+| ID | 原因 |
+|----|------|
+| SEC-1 + SEC-9 + SEC-18 + SEC-19 | JWT 認證尚未設定，等登入系統 |
+| SEC-6 | Lossless Agent Isolation 架構重構，獨立任務 |
+
+### 注意事項
+
+- **RNK-7**：BM25 `calculate_corpus_stats()` 不再 3x 重複 title → `avg_doc_length` 改變，需重建 corpus stats
+- **RSN-4**：前端需讀取 `verification_status` / `verification_message` 顯示未驗證提示
+- **SEC-2**：可透過 `CORS_ALLOWED_ORIGINS` 環境變數擴充允許的 origin
+- **ENG-9**：crawled_ids 從記憶體 set 改為 SQLite 查詢，full_scan 每筆 +0.3ms overhead
+
+---
+
 ## ✅ Track T：Chinatimes 雙機協作 + Date Filter 修復（2026-02-15）
 
 **目標**：桌機+GCP 雙機夾擊加速 Chinatimes sitemap backfill
@@ -562,4 +662,80 @@ python -m indexing.pipeline data.tsv --site udn --resume
 
 ---
 
-*更新：2026-02-12*
+---
+
+## ✅ Track W：Chinatimes Multi-Category 修復 + TimeoutError Bug Fix（2026-02-23）
+
+**目標**：解決 Chinatimes full_scan 覆蓋率極低（~3K/月 vs sitemap ~50K/月）的根因
+
+### 根因調查
+
+**關鍵發現**：260402 category code 不是萬用路徑。每篇文章只有其正確 category code 能存取。
+
+| 測試 | 結果 |
+|------|------|
+| 同 100 篇文章，260402 URL | 12% 成功 |
+| 同 100 篇文章，正確 category URL | 96% 成功 |
+| `?chdtv` 參數 | 零影響 |
+| Session rotation | 零影響（IP 級，非 session 級） |
+| Category rotation top 10 | 31%（從 16% 提升，但遠不夠） |
+
+**Category 分佈**：136 個唯一 category。Top 40 = 95.6%，Top 10 僅 66.5%。
+
+### 修改檔案
+
+| 檔案 | 改動 |
+|------|------|
+| `crawler/parsers/chinatimes_parser.py` | `REALTIMENEWS_CATEGORY_CODES` 擴展至 40 個（含百分比註釋）；`get_candidate_urls()` 回傳 39 個候選 |
+| `crawler/core/settings.py` | Chinatimes overrides: `max_candidate_urls=39`, `concurrent_limit=5`, `delay_range=(0.8, 2.0)` |
+| `crawler/core/engine.py` | TimeoutError 修復（移除 `return NOT_FOUND`）+ per-source blocked tolerance |
+
+### TimeoutError → NOT_FOUND Bug 修復
+
+- **根因**：`engine.py:507` 的 `asyncio.TimeoutError` handler 直接 return `(None, CrawlStatus.NOT_FOUND)`
+- NOT_FOUND 是永久跳過（寫入 `not_found_articles` 表），不會 retry
+- **修復**：移除 return，讓 timeout 像其他 exception 一樣進入 retry 迴圈
+- 影響：所有 7 source 的 timeout 文章不再被永久跳過
+
+### GCP 部署
+
+- SCP 3 檔案至 GCP（parser + settings + engine）
+- 清除 1,069,846 筆舊 not_found（全是 260402-only 結果）
+- Watermark 重設至 2025-06-30（sitemap 已覆蓋之前的日期）
+- 新 task: `fullscan_chinatimes_29_1771827084`
+- 初步驗證：15 秒 11 success（舊版同時段 1-2）
+
+### 教訓
+
+- **「260402 是萬用路徑」是錯的** — 來自早期少量測試的錯誤結論，影響數週的 full_scan 效率
+- 每個假設都需要控制變量的 A/B 測試驗證
+
+---
+
+## ✅ Track V：Registry 合併 + daily-news-collector 平行化（2026-02-23）
+
+**目標**：整合筆電爬取資料、優化每日新聞收集效率
+
+### 修改檔案
+
+| 檔案 | 改動 |
+|------|------|
+| `scripts/daily-news-collector.py` | `main()` 改為 `asyncio.gather` + `_safe_run()` wrapper |
+
+### Registry 合併
+
+- 筆電 `crawled_registry.db`（20MB）SCP 至桌機
+- 合併方式：`ATTACH DATABASE` + `INSERT OR IGNORE`（crawled_articles、failed_urls、not_found_urls 三表）
+- 結果：+36,631 crawled_articles（MOEA +5,805、UDN +30,752）、+13,975 failed_urls、+8 not_found
+- 桌機 registry 總計：**1,910,520 筆**
+
+### daily-news-collector 平行化
+
+- **原始**：`for source in SOURCES: await run_source(source)`（串列，~60 分鐘）
+- **修改**：`asyncio.gather(*[_safe_run(s) for s in SOURCES])`（並行，~20 分鐘）
+- `_safe_run()` wrapper：每個 source 獨立 try/except，單一 source 失敗不影響其他 source
+- 今日執行結果：ltn=1,407、chinatimes=986、udn=899、cna=53、moea=4、esg_bt=3、einfo=1（合計 3,353 篇）
+
+---
+
+*更新：2026-02-23*

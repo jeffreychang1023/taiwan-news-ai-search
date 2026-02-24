@@ -102,14 +102,16 @@
 
 ### 已完成
 
-Track A-T 共 20 個完成項目，涵蓋 Analytics、BM25、MMR、Reasoning、XGBoost、Crawler Subprocess、Dashboard 穩定性、三機協作等。
+Track A-W 共 23 個完成項目，涵蓋 Analytics、BM25、MMR、Reasoning、XGBoost、Crawler Subprocess、Dashboard 穩定性、三機協作、Chinatimes Multi-Category 修復等。
 
 **詳細資訊**：見 `.claude/COMPLETED_WORK.md`
 
 ### 目前工作
 
-🔄 **三機 Backfill 收尾**：GCP UDN 完成 → Chinatimes 雙機協作中，桌機=Chinatimes sitemap + einfo，筆電=待 MOEA+UDN sitemap
-🔄 **效能優化**（Backfill 完成後）：Reasoning 延遲分析、token 減少
+🔄 **全專案 Code Review 修復完成**：47 項 Security/Bug/效能修復（21 檔案），見 `docs/code-review-0223.md`
+🔄 **待後續**：JWT 認證（SEC-1/9）、Agent Isolation（SEC-6）、BM25 corpus stats 重建
+🔄 **GCP Chinatimes full_scan（新版 multi-category）** 持續運行
+🔄 **Registry 總計 1,910,520 筆**
 
 **規劃**：見 `.claude/NEXT_STEPS.md` 與 `.claude/CONTEXT.md`
 
