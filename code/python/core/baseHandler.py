@@ -20,9 +20,8 @@ import json
 import core.query_analysis.decontextualize as decontextualize
 import core.query_analysis.analyze_query as analyze_query
 import core.query_analysis.memory as memory
-import core.query_analysis.query_rewrite as query_rewrite
-import core.query_analysis.time_range_extractor as time_range_extractor
-import core.query_analysis.author_intent_detector as author_intent_detector
+import core.query_analysis.query_understanding as query_understanding
+# Replaced by query_understanding: query_rewrite, time_range_extractor, author_intent_detector
 import core.ranking as ranking
 import core.query_analysis.required_info as required_info
 import traceback
@@ -353,9 +352,7 @@ class NLWebHandler:
         tasks.append(asyncio.create_task(self.decontextualizeQuery().do()))
         # FastTrack disabled - all searches now use regular path for unified vector/MMR handling
         # tasks.append(asyncio.create_task(fastTrack.FastTrack(self).do()))
-        tasks.append(asyncio.create_task(query_rewrite.QueryRewrite(self).do()))
-        tasks.append(asyncio.create_task(time_range_extractor.TimeRangeExtractor(self).do()))
-        tasks.append(asyncio.create_task(author_intent_detector.AuthorIntentDetector(self).do()))
+        tasks.append(asyncio.create_task(query_understanding.QueryUnderstanding(self).do()))
 
         # Check if a specific tool is requested via the 'tool' parameter
         requested_tool = get_param(self.query_params, "tool", str, None)
