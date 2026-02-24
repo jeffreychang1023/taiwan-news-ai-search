@@ -1554,6 +1554,26 @@
             if (chatLoadingEl) chatLoadingEl.classList.remove('active');
         }
 
+        // Clear all query-related UI state before starting a new search
+        function clearQueryState() {
+            // Clear deep research state
+            currentResearchReport = null;
+            currentArgumentGraph = null;
+            currentChainAnalysis = null;
+
+            // Clear time filter warning
+            const timeWarning = document.getElementById('timeFilterWarning');
+            if (timeWarning) timeWarning.remove();
+
+            // Clear AI summary content
+            const aiSummaryContent = document.getElementById('aiSummaryContent');
+            if (aiSummaryContent) aiSummaryContent.innerHTML = '';
+
+            // Hide AI summary section
+            const aiSummarySection = document.getElementById('aiSummarySection');
+            if (aiSummarySection) aiSummarySection.style.display = 'none';
+        }
+
         // Bug #23: UI state machine — toggle between idle and processing states
         function setProcessingState(isProcessing) {
             const searchBtn = document.getElementById('btnSearch');
@@ -1587,6 +1607,7 @@
 
             // Bug #23: Cancel all active requests (search, DR, FC) before starting new search
             cancelAllActiveRequests();
+            clearQueryState();
             setProcessingState(true);
             const mySearchGeneration = searchGenerationId;
             currentSearchAbortController = new AbortController();
