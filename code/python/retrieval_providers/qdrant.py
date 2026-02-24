@@ -879,26 +879,12 @@ class QdrantVectorClient(RetrievalClientBase):
 
                 logger.debug(f"Extracted {len(all_keywords)} keywords for hybrid search")
 
-                # Identify critical domain keywords that should be required
-                # First, find which domain(s) the query is about
-                domain_indicators = ['零售', '金融', '製造', '醫療', '教育', '政府', '農業', '運輸',
-                                    '物流', '通訊', '媒體', '娛樂', '旅遊', '餐飲', '房地產', '能源']
-
-                # Define domain-specific company/entity names that indicate the domain
-                # This helps match articles about retail companies even if "零售" isn't mentioned
-                domain_entities = {
-                    '零售': ['walmart', 'target', 'amazon', 'momo', '7-eleven', '全家', 'familymart',
-                            '統一超商', '家樂福', 'carrefour', '好市多', 'costco', 'pchome', '蝦皮', 'shopee',
-                            '零售it', 'retail'],
-                    '金融': ['fintech', '金融科技', '銀行', 'bank', '證券', '保險', '投資', '花旗', '摩根'],
-                    '製造': ['tsmc', '台積電', '鴻海', 'foxconn', '製造業', '工廠', 'factory'],
-                }
-
-                # Find which domains are mentioned in the query
-                query_domains = [domain for domain in domain_indicators if domain in query]
-
-                if query_domains:
-                    logger.info(f"===== HYBRID SEARCH V2 ACTIVE ===== Query domains detected: {query_domains} - will filter results to only include articles containing these domains or related entities")
+                # Domain context from QueryUnderstanding (LLM-based, replaces hardcoded lists)
+                handler = kwargs.get('handler')
+                domain_context = getattr(handler, 'domain_context', {}) if handler else {}
+                boost_keywords = domain_context.get('boost_keywords', [])
+                if boost_keywords:
+                    logger.info(f"===== HYBRID SEARCH V2 ACTIVE ===== Domain boost keywords from QueryUnderstanding: {boost_keywords}")
 
                 # Retrieve more candidates for keyword re-ranking
                 # CRITICAL: Need to retrieve many more results because vector search alone
@@ -927,8 +913,6 @@ class QdrantVectorClient(RetrievalClientBase):
                 # Apply keyword boosting to results
                 if all_keywords:
                     scored_results = []
-                    on_topic_results = []  # Results that match critical keywords
-                    off_topic_results = []  # Results that don't match critical keywords
                     point_scores = {}  # Dictionary to store BM25/keyword scores by URL
 
                     # Get BM25 configuration
@@ -977,53 +961,6 @@ class QdrantVectorClient(RetrievalClientBase):
                         name = payload.get("name", "").lower()
                         schema_json = payload.get("schema_json", "").lower()
 
-                        # Check if article contains the query's domain(s) or related entities
-                        # Check both the domain keyword itself (e.g., "零售") AND company names (e.g., "walmart")
-                        has_critical_keyword = False
-                        if query_domains:
-                            # First check for negative indicators - publications that are about OTHER domains
-                            # These mention retail/finance/etc. but are not ABOUT that domain
-                            negative_indicators = {
-                                '零售': ['fintech周報', 'fintech週報', 'fintech雙周報',
-                                        'martech周報', 'martech週報', 'martech雙周報',
-                                        'cloud周報', 'cloud週報', 'cloud雙周報',
-                                        'ai趨勢周報', 'ai趨勢週報', 'ai趨勢雙周報',
-                                        '金融科技', '台積電', 'tsmc', '趨勢科技', '鴻海', 'vmware', '博通'],
-                                '金融': ['零售it', 'retail', 'martech周報', 'martech週報', 'martech雙周報'],
-                                '製造': ['零售it', 'retail', 'fintech周報', 'fintech週報', 'fintech雙周報'],
-                            }
-
-                            is_negative = False
-                            for domain in query_domains:
-                                if domain in negative_indicators:
-                                    for neg_indicator in negative_indicators[domain]:
-                                        if neg_indicator in name.lower():
-                                            is_negative = True
-                                            break
-                                if is_negative:
-                                    break
-
-                            # If article has negative indicators, skip it
-                            if is_negative:
-                                has_critical_keyword = False
-                            else:
-                                # Check for positive indicators
-                                # STRICTER: Require domain keyword in TITLE or known entity in title/body
-                                for domain in query_domains:
-                                    # Check if domain keyword is in TITLE (not just anywhere in content)
-                                    if domain.lower() in name:
-                                        has_critical_keyword = True
-                                        break
-
-                                    # Check domain-specific entity names (can be in title or body)
-                                    if domain in domain_entities:
-                                        for entity in domain_entities[domain]:
-                                            if entity.lower() in name or entity.lower() in schema_json:
-                                                has_critical_keyword = True
-                                                break
-                                    if has_critical_keyword:
-                                        break
-
                         # Calculate BM25 score or fallback to keyword boost
                         if use_bm25 and bm25_scorer:
                             # BM25 scoring - combine title and description
@@ -1068,8 +1005,9 @@ class QdrantVectorClient(RetrievalClientBase):
 
                         # Apply recency boost for temporal queries at retrieval level
                         # This is CRITICAL because we only pass top N results to the LLM ranker
-                        temporal_keywords = ['最新', '最近', '近期', 'latest', 'recent', '新', '現在', '目前', '當前']
-                        is_temporal_query = any(keyword in query for keyword in temporal_keywords)
+                        # Temporal detection from QueryUnderstanding (replaces hardcoded keyword list)
+                        temporal_range = getattr(handler, 'temporal_range', {}) if handler else {}
+                        is_temporal_query = temporal_range.get('is_temporal', False)
 
                         if is_temporal_query:
                             try:
@@ -1118,30 +1056,21 @@ class QdrantVectorClient(RetrievalClientBase):
                                 'keyword_boost': keyword_boost
                             }
 
-                        # Separate on-topic vs off-topic results
-                        if query_domains and has_critical_keyword:
-                            on_topic_results.append((final_score, point))
-                        elif query_domains and not has_critical_keyword:
-                            off_topic_results.append((final_score, point))
-                        else:
-                            # No domain filtering in query, all results are valid
-                            scored_results.append((final_score, point))
+                        # Domain boost: boost articles that contain boost_keywords
+                        domain_boost = 0.0
+                        if boost_keywords:
+                            for kw in boost_keywords:
+                                kw_lower = kw.lower()
+                                if kw_lower in name:
+                                    domain_boost += 0.3  # Title match — strong boost
+                                elif kw_lower in schema_json:
+                                    domain_boost += 0.1  # Body match — moderate boost
 
-                    # Combine results: ONLY return on-topic results for domain-specific queries
-                    if query_domains:
-                        on_topic_results.sort(key=lambda x: x[0], reverse=True)
-                        off_topic_results.sort(key=lambda x: x[0], reverse=True)
+                            final_score = final_score + domain_boost
 
-                        # ONLY use on-topic results - no backfill
-                        # User has hundreds of retail articles, so we should have enough
-                        scored_results = on_topic_results
-                        logger.info(f"Hybrid search: {len(on_topic_results)} on-topic results (strict domain filtering, no backfill)")
+                        scored_results.append((final_score, point))
 
-                        if len(off_topic_results) > 0:
-                            logger.debug(f"Filtered out {len(off_topic_results)} off-topic results")
-                    else:
-                        # No domain filtering in query, sort all results
-                        scored_results.sort(key=lambda x: x[0], reverse=True)
+                    scored_results.sort(key=lambda x: x[0], reverse=True)
 
                     # Apply generic payload filters (date range, author, etc.)
                     _payload_filters = kwargs.get('filters')
