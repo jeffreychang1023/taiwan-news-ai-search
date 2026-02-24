@@ -162,6 +162,8 @@ def get_prompt_variable_value(variable, handler):
             value = f"Focus on the most recent {temporal_range['relative_days']} days"
         else:
             value = ""
+    elif variable == "system.query_analysis_hints":
+        value = getattr(handler, 'query_analysis_hints', '')
     else:
         logger.warning(f"Unknown variable: {variable}")
         value = ""
