@@ -13,6 +13,7 @@ myenv
 venv
 .env
 .env.*
+!.env.example
 data/
 *.tsv
 
