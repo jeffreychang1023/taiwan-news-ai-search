@@ -886,6 +886,10 @@ class QdrantVectorClient(RetrievalClientBase):
                 if boost_keywords:
                     logger.info(f"===== HYBRID SEARCH V2 ACTIVE ===== Domain boost keywords from QueryUnderstanding: {boost_keywords}")
 
+                # Temporal detection from QueryUnderstanding (replaces hardcoded keyword list)
+                temporal_range = getattr(handler, 'temporal_range', {}) if handler else {}
+                is_temporal_query = temporal_range.get('is_temporal', False)
+
                 # Retrieve more candidates for keyword re-ranking
                 # CRITICAL: Need to retrieve many more results because vector search alone
                 # ranks keyword-matching articles very low (e.g., retail articles at rank 127+)
@@ -1005,10 +1009,6 @@ class QdrantVectorClient(RetrievalClientBase):
 
                         # Apply recency boost for temporal queries at retrieval level
                         # This is CRITICAL because we only pass top N results to the LLM ranker
-                        # Temporal detection from QueryUnderstanding (replaces hardcoded keyword list)
-                        temporal_range = getattr(handler, 'temporal_range', {}) if handler else {}
-                        is_temporal_query = temporal_range.get('is_temporal', False)
-
                         if is_temporal_query:
                             try:
                                 # Parse publication date from schema_json
