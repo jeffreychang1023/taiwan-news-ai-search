@@ -1,7 +1,16 @@
+# ============================================================
+# IMPORTANT: Requires Python 3.11 (NOT 3.12 or 3.13)
+# System dependencies:
+#   macOS:   xcode-select --install (C++ compiler for hnswlib)
+#   Windows: Visual Studio Build Tools with C++ workload
+#            https://visualstudio.microsoft.com/visual-cpp-build-tools/
+# ============================================================
+
 # Core dependencies - always required
 azure-search-documents>=11.4.0
 azure-identity>=1.15.0
 chardet>=5.2.0
+charset-normalizer>=3.0.0
 jsonschema>=4.19.1
 mcp>=1.0.0
 marshmallow<4.0.0
@@ -17,6 +26,11 @@ httpx>=0.28.1
 seaborn>=0.13.0
 openai>=1.12.0
 PyJWT>=2.8.0
+
+# Web scraping (required for crawler module)
+beautifulsoup4>=4.12.0
+trafilatura>=1.6.0
+htmldate>=1.5.0
 
 # Optional LLM provider dependencies
 # NOTE: These packages will be installed AUTOMATICALLY at runtime when you first use a provider.
@@ -83,7 +97,7 @@ pgvector>=0.4.0
 # zon>=3.0.0
 
 # For HNSW (Hierarchical Navigable Small World)
-# Using ChromaDB's fork which has prebuilt Linux wheels
+# Requires C++ compiler: macOS needs Xcode CLI tools, Windows needs MSVC Build Tools
 chroma-hnswlib>=0.7.0
 
 # Machine Learning dependencies for XGBoost ranking (Phase A - Week 1-2)

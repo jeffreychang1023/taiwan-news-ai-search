@@ -1,79 +1,87 @@
 # NLWeb Development Setup
 
-## Prerequisites
+## 系統需求
 
-- [Docker Desktop](https://www.docker.com/products/docker-desktop/) (Windows / Mac / Linux)
-- Git
+| 需求 | 說明 |
+|------|------|
+| **Python 3.11** | 必須是 3.11，3.12/3.13 會導致 qdrant-client 不相容 |
+| **Git** | 版本管理 |
+| **C++ 編譯器** | 部分 Python 套件（chroma-hnswlib）需要從原始碼編譯 |
 
-## Quick Start (5 minutes)
+### 安裝 Python 3.11
+
+- **macOS**: `brew install python@3.11`
+- **Windows**: https://www.python.org/downloads/release/python-3119/
+  - 安裝時**務必**勾選 "Add Python to PATH"
+
+### 安裝 C++ 編譯器
+
+- **macOS**: `xcode-select --install`（安裝 Xcode Command Line Tools）
+- **Windows**: 安裝 [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
+  - 選擇 **Desktop development with C++** workload
+
+## Quick Start
 
 ```bash
-# 1. Clone the repo
-git clone <repo-url>
-cd nlweb
+# 1. Clone
+git clone https://github.com/kuoowen-web/taiwan-news-ai-search.git
+cd taiwan-news-ai-search
 
-# 2. Set up environment variables
-cp .env.example .env
-# Edit .env and fill in your API keys (at minimum: OPENAI_API_KEY, QDRANT_URL, QDRANT_API_KEY)
+# 2. 一鍵 setup（自動檢查環境 + 建 venv + 裝 dependencies + 建 .env）
+bash scripts/setup.sh
 
-# 3. Build and run (first time takes ~3 minutes)
-docker compose up --build
+# 3. 填入 API keys（找專案負責人拿）
+#    編輯 .env，填入 OPENAI_API_KEY, QDRANT_URL, QDRANT_API_KEY
 
-# Server will be available at http://localhost:8000
+# 4. 啟動 server
+source venv/bin/activate        # macOS
+source venv/Scripts/activate    # Windows (Git Bash)
+cd code/python
+python app-file.py
+
+# 5. 打開 http://localhost:8000
 ```
 
-## Development Mode (live code editing)
+## 日常開發
+
+每次開新 terminal：
 
 ```bash
-# Start with live code mounting - your edits take effect on restart
-docker compose --profile dev up nlweb-dev --build
-```
-
-In dev mode, `code/` is mounted into the container. Edit files locally with your IDE, restart the container to see changes.
-
-## Common Commands
-
-```bash
-# Rebuild after changing requirements.txt
-docker compose build --no-cache
-
-# View logs
-docker compose logs -f
-
-# Open a shell inside the container
-docker compose exec nlweb bash
-# Or for dev mode:
-docker compose --profile dev exec nlweb-dev bash
-
-# Stop everything
-docker compose down
-```
-
-## Environment Variables
-
-See `.env.example` for all available variables with descriptions.
-
-**Required for basic operation:**
-- `OPENAI_API_KEY` - LLM provider
-- `QDRANT_URL` + `QDRANT_API_KEY` - Vector database
-
-## Python Version
-
-This project uses **Python 3.11** (not 3.13). The Docker image handles this automatically.
-
-## Without Docker (not recommended)
-
-If you must run without Docker:
-
-```bash
-# Requires Python 3.11
-python -m venv venv
-source venv/bin/activate  # Mac/Linux
-# or: venv\Scripts\activate  # Windows
-
-pip install -r requirements.txt
+cd taiwan-news-ai-search
+source venv/bin/activate        # macOS
+source venv/Scripts/activate    # Windows (Git Bash)
 cd code/python
 python app-file.py
 ```
 
-Note: Some dependencies (chroma-hnswlib, psycopg) require C/C++ compilers. Docker avoids this issue entirely.
+改 code → Ctrl+C 停 server → 重新 `python app-file.py`。
+
+## Environment Variables
+
+見 `.env.example`，每個變數都有說明。
+
+**最少需要**：
+- `OPENAI_API_KEY` — LLM
+- `QDRANT_URL` — 向量資料庫 endpoint
+- `QDRANT_API_KEY` — 向量資料庫 key
+
+## Troubleshooting
+
+### `pip install` 失敗
+
+通常是 chroma-hnswlib 編譯問題，缺 C++ 編譯器：
+- **macOS**: `xcode-select --install`
+- **Windows**: 安裝 Visual Studio Build Tools（C++ workload）
+
+### `qdrant-client` 報錯
+
+Python 版本不對。確認：
+```bash
+python --version  # 必須是 3.11.x
+```
+
+### Server 起不來
+
+1. 確認 `.env` 已填入 API keys
+2. 確認在 `code/python/` 目錄下執行
+3. 確認 venv 已 activate（terminal 前面應該有 `(venv)` 字樣）
