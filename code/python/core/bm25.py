@@ -116,57 +116,41 @@ class BM25Scorer:
 
         return idf
 
-    def calculate_score(
+    def _bm25_score_tokens(
         self,
         query_tokens: List[str],
-        document_text: str,
+        doc_term_freqs: Counter,
+        doc_length: int,
         avg_doc_length: float,
         corpus_size: int,
         term_doc_counts: Dict[str, int]
     ) -> float:
         """
-        Calculate BM25 score for a query-document pair.
+        Core BM25 scoring on pre-computed token frequencies.
 
         Args:
             query_tokens: List of tokens from the query
-            document_text: The document text to score
-            avg_doc_length: Average document length in the corpus (in tokens)
+            doc_term_freqs: Counter of term frequencies in the document
+            doc_length: Number of tokens in the document
+            avg_doc_length: Average document length in the corpus
             corpus_size: Total number of documents in the corpus
             term_doc_counts: Dictionary mapping terms to document frequency counts
 
         Returns:
-            BM25 relevance score (higher = more relevant)
+            BM25 relevance score
         """
-        if not query_tokens or not document_text:
-            return 0.0
-
-        # Tokenize the document
-        doc_tokens = self.tokenize(document_text)
-        doc_length = len(doc_tokens)
-
-        # Avoid division by zero
         if doc_length == 0 or avg_doc_length == 0:
             return 0.0
 
-        # Count term frequencies in document
-        doc_term_freqs = Counter(doc_tokens)
-
-        # Calculate BM25 score
         score = 0.0
-        for term in set(query_tokens):  # Use set to avoid counting same term multiple times
-            # Term frequency in document
+        for term in set(query_tokens):
             tf = doc_term_freqs.get(term, 0)
-
             if tf == 0:
-                continue  # Term not in document
+                continue
 
-            # Document frequency (how many docs contain this term)
             df = term_doc_counts.get(term, 0)
-
-            # Calculate IDF
             idf = self.calculate_idf(term, corpus_size, df)
 
-            # BM25 formula
             numerator = tf * (self.k1 + 1)
             denominator = tf + self.k1 * (1 - self.b + self.b * (doc_length / avg_doc_length))
 
@@ -174,6 +158,65 @@ class BM25Scorer:
             score += term_score
 
         return score
+
+    def calculate_score(
+        self,
+        query_tokens: List[str],
+        document_text: str,
+        avg_doc_length: float,
+        corpus_size: int,
+        term_doc_counts: Dict[str, int],
+        title_text: str = "",
+        title_boost: float = 1.5
+    ) -> float:
+        """
+        Calculate BM25 score for a query-document pair with optional title boosting.
+
+        Title relevance is computed separately and multiplied by title_boost,
+        avoiding the inflation of document length that occurs when title tokens
+        are added to the document body.
+
+        Args:
+            query_tokens: List of tokens from the query
+            document_text: The document text (content/description) to score
+            avg_doc_length: Average document length in the corpus (in tokens)
+            corpus_size: Total number of documents in the corpus
+            term_doc_counts: Dictionary mapping terms to document frequency counts
+            title_text: Optional title text for separate title scoring
+            title_boost: Multiplier for title BM25 score (default: 1.5)
+
+        Returns:
+            BM25 relevance score (higher = more relevant)
+        """
+        if not query_tokens or not document_text:
+            return 0.0
+
+        # Tokenize and score the document content
+        doc_tokens = self.tokenize(document_text)
+        doc_length = len(doc_tokens)
+
+        if doc_length == 0 or avg_doc_length == 0:
+            return 0.0
+
+        doc_term_freqs = Counter(doc_tokens)
+        content_score = self._bm25_score_tokens(
+            query_tokens, doc_term_freqs, doc_length,
+            avg_doc_length, corpus_size, term_doc_counts
+        )
+
+        # Compute separate title BM25 score with boost multiplier
+        title_score = 0.0
+        if title_text:
+            title_tokens = self.tokenize(title_text)
+            if title_tokens:
+                title_term_freqs = Counter(title_tokens)
+                title_length = len(title_tokens)
+                title_score = self._bm25_score_tokens(
+                    query_tokens, title_term_freqs, title_length,
+                    avg_doc_length, corpus_size, term_doc_counts
+                )
+
+        return content_score + title_score * title_boost
 
     def calculate_corpus_stats(
         self,
@@ -202,8 +245,9 @@ class BM25Scorer:
             title = doc.get(title_field, '')
             description = doc.get(description_field, '')
 
-            # Weight title tokens more heavily by including them 3 times
-            doc_text = f"{title} {title} {title} {description}"
+            # Title weighting is now handled via score multiplier in calculate_score(),
+            # not by repeating title tokens (which inflates avg_doc_length)
+            doc_text = f"{title} {description}"
 
             # Tokenize
             tokens = self.tokenize(doc_text)

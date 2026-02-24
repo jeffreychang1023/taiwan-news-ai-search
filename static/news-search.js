@@ -2078,7 +2078,7 @@
             reportContainer.style.cssText = 'padding: 20px; max-width: 900px; margin: 0 auto;';
 
             // Convert markdown to HTML
-            let reportHTML = marked.parse(report || '無結果');
+            let reportHTML = DOMPurify.sanitize(marked.parse(report || '無結果'));
 
             // Add citation links if sources are available
             if (metadata && metadata.sources && metadata.sources.length > 0) {
@@ -3276,7 +3276,7 @@
             // For user messages, escape HTML for safety
             let formattedContent = content;
             if (role === 'assistant') {
-                formattedContent = marked.parse(content);
+                formattedContent = DOMPurify.sanitize(marked.parse(content));
             } else {
                 formattedContent = escapeHTML(content);
             }
@@ -4240,7 +4240,7 @@
                     // Use marked.js for assistant messages, escape HTML for user messages
                     let formattedContent = msg.content;
                     if (msg.role === 'assistant') {
-                        formattedContent = marked.parse(msg.content);
+                        formattedContent = DOMPurify.sanitize(marked.parse(msg.content));
                     } else {
                         formattedContent = escapeHTML(msg.content);
                     }
@@ -4302,7 +4302,7 @@
                     reportContainer.style.cssText = 'padding: 20px; max-width: 900px; margin: 0 auto;';
 
                     // Convert markdown to HTML
-                    let reportHTML = marked.parse(currentResearchReport.report);
+                    let reportHTML = DOMPurify.sanitize(marked.parse(currentResearchReport.report));
 
                     // Add citation links if sources are available
                     if (currentResearchReport.sources && currentResearchReport.sources.length > 0) {

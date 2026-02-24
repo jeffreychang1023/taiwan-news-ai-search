@@ -374,16 +374,19 @@ class BaseReasoningAgent:
                     f"validation (attempt {attempt + 1}/{self.max_retries})"
                 )
 
+                # RSN-2: Inner timeout must be smaller than outer timeout
+                # so inner fires first and outer is only a safety net
+                inner_timeout = self.timeout - 10 if self.timeout > 10 else int(self.timeout * 0.8)
                 response = await asyncio.wait_for(
                     ask_llm(
                         prompt,
                         schema={},  # Schema enforcement via Pydantic post-validation
                         level=level,
-                        timeout=self.timeout,  # Pass timeout to inner call
+                        timeout=inner_timeout,  # Inner timeout fires first
                         query_params=getattr(self.handler, 'query_params', {}),
                         max_length=16384  # Large buffer for research outputs
                     ),
-                    timeout=self.timeout
+                    timeout=self.timeout  # Outer timeout as safety net
                 )
 
                 # Log raw response for debugging

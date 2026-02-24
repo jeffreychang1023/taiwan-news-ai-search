@@ -24,7 +24,8 @@ class AnalystPromptBuilder:
         enable_argument_graph: bool = False,
         enable_knowledge_graph: bool = False,
         enable_gap_enrichment: bool = False,
-        enable_web_search: bool = False
+        enable_web_search: bool = False,
+        previous_draft: Optional[str] = None  # SEC-6 Phase 1
     ) -> str:
         """
         Build research prompt from PDF System Prompt (pages 7-10).
@@ -82,6 +83,19 @@ class AnalystPromptBuilder:
         # Add gap enrichment instructions if enabled (Stage 5)
         if enable_gap_enrichment:
             prompt += self._build_gap_enrichment_instructions(enable_web_search)
+
+        # SEC-6 Phase 1: Inject previous draft for context continuity
+        if previous_draft:
+            prompt += f"""
+
+---
+
+## 你之前的分析草稿（參考用）
+
+{previous_draft}
+
+請基於此草稿，分析以下新發現的資料，並更新你的研究結論。保留先前草稿中仍然有效的分析，整合新資料的發現。
+"""
 
         return prompt
 

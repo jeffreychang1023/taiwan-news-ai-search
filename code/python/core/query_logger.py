@@ -95,9 +95,9 @@ class QueryLogger:
     def _init_database(self):
         """Initialize database schema with all necessary tables."""
         conn = self.db.connect()
-        cursor = conn.cursor()
-
         try:
+            cursor = conn.cursor()
+
             # Check if tables exist and need migration
             needs_migration = self._check_schema_migration_needed(cursor)
 
@@ -119,7 +119,6 @@ class QueryLogger:
 
             conn.commit()
             logger.info(f"Database schema initialized successfully ({self.db.db_type})")
-
         finally:
             conn.close()
 
@@ -631,13 +630,75 @@ class QueryLogger:
             except Exception as e:
                 logger.error(f"Error in logging worker: {e}")
 
+    # Whitelist of allowed table names for dynamic INSERT
+    ALLOWED_TABLES = {
+        'queries', 'retrieved_documents', 'ranking_scores',
+        'user_interactions', 'feature_vectors', 'user_feedback',
+        'tier_6_enrichment',
+    }
+
+    # Whitelist of allowed column names for dynamic INSERT
+    ALLOWED_COLUMNS = {
+        # queries
+        'query_id', 'timestamp', 'user_id', 'session_id', 'conversation_id',
+        'query_text', 'decontextualized_query', 'site', 'mode', 'model',
+        'parent_query_id', 'latency_total_ms', 'latency_retrieval_ms',
+        'latency_ranking_ms', 'latency_generation_ms', 'num_results_retrieved',
+        'num_results_ranked', 'num_results_returned', 'cost_usd',
+        'error_occurred', 'error_message', 'query_length_words',
+        'query_length_chars', 'has_temporal_indicator', 'embedding_model',
+        'schema_version',
+        # retrieved_documents
+        'doc_url', 'doc_title', 'doc_description', 'doc_published_date',
+        'doc_author', 'doc_source', 'retrieval_position',
+        'vector_similarity_score', 'keyword_boost_score', 'bm25_score',
+        'temporal_boost', 'domain_match', 'final_retrieval_score',
+        'query_term_count', 'doc_length', 'title_exact_match',
+        'desc_exact_match', 'keyword_overlap_ratio', 'recency_days',
+        'has_author', 'retrieval_algorithm',
+        # ranking_scores
+        'ranking_position', 'llm_relevance_score', 'llm_keyword_score',
+        'llm_semantic_score', 'llm_freshness_score', 'llm_authority_score',
+        'llm_final_score', 'llm_snippet', 'xgboost_score',
+        'xgboost_confidence', 'mmr_diversity_score', 'final_ranking_score',
+        'ranking_method', 'relative_score', 'score_percentile',
+        # user_interactions
+        'interaction_type', 'interaction_timestamp', 'result_position',
+        'dwell_time_ms', 'scroll_depth_percent', 'clicked',
+        'client_user_agent', 'client_ip_hash',
+        # feature_vectors
+        'query_type', 'has_brand_mention', 'doc_length_words',
+        'doc_length_chars', 'title_length', 'has_publication_date',
+        'schema_completeness', 'domain_authority', 'vector_similarity',
+        'query_term_coverage', 'temporal_relevance', 'entity_match_count',
+        'partial_match_count', 'relative_score_to_top', 'relevance_grade',
+        'created_at',
+        # user_feedback
+        'query', 'answer_snippet', 'rating', 'comment',
+        # tier_6_enrichment
+        'source_type', 'cache_hit', 'latency_ms', 'timeout_occurred',
+        'result_count', 'metadata',
+    }
+
     def _write_to_db(self, table_name: str, data: Dict[str, Any]):
         """Write data to database (synchronous, called by worker thread)."""
+        # Validate table name against whitelist
+        if table_name not in self.ALLOWED_TABLES:
+            logger.error(f"Rejected write to invalid table name: {table_name}")
+            return
+
+        # Validate column names against whitelist
+        invalid_cols = set(data.keys()) - self.ALLOWED_COLUMNS
+        if invalid_cols:
+            logger.error(f"Rejected write with invalid column names: {invalid_cols}")
+            return
+
         max_retries = 5  # Increased from 3
         # Exponential backoff: 0.5s, 1s, 2s, 4s, 8s
         retry_delays = [0.5, 1.0, 2.0, 4.0, 8.0]
 
         for attempt in range(max_retries):
+            conn = None
             try:
                 conn = self.db.connect()
                 cursor = conn.cursor()
@@ -651,7 +712,6 @@ class QueryLogger:
 
                 cursor.execute(query, list(data.values()))
                 conn.commit()
-                conn.close()
                 return  # Success, exit retry loop
 
             except Exception as e:
@@ -671,6 +731,12 @@ class QueryLogger:
                         f"Failed to write to {table_name} after {attempt + 1} attempts: {e}"
                     )
                     return
+            finally:
+                if conn is not None:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
 
     def log_query_start(
         self,
@@ -748,6 +814,7 @@ class QueryLogger:
             error_occurred: Whether an error occurred
             error_message: Error message if any
         """
+        conn = None
         try:
             conn = self.db.connect()
             cursor = conn.cursor()
@@ -785,9 +852,14 @@ class QueryLogger:
             ))
 
             conn.commit()
-            conn.close()
         except Exception as e:
             logger.error(f"Error updating query completion: {e}")
+        finally:
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
 
     def log_retrieved_document(
         self,
@@ -1061,6 +1133,7 @@ class QueryLogger:
         Returns:
             Dictionary with statistics
         """
+        conn = None
         try:
             conn = self.db.connect()
             cursor = conn.cursor()
@@ -1111,8 +1184,6 @@ class QueryLogger:
             queries_with_clicks = result[0] if isinstance(result, tuple) else result['count']
             ctr = queries_with_clicks / total_queries if total_queries > 0 else 0
 
-            conn.close()
-
             return {
                 "total_queries": total_queries,
                 "avg_latency_ms": avg_latency,
@@ -1124,6 +1195,12 @@ class QueryLogger:
         except Exception as e:
             logger.error(f"Error getting query stats: {e}")
             return {}
+        finally:
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
 
     def log_feedback(self, query: str, answer_snippet: str, rating: str, comment: str = "", session_id: str = ""):
         """Log user feedback (thumbs up/down + optional comment).

@@ -211,6 +211,15 @@ class CriticAgent(BaseReasoningAgent):
                     structured_weaknesses=result.structured_weaknesses
                 )
 
+        # RSN-4: Mark verification status when CoV was enabled but failed
+        if enable_cov and cov_verification and cov_verification.get("verification_status") == "unverified":
+            self.logger.warning("CoV verification failed - marking result as unverified")
+            # Attach verification status as dynamic attributes for frontend notification
+            result.__dict__["verification_status"] = "unverified"
+            result.__dict__["verification_message"] = cov_verification.get(
+                "verification_message", "本報告未經完整事實驗證"
+            )
+
         return result
 
     async def _extract_verifiable_claims(
@@ -381,8 +390,18 @@ class CriticAgent(BaseReasoningAgent):
             return verification_output
 
         except Exception as e:
-            self.logger.error(f"CoV: Verification failed: {e}", exc_info=True)
-            return None
+            self.logger.warning(f"CoV verification failed: {e}", exc_info=True)
+            # RSN-4: Return a degraded result with verification status
+            # so downstream can mark the response as unverified
+            return {
+                "results": [],
+                "summary": f"事實驗證失敗：{str(e)}",
+                "verified_count": 0,
+                "unverified_count": 0,
+                "contradicted_count": 0,
+                "verification_status": "unverified",
+                "verification_message": "本報告未經完整事實驗證"
+            }
 
     def _dict_to_verification_result(self, d: Dict[str, Any]):
         """

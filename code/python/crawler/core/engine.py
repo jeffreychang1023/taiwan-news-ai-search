@@ -176,8 +176,7 @@ class CrawlerEngine:
         # 初始化 SQLite Registry
         self.registry: CrawledRegistry = get_registry()
 
-        # 載入歷史記錄（去重）- 使用內存 Set 加速查詢
-        self.crawled_ids: Set[str] = set()
+        # 載入歷史記錄（去重）- URL 查詢委託給 SQLite，僅保留數字 ID 快取
         self.crawled_numeric_ids: Set[int] = set()  # 數字 ID 去重（跨 URL pattern）
         self._load_history()
 
@@ -273,6 +272,7 @@ class CrawlerEngine:
         載入歷史已爬取的 URL 記錄。
 
         優先使用 SQLite Registry，若發現舊的 txt 檔案則自動遷移。
+        URL 查詢委託給 SQLite（on-demand），僅將數字 ID 載入記憶體快取。
         """
         try:
             source_name = self.parser.source_name
@@ -288,21 +288,21 @@ class CrawlerEngine:
                     old_txt_file.rename(backup_path)
                     self.logger.info(f"Renamed old file to {backup_path.name}")
 
-            # Load URLs from SQLite into memory set for fast lookup
-            self.crawled_ids = self.registry.load_urls_for_source(source_name)
+            # Load URLs from SQLite to build numeric ID index only (not kept in memory)
+            all_urls = self.registry.load_urls_for_source(source_name)
 
             # Build numeric ID set for cross-URL-pattern dedup
             # (e.g., chinatimes article crawled as realtimenews/XXX-260405
             #  should be detected when full_scan checks realtimenews/XXX-260402)
             numeric_count = 0
-            for url in self.crawled_ids:
+            for url in all_urls:
                 nid = self.parser.extract_id_from_url(url)
                 if nid is not None:
                     self.crawled_numeric_ids.add(nid)
                     numeric_count += 1
 
-            count = len(self.crawled_ids)
-            self.logger.info(f"Loaded {count:,} crawled URLs from SQLite registry")
+            count = len(all_urls)
+            self.logger.info(f"Loaded {count:,} crawled URLs from SQLite registry (on-demand lookup)")
             if numeric_count > 0:
                 unique_ids = len(self.crawled_numeric_ids)
                 self.logger.info(f"  Numeric ID index: {unique_ids:,} unique IDs (from {numeric_count:,} URLs)")
@@ -313,8 +313,8 @@ class CrawlerEngine:
             return 0
 
     def _is_crawled(self, url: str) -> bool:
-        """檢查 URL 是否已爬取"""
-        return url in self.crawled_ids
+        """檢查 URL 是否已爬取（on-demand SQLite query）"""
+        return self.registry.is_crawled(url)
 
     def _is_any_url_crawled(self, article_id: int) -> bool:
         """Check if article has been crawled under any URL variant.
@@ -340,15 +340,13 @@ class CrawlerEngine:
         data: Optional[Dict[str, Any]] = None
     ) -> None:
         """
-        標記 URL 為已爬取，同時更新內存 Set 和 SQLite Registry。
+        標記 URL 為已爬取，更新 SQLite Registry 和數字 ID 快取。
 
         Args:
             url: 文章 URL
             data: 文章解析資料（包含 datePublished, dateModified, articleBody 等）
         """
-        self.crawled_ids.add(url)
-
-        # Also update numeric ID index
+        # Update numeric ID index (in-memory cache for cross-URL dedup)
         nid = self.parser.extract_id_from_url(url)
         if nid is not None:
             self.crawled_numeric_ids.add(nid)
@@ -468,7 +466,15 @@ class CrawlerEngine:
                                 return (None, CrawlStatus.NOT_FOUND)
                         # charset_normalizer 自動偵測編碼（取代 response.text 避免 Big5/cp950 炸）
                         detected = from_bytes(response.content).best()
-                        text = str(detected) if detected else response.content.decode('utf-8', errors='replace')
+                        if detected is not None:
+                            text = str(detected)
+                        else:
+                            # Try Big5 for Traditional Chinese sites
+                            try:
+                                response.content.decode('big5')
+                                text = response.content.decode('big5')
+                            except (UnicodeDecodeError, LookupError):
+                                text = response.content.decode('utf-8', errors='replace')
                         return (text, CrawlStatus.SUCCESS)
                     elif status == 404:
                         return (None, CrawlStatus.NOT_FOUND)
@@ -501,7 +507,15 @@ class CrawlerEngine:
                                     return (None, CrawlStatus.NOT_FOUND)
                             raw = await response.read()
                             detected = from_bytes(raw).best()
-                            text = str(detected) if detected else raw.decode('utf-8', errors='replace')
+                            if detected is not None:
+                                text = str(detected)
+                            else:
+                                # Try Big5 for Traditional Chinese sites
+                                try:
+                                    raw.decode('big5')
+                                    text = raw.decode('big5')
+                                except (UnicodeDecodeError, LookupError):
+                                    text = raw.decode('utf-8', errors='replace')
                             return (text, CrawlStatus.SUCCESS)
                         elif response.status == 404:
                             return (None, CrawlStatus.NOT_FOUND)
@@ -617,7 +631,7 @@ class CrawlerEngine:
                         continue
 
                     try:
-                        loop = asyncio.get_event_loop()
+                        loop = asyncio.get_running_loop()
                         c_data = await loop.run_in_executor(
                             None, _run_parse_in_thread, self.parser, c_html, candidate_url
                         )
@@ -654,7 +668,7 @@ class CrawlerEngine:
             return CrawlStatus.FETCH_ERROR
 
         try:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             data = await loop.run_in_executor(
                 None, _run_parse_in_thread, self.parser, html, url
             )
@@ -708,7 +722,7 @@ class CrawlerEngine:
             self.stats['failed'] += 1
             self._mark_failed(url, "parse_exception", str(e)[:200])
             await self._report_progress()
-            return CrawlStatus.BLOCKED
+            return CrawlStatus.FETCH_ERROR
 
     def _ensure_date(self, data: Dict[str, Any], html: str, url: str = "") -> Optional[Dict[str, Any]]:
         """Ensure article has a datePublished; use htmldate as fallback.
@@ -786,10 +800,9 @@ class CrawlerEngine:
         if self.auto_save:
             success = await self.pipeline.process_and_save(url, data)
             if not success:
-                self.stats['failed'] += 1
                 self._mark_failed(url, "save_error", "Pipeline save failed")
                 await self._report_progress()
-                return CrawlStatus.SUCCESS
+                return CrawlStatus.FETCH_ERROR
 
         # Mark as crawled (after successful save, or immediately if no auto-save)
         self._mark_as_crawled(url, data)
@@ -1581,13 +1594,21 @@ class CrawlerEngine:
             return CrawlStatus.BLOCKED
 
         try:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             data = await loop.run_in_executor(
                 None, _run_parse_in_thread, self.parser, html, url
             )
             if data is None:
                 self.stats['failed'] += 1
                 self._mark_failed(url, "parse_error", "Parser returned None on retry")
+                await self._report_progress()
+                return CrawlStatus.NOT_FOUND
+
+            # Ensure date exists (matching _process_article behavior)
+            data = self._ensure_date(data, html, url)
+            if data is None:
+                self.stats['failed'] += 1
+                self._mark_failed(url, "no_date", "No date found on retry")
                 await self._report_progress()
                 return CrawlStatus.NOT_FOUND
 
@@ -1616,7 +1637,7 @@ class CrawlerEngine:
             self.stats['failed'] += 1
             self._mark_failed(url, "parse_exception", str(e)[:200])
             await self._report_progress()
-            return CrawlStatus.BLOCKED
+            return CrawlStatus.FETCH_ERROR
 
     async def run_sitemap(
         self,
@@ -2201,7 +2222,7 @@ class CrawlerEngine:
         self.logger.info("=" * 50)
 
     async def close(self) -> None:
-        """關閉 Session"""
+        """關閉 Session 和 Logger FileHandlers"""
         if self.session is not None:
             try:
                 if self.session_type == SessionType.AIOHTTP:
@@ -2215,3 +2236,12 @@ class CrawlerEngine:
                 self.logger.warning(f"Error closing session: {e}")
             finally:
                 self.session = None
+
+        # Close and remove FileHandlers to prevent resource leaks
+        for handler in self.logger.handlers[:]:
+            if isinstance(handler, logging.FileHandler):
+                try:
+                    handler.close()
+                except Exception:
+                    pass
+                self.logger.removeHandler(handler)

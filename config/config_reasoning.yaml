@@ -14,6 +14,14 @@ reasoning:
     knowledge_graph_generation: false  # Phase KG: Entity-Relationship Knowledge Graph (per-request override via enable_kg param)
     gap_knowledge_enrichment: true    # Stage 5: Gap Detection with LLM Knowledge & Web Search
     cov_lite_enabled: true    # Phase 2 CoV: Chain of Verification for fact-checking claims
+    agent_isolation: false    # SEC-6: Context routing isolation (Phase 1)
+
+  # SEC-6: Agent Isolation Configuration
+  agent_isolation:
+    draft_length_warning_threshold: 20000
+    critic_reference_sheet_min_chars: 1000    # Below this, fallback to full context
+    critic_reference_sheet_min_citations: 2   # Below this, fallback to full context
+    reference_sheet_snippet_length: 500       # Max chars per source in reference sheet
 
   # TypeAgent configuration (structured LLM output with automatic validation)
   typeagent:

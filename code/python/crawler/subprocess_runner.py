@@ -135,7 +135,10 @@ async def main(params: dict, task_id: str, signal_dir: str):
 
     except asyncio.CancelledError:
         logger.info("Subprocess cancelled via stop signal")
-        await engine.close()
+        try:
+            await engine.close()
+        except Exception as close_err:
+            logger.warning(f"Error closing engine: {close_err}")
         # Send partial stats on cancellation
         result = engine.stats.copy()
         result["early_stopped"] = True
@@ -144,7 +147,10 @@ async def main(params: dict, task_id: str, signal_dir: str):
 
     except Exception as e:
         logger.error(f"Subprocess error: {e}", exc_info=True)
-        await engine.close()
+        try:
+            await engine.close()
+        except Exception as close_err:
+            logger.warning(f"Error closing engine: {close_err}")
         _send({"type": "error", "error": str(e)[:500]})
         sys.exit(1)
 

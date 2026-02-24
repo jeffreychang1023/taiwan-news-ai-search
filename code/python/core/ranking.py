@@ -118,7 +118,8 @@ The user's question is: {request.query}. The item's description is {item.descrip
         if (self.ranking_type == Ranking.FAST_TRACK and self.handler.state.should_abort_fast_track()):
             logger.info("Fast track aborted, skipping item ranking")
             logger.info("Aborting fast track")
-            return
+            return None
+        name = "unknown"
         try:
             # Handle Dict format (new) or Tuple format (legacy)
             if isinstance(item, dict):
@@ -169,7 +170,7 @@ The user's question is: {request.query}. The item's description is {item.descrip
                     logger.debug(f"Item type mismatch: expected {self.handler.required_item_type}, got {item_type} - setting score to 0")
                     ranking["score"] = 0
             
-            if (ranking["score"] > self.EARLY_SEND_THRESHOLD):
+            if (ranking.get("score", 0) > self.EARLY_SEND_THRESHOLD):
                 # Skip early send in unified mode — articles sent as batch after ranking
                 if self.handler.generate_mode != 'unified':
                     logger.info(f"High score item: {name} (score: {ranking['score']}) - sending early {self.ranking_type_str}")
@@ -180,26 +181,24 @@ The user's question is: {request.query}. The item's description is {item.descrip
                         self.handler.connection_alive_event.clear()
                         return
 
-            self.rankedAnswers.append(ansr)
-            logger.debug(f"Item {name} added to ranked answers")
+            logger.debug(f"Item {name} ranked successfully")
 
             # Analytics: Log ranking score
             if hasattr(self.handler, 'query_id'):
                 query_logger = get_query_logger()
                 try:
-                    # Get current position (will be updated after final sorting)
-                    current_position = len(self.rankedAnswers) - 1
-
                     query_logger.log_ranking_score(
                         query_id=self.handler.query_id,
                         doc_url=url,
-                        ranking_position=current_position,  # Temporary position, will update after final sort
+                        ranking_position=0,  # Temporary position, will update after final sort
                         llm_final_score=float(ranking.get("score", 0)),
                         llm_snippet=ranking.get("description", ""),
                         ranking_method='llm_fast_track' if self.ranking_type == Ranking.FAST_TRACK else 'llm_regular'
                     )
                 except Exception as log_err:
                     logger.warning(f"Failed to log ranking score: {log_err}")
+
+            return ansr
 
         except Exception as e:
             logger.error(f"Error in rankItem for {name}: {str(e)}")
@@ -385,7 +384,13 @@ The user's question is: {request.query}. The item's description is {item.descrip
 
         try:
             logger.debug(f"Running {len(tasks)} ranking tasks concurrently")
-            await asyncio.gather(*tasks, return_exceptions=True)
+            task_results = await asyncio.gather(*tasks, return_exceptions=True)
+            # Collect results from tasks instead of shared list mutation
+            for result in task_results:
+                if isinstance(result, Exception):
+                    logger.warning(f"Ranking task failed: {result}")
+                elif result is not None:
+                    self.rankedAnswers.append(result)
         except Exception as e:
             logger.error(f"Error during ranking tasks: {str(e)}")
             log(f"Error during ranking tasks: {str(e)}")
@@ -499,7 +504,7 @@ The user's question is: {request.query}. The item's description is {item.descrip
         logger.debug(f"Top 3 results: {[(r['name'], r['ranking']['score']) for r in self.handler.final_ranked_answers[:3]]}")
 
         results = [r for r in self.rankedAnswers if r['sent'] == False]
-        if (self.num_results_sent > self.NUM_RESULTS_TO_SEND):
+        if (self.num_results_sent >= self.NUM_RESULTS_TO_SEND):
             logger.info(f"Already sent {self.num_results_sent} results, returning without sending more")
             return
        

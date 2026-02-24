@@ -179,7 +179,7 @@ def extract_document_features(
         try:
             pub_dt = datetime.fromisoformat(published_date.replace('Z', '+00:00'))
             recency_days = (datetime.now(pub_dt.tzinfo) - pub_dt).days
-        except:
+        except Exception:
             recency_days = MISSING_RECENCY_DAYS  # Invalid date
     else:
         recency_days = MISSING_RECENCY_DAYS  # No date

@@ -445,15 +445,24 @@ class XGBoostRanker:
                 return ranking_results, metadata
 
             # Production mode: Re-rank by XGBoost scores
-            # Attach scores to results
+            # Attach scores to results (handle both dict and object formats)
             for i, result in enumerate(ranking_results):
-                result.xgboost_score = float(scores[i])
-                result.xgboost_confidence = float(confidences[i])
+                if isinstance(result, dict):
+                    result['xgboost_score'] = float(scores[i])
+                    result['xgboost_confidence'] = float(confidences[i])
+                else:
+                    result.xgboost_score = float(scores[i])
+                    result.xgboost_confidence = float(confidences[i])
 
             # Sort by XGBoost scores (descending)
+            def _get_xgboost_score(x):
+                if isinstance(x, dict):
+                    return x.get('xgboost_score', 0.0)
+                return getattr(x, 'xgboost_score', 0.0)
+
             reranked_results = sorted(
                 ranking_results,
-                key=lambda x: getattr(x, 'xgboost_score', 0.0),
+                key=_get_xgboost_score,
                 reverse=True
             )
 
@@ -530,6 +539,9 @@ class XGBoostRanker:
                 llm_rank_array = [llm_ranks[url] for url in common_urls]
                 xgb_rank_array = [xgb_ranks[url] for url in common_urls]
                 tau, _ = kendalltau(llm_rank_array, xgb_rank_array)
+                from math import isnan
+                if isnan(tau):
+                    tau = 0.0
                 rank_correlation = float(tau)
             else:
                 rank_correlation = 0.0

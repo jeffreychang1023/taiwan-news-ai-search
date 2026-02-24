@@ -9,8 +9,6 @@ This module provides abstract base classes and concrete implementations for data
 import os
 import time
 import asyncio
-import subprocess
-import sys
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any, Optional, Union, Tuple, Type
 import json
@@ -72,8 +70,9 @@ def merge_json_array(json_array):
 
 logger = get_configured_logger("retriever")
 
-# Client cache for reusing instances
-_client_cache = {}
+# Client caches for reusing instances
+_low_level_client_cache = {}   # For raw DB clients (Qdrant, etc.)
+_vector_client_cache = {}       # For VectorDBClient instances
 _client_cache_lock = asyncio.Lock()
 
 # Preloaded client modules
@@ -148,17 +147,10 @@ def _ensure_package_installed(db_type: str):
             _installed_packages.add(package_name)
             logger.debug(f"Package {package_name} is already installed")
         except ImportError:
-            # Package not installed, install it
-            logger.info(f"Installing {package} for {db_type} backend...")
-            try:
-                subprocess.check_call([
-                    sys.executable, "-m", "pip", "install", package, "--quiet"
-                ])
-                _installed_packages.add(package_name)
-                logger.info(f"Successfully installed {package}")
-            except subprocess.CalledProcessError as e:
-                logger.error(f"Failed to install {package}: {e}")
-                raise ValueError(f"Failed to install required package {package} for {db_type}")
+            raise ImportError(
+                f"Package '{package_name}' is required for {db_type} backend. "
+                f"Install with: pip install {package}"
+            )
 
 
 class VectorDBClientInterface(ABC):
@@ -533,8 +525,8 @@ class VectorDBClient:
         
         # Check if client already exists in cache
         async with _client_cache_lock:
-            if cache_key in _client_cache:
-                return _client_cache[cache_key]
+            if cache_key in _low_level_client_cache:
+                return _low_level_client_cache[cache_key]
             
             # Ensure required packages are installed
             _ensure_package_installed(db_type)
@@ -562,7 +554,7 @@ class VectorDBClient:
                 raise ValueError(f"Failed to load client for {db_type}: {e}")
             
             # Store in cache and return
-            _client_cache[cache_key] = client
+            _low_level_client_cache[cache_key] = client
             return client
     
     def _deduplicate_by_url(self, results: List[List[str]]) -> List[List[str]]:
@@ -949,91 +941,90 @@ class VectorDBClient:
         elif isinstance(site, str):
             site = site.replace(" ", "_")
 
-        async with self._retrieval_lock:
-            logger.info(f"Searching for '{query[:50]}...' in site: {site}, num_results: {num_results}")
-            logger.info(f"Querying {len(self.enabled_endpoints)} enabled endpoints in parallel")
-            start_time = time.time()
-            
-            # Create tasks for parallel queries to endpoints that have the requested site
-            tasks = []
-            endpoint_names = []
-            skipped_endpoints = []
-            
-            for endpoint_name in self.enabled_endpoints:
-                try:
-                    client = await self.get_client(endpoint_name)
-                    
-                    # If only one endpoint is enabled (e.g., explicit db= parameter), skip can_handle_query check
-                    if len(self.enabled_endpoints) == 1:
-                        # Single endpoint mode - use it regardless of can_handle_query
-                        logger.info(f"Single endpoint mode for {endpoint_name}, skipping can_handle_query check")
-                    else:
-                        # Check if the provider can handle this query
-                        if not await client.can_handle_query(site, **kwargs):
-                            skipped_endpoints.append(endpoint_name)
-                            continue
-                    
-                    # Use search_all_sites if site is "all"
-                    if site == "all":
-                        task = asyncio.create_task(client.search_all_sites(query, num_results, **kwargs))
-                    else:
-                        # Pass all arguments including handler to all clients
-                        # Individual clients can choose to use or ignore the handler
-                        task = asyncio.create_task(client.search(query, site, num_results, **kwargs))
-                    tasks.append(task)
-                    endpoint_names.append(endpoint_name)
-                except Exception as e:
-                    logger.warning(f"Failed to create search task for endpoint {endpoint_name}: {e}")
-            
-            if skipped_endpoints:
-                logger.debug(f"Skipped endpoints without site '{site}': {skipped_endpoints}")
-            
-            if not tasks:
-                raise ValueError("No valid endpoints available for search")
-            
-            # Execute all searches in parallel and collect results
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            
-            # Process results and handle failures gracefully
-            endpoint_results = {}
-            successful_endpoints = 0
-            
-            for endpoint_name, result in zip(endpoint_names, results):
-                if isinstance(result, Exception):
-                    logger.warning(f"Search failed for endpoint {endpoint_name}: {result}")
-                elif result is None:
-                    logger.warning(f"Endpoint {endpoint_name} returned None, treating as empty results")
-                    endpoint_results[endpoint_name] = []
+        logger.info(f"Searching for '{query[:50]}...' in site: {site}, num_results: {num_results}")
+        logger.info(f"Querying {len(self.enabled_endpoints)} enabled endpoints in parallel")
+        start_time = time.time()
+
+        # Create tasks for parallel queries to endpoints that have the requested site
+        tasks = []
+        endpoint_names = []
+        skipped_endpoints = []
+
+        for endpoint_name in self.enabled_endpoints:
+            try:
+                client = await self.get_client(endpoint_name)
+
+                # If only one endpoint is enabled (e.g., explicit db= parameter), skip can_handle_query check
+                if len(self.enabled_endpoints) == 1:
+                    # Single endpoint mode - use it regardless of can_handle_query
+                    logger.info(f"Single endpoint mode for {endpoint_name}, skipping can_handle_query check")
                 else:
-                    endpoint_results[endpoint_name] = result
-                    successful_endpoints += 1
-            
-            if successful_endpoints == 0:
-                raise ValueError("All endpoint searches failed")
-            
-            # Aggregate and deduplicate results
-            final_results = self._aggregate_results(endpoint_results)
-            
-            # Limit to requested number of results
-            # Results are already in relevance order from aggregation
-            final_results = final_results[:num_results]
-            
-            end_time = time.time()
-            search_duration = end_time - start_time
-            
-            logger.log_with_context(
-                LogLevel.INFO,
-                "Parallel search completed",
-                {
-                    "duration": f"{search_duration:.2f}s",
-                    "endpoints_queried": len(tasks),
-                    "endpoints_succeeded": successful_endpoints,
-                    "total_results": len(final_results),
-                    "site": site
-                }
-            )
-            
-            return final_results
+                    # Check if the provider can handle this query
+                    if not await client.can_handle_query(site, **kwargs):
+                        skipped_endpoints.append(endpoint_name)
+                        continue
+
+                # Use search_all_sites if site is "all"
+                if site == "all":
+                    task = asyncio.create_task(client.search_all_sites(query, num_results, **kwargs))
+                else:
+                    # Pass all arguments including handler to all clients
+                    # Individual clients can choose to use or ignore the handler
+                    task = asyncio.create_task(client.search(query, site, num_results, **kwargs))
+                tasks.append(task)
+                endpoint_names.append(endpoint_name)
+            except Exception as e:
+                logger.warning(f"Failed to create search task for endpoint {endpoint_name}: {e}")
+
+        if skipped_endpoints:
+            logger.debug(f"Skipped endpoints without site '{site}': {skipped_endpoints}")
+
+        if not tasks:
+            raise ValueError("No valid endpoints available for search")
+
+        # Execute all searches in parallel and collect results
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Process results and handle failures gracefully
+        endpoint_results = {}
+        successful_endpoints = 0
+
+        for endpoint_name, result in zip(endpoint_names, results):
+            if isinstance(result, Exception):
+                logger.warning(f"Search failed for endpoint {endpoint_name}: {result}")
+            elif result is None:
+                logger.warning(f"Endpoint {endpoint_name} returned None, treating as empty results")
+                endpoint_results[endpoint_name] = []
+            else:
+                endpoint_results[endpoint_name] = result
+                successful_endpoints += 1
+
+        if successful_endpoints == 0:
+            raise ValueError("All endpoint searches failed")
+
+        # Aggregate and deduplicate results
+        final_results = self._aggregate_results(endpoint_results)
+
+        # Limit to requested number of results
+        # Results are already in relevance order from aggregation
+        final_results = final_results[:num_results]
+
+        end_time = time.time()
+        search_duration = end_time - start_time
+
+        logger.log_with_context(
+            LogLevel.INFO,
+            "Parallel search completed",
+            {
+                "duration": f"{search_duration:.2f}s",
+                "endpoints_queried": len(tasks),
+                "endpoints_succeeded": successful_endpoints,
+                "total_results": len(final_results),
+                "site": site
+            }
+        )
+
+        return final_results
     
     async def search_by_url(self, url: str, endpoint_name: Optional[str] = None, **kwargs) -> Optional[List[str]]:
         """
@@ -1052,47 +1043,46 @@ class VectorDBClient:
             temp_client = VectorDBClient(endpoint_name=endpoint_name)
             return await temp_client.search_by_url(url, **kwargs)
         
-        async with self._retrieval_lock:
-            logger.info(f"Retrieving item with URL: {url}")
-            
-            try:
-                # For single endpoint mode, use the first (and only) endpoint
-                if self.endpoint_name:
-                    client = await self.get_client(self.endpoint_name)
-                else:
-                    # Multiple endpoints - need to search all of them
-                    for endpoint_name in self.enabled_endpoints:
-                        try:
-                            client = await self.get_client(endpoint_name)
-                            result = await client.search_by_url(url, **kwargs)
-                            if result:
-                                return result
-                        except Exception as e:
-                            logger.warning(f"Failed to search by URL in endpoint {endpoint_name}: {e}")
-                    return None
-                
-                result = await client.search_by_url(url, **kwargs)
-                
-                if result:
-                    logger.debug(f"Successfully retrieved item for URL: {url}")
-                else:
-                    logger.warning(f"No item found for URL: {url}")
-                
-                return result
-            except Exception as e:
-                logger.exception(f"Error retrieving item with URL: {url}")
-                logger.log_with_context(
-                    LogLevel.ERROR,
-                    "Item retrieval failed",
-                    {
-                        "error_type": type(e).__name__,
-                        "error_message": str(e),
-                        "url": url,
-                        "db_type": self.db_type,
-                        "endpoint": self.endpoint_name
-                    }
-                )
-                raise
+        logger.info(f"Retrieving item with URL: {url}")
+
+        try:
+            # For single endpoint mode, use the first (and only) endpoint
+            if self.endpoint_name:
+                client = await self.get_client(self.endpoint_name)
+            else:
+                # Multiple endpoints - need to search all of them
+                for endpoint_name in self.enabled_endpoints:
+                    try:
+                        client = await self.get_client(endpoint_name)
+                        result = await client.search_by_url(url, **kwargs)
+                        if result:
+                            return result
+                    except Exception as e:
+                        logger.warning(f"Failed to search by URL in endpoint {endpoint_name}: {e}")
+                return None
+
+            result = await client.search_by_url(url, **kwargs)
+
+            if result:
+                logger.debug(f"Successfully retrieved item for URL: {url}")
+            else:
+                logger.warning(f"No item found for URL: {url}")
+
+            return result
+        except Exception as e:
+            logger.exception(f"Error retrieving item with URL: {url}")
+            logger.log_with_context(
+                LogLevel.ERROR,
+                "Item retrieval failed",
+                {
+                    "error_type": type(e).__name__,
+                    "error_message": str(e),
+                    "url": url,
+                    "db_type": self.db_type,
+                    "endpoint": self.endpoint_name
+                }
+            )
+            raise
     
     async def search_all_sites(self, query: str, num_results: int = 50, 
                              endpoint_name: Optional[str] = None, **kwargs) -> List[List[str]]:
@@ -1132,58 +1122,57 @@ class VectorDBClient:
             temp_client = VectorDBClient(endpoint_name=endpoint_name)
             return await temp_client.get_sites(**kwargs)
         
-        async with self._retrieval_lock:
-            logger.info("Retrieving list of sites from database")
-            
-            try:
-                # For single endpoint mode, use the first (and only) endpoint
-                if self.endpoint_name:
-                    client = await self.get_client(self.endpoint_name)
-                    sites = await client.get_sites(**kwargs)
-                else:
-                    # Multiple endpoints - aggregate sites from all
-                    all_sites = set()
-                    for endpoint_name in self.enabled_endpoints:
-                        try:
-                            client = await self.get_client(endpoint_name)
-                            endpoint_sites = await client.get_sites(**kwargs)
-                            if endpoint_sites:  # Not None and not empty
-                                all_sites.update(endpoint_sites)
-                        except Exception as e:
-                            logger.warning(f"Failed to get sites from endpoint {endpoint_name}: {e}")
-                    sites = list(all_sites)
-                
-                # If backend doesn't support get_sites, it should return None
-                if sites is None:
-                    # Return empty list to indicate unknown sites
-                    logger.info(f"Backend doesn't support get_sites, will query for all sites")
-                    return []
-                
-                logger.log_with_context(
-                    LogLevel.INFO,
-                    "Sites retrieved",
-                    {
-                        "sites_count": len(sites),
-                        "db_type": self.db_type,
-                        "endpoint": self.endpoint_name
-                    }
-                )
-                return sites
-            except Exception as e:
-                # Backend doesn't support get_sites or error occurred
-                logger.info(f"Backend doesn't support get_sites or error occurred: {e}")
-                
-                # Return empty list to indicate unknown sites (will be queried for all)
-                logger.log_with_context(
-                    LogLevel.INFO,
-                    "Backend doesn't support get_sites, will query for all sites",
-                    {
-                        "db_type": self.db_type,
-                        "endpoint": self.endpoint_name,
-                        "error": str(e)
-                    }
-                )
+        logger.info("Retrieving list of sites from database")
+
+        try:
+            # For single endpoint mode, use the first (and only) endpoint
+            if self.endpoint_name:
+                client = await self.get_client(self.endpoint_name)
+                sites = await client.get_sites(**kwargs)
+            else:
+                # Multiple endpoints - aggregate sites from all
+                all_sites = set()
+                for endpoint_name in self.enabled_endpoints:
+                    try:
+                        client = await self.get_client(endpoint_name)
+                        endpoint_sites = await client.get_sites(**kwargs)
+                        if endpoint_sites:  # Not None and not empty
+                            all_sites.update(endpoint_sites)
+                    except Exception as e:
+                        logger.warning(f"Failed to get sites from endpoint {endpoint_name}: {e}")
+                sites = list(all_sites)
+
+            # If backend doesn't support get_sites, it should return None
+            if sites is None:
+                # Return empty list to indicate unknown sites
+                logger.info(f"Backend doesn't support get_sites, will query for all sites")
                 return []
+
+            logger.log_with_context(
+                LogLevel.INFO,
+                "Sites retrieved",
+                {
+                    "sites_count": len(sites),
+                    "db_type": self.db_type,
+                    "endpoint": self.endpoint_name
+                }
+            )
+            return sites
+        except Exception as e:
+            # Backend doesn't support get_sites or error occurred
+            logger.info(f"Backend doesn't support get_sites or error occurred: {e}")
+
+            # Return empty list to indicate unknown sites (will be queried for all)
+            logger.log_with_context(
+                LogLevel.INFO,
+                "Backend doesn't support get_sites, will query for all sites",
+                {
+                    "db_type": self.db_type,
+                    "endpoint": self.endpoint_name,
+                    "error": str(e)
+                }
+            )
+            return []
 
 
 # Factory function to make it easier to get a client with the right type
@@ -1200,20 +1189,24 @@ def get_vector_db_client(endpoint_name: Optional[str] = None,
     Returns:
         Configured VectorDBClient instance (cached if possible)
     """
-    global _client_cache
-    
-    # Create a cache key based on endpoint_name
-    # Note: We don't include query_params in the key since they're typically the same
-    cache_key = endpoint_name or 'default'
-    
+    global _vector_client_cache
+
+    # Create a cache key based on endpoint_name and query_params
+    base_key = endpoint_name or 'default'
+    if query_params:
+        params_key = "_".join(f"{k}={v}" for k, v in sorted(query_params.items()) if isinstance(v, (str, int, float, bool)))
+        cache_key = f"{base_key}_{params_key}" if params_key else base_key
+    else:
+        cache_key = base_key
+
     # Check if we have a cached client
-    if cache_key in _client_cache:
-        return _client_cache[cache_key]
-    
+    if cache_key in _vector_client_cache:
+        return _vector_client_cache[cache_key]
+
     # Create a new client and cache it
     client = VectorDBClient(endpoint_name=endpoint_name, query_params=query_params)
-    _client_cache[cache_key] = client
-    
+    _vector_client_cache[cache_key] = client
+
     return client
 
 

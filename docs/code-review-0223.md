@@ -6,6 +6,108 @@
 
 ---
 
+## 修復狀態（2026-02-23 執行）
+
+**修復範圍**：21 個檔案、~50 項修復
+**語法驗證**：20/20 通過（19 Python + 1 JS）
+
+### Phase 1 修復狀態
+
+| # | ID | 狀態 | 備註 |
+|---|-----|:----:|------|
+| 1 | SEC-1 + SEC-9 | **延後** | JWT 尚未設定，等登入系統完成 |
+| 2 | SEC-2 | **已修** | CORS origin 白名單（localhost + *.onrender.com + CORS_ALLOWED_ORIGINS env） |
+| 3 | SEC-10 | **已修** | DOMPurify CDN + 4 處 innerHTML sanitize |
+| 4 | SEC-5 + RSN-1 | **已修** | citation 驗證 ⊆ source_map + 空 draft 攔截 |
+| 5 | ENG-1 | **已修** | save 失敗回傳 FETCH_ERROR |
+| 6 | IDX-4 | **已修** | resumable mode 加 flush + checkpoint 不前進 on flush failure |
+| 7 | SEC-3 | **已修** | table/column 白名單驗證 |
+| 8 | IDX-1 | **已修** | finally: client.close() |
+| 9 | RNK-3 | **已修** | dict/object 雙模式支援 |
+
+### Phase 2 修復狀態
+
+| # | ID | 狀態 | 備註 |
+|---|-----|:----:|------|
+| 1 | ENG-6 | **無需修** | Agent 調查後發現 TimeoutError 已正確處理（回傳 FETCH_ERROR） |
+| 2 | ENG-7 | **已修** | parse exception → FETCH_ERROR，不計入 blocked |
+| 3 | IDX-7 | **已修** | INSERT ON CONFLICT DO UPDATE 原子操作 |
+| 4 | SEC-6 | **延後** | 獨立架構重構任務（Lossless Agent Isolation） |
+| 5 | IDX-6 | **已修** | RLock 保護所有 SQL 操作 |
+| 6 | RSN-7 | **已修** | response = None 初始化 |
+| 7 | ENG-4 | **已修** | 移除 _process_article 的 failed 計數 |
+| 8 | RNK-10 | **已修** | name = "unknown" 初始化 |
+| 9 | IDX-3 | **已修** | 原子寫入 temp+os.replace + asyncio Lock |
+| 10 | RSN-4 | **已修** | CoV 失敗 → verification_status:"unverified" + verification_message |
+| 11 | RSN-2 | **已修** | inner timeout = self.timeout - 10 |
+| 12 | RSN-3 | **不修** | 保留取消機制設計 |
+| 13 | RNK-4 | **已修** | gather return values → sequential append |
+| 14 | IDX-8+9 | **已修** | list → set + discard + snapshot broadcast |
+| 15 | IDX-10 | **已修** | buffer swap pattern |
+
+### Phase 3 修復狀態
+
+| # | ID | 狀態 | 備註 |
+|---|-----|:----:|------|
+| 1 | RNK-2 | **已修** | 預計算 similarity matrix（numpy 矩陣乘法） |
+| 2 | RNK-12 | **已修** | 移除讀操作 lock，保留寫操作 lock |
+| 3 | ENG-9 | **已修** | crawled_ids set → SQLite registry.is_crawled() |
+| 4 | IDX-5 | **已修** | exponential backoff retry（3 attempts） |
+
+### Phase 4 修復狀態
+
+| # | ID | 狀態 | 備註 |
+|---|-----|:----:|------|
+| 1 | ENG-5 | **已修** | get_event_loop → get_running_loop（3 處） |
+| 2 | ENG-8+17 | **已修** | _process_url 加 _ensure_date |
+| 3 | ENG-10 | **已修** | close() 清理 FileHandler |
+| 4 | ENG-11 | **已修** | Big5 fallback encoding |
+| 5 | ENG-12 | **已修** | engine.close() try/except 包住 |
+| 6 | IDX-11 | **已修** | 只保留最近 50 筆完成任務 |
+| 7 | IDX-12 | **已修** | subprocess 失敗時 close stderr file |
+| 8 | IDX-13 | **已修** | flush 後 truncate buffer.jsonl |
+| 9 | IDX-14 | **已修** | checkpoint 記錄 line_num + 1 |
+| 10 | IDX-15 | **已修** | 精確 LIKE pattern（boundary-aware） |
+| 11 | IDX-16 | **已修** | close() 前 flush _nf_buffer |
+| 12 | IDX-17 | **已修** | len(embeddings) != len(texts) 檢查 |
+| 13 | IDX-21 | **已修** | docstring 修正 |
+| 14 | SEC-13 | **已修** | OAuth state TTL 600s |
+| 15 | SEC-18 | **延後** | 併入 SEC-1 |
+| 16 | SEC-19 | **延後** | 併入 SEC-1 |
+| 17 | SEC-20 | **已修** | urllib.parse.urlencode() |
+| 18 | SEC-24 | **已修** | finally: conn.close() |
+| 19 | RNK-1+9 | **已修** | cache 分離 + query_params 加入 key |
+| 20 | RNK-5 | **已修** | dimension mismatch warning log |
+| 21 | RNK-7 | **已修** | title boost multiplier 取代 doc_length 膨脹 |
+| 22 | RNK-8 | **已修** | NaN → 0.0 |
+| 23 | RNK-11 | **已修** | 移除 runtime pip install → ImportError |
+| 24 | RNK-14 | **已修** | > 改 >= |
+| 25 | RNK-15 | **已修** | ranking.get("score", 0) |
+| 26 | RNK-20 | **已修** | except: → except Exception: |
+| 27 | RSN-8 | **已修** | 統一用 WriterPromptBuilder |
+| 28 | RSN-10 | **已修** | getattr(tracer, 'start_time', None) |
+| 29 | RSN-11 | **已修** | 空 context → 回傳「查無相關資料」 |
+| 30 | RSN-12 | **已修** | total_iterations ≤ 0 → 1 |
+
+### 統計
+
+| 狀態 | 數量 |
+|------|:----:|
+| 已修復 | **47** |
+| 延後（JWT） | 4 |
+| 不修（設計保留） | 1 |
+| 無需修（已正確） | 1 |
+| **合計** | **53** |
+
+### 待後續處理
+
+- **SEC-1 + SEC-9 + SEC-18 + SEC-19**：等 JWT/登入系統設定完成
+- **SEC-6**：Lossless Agent Isolation 架構重構（獨立任務）
+- **RNK-7 注意**：BM25 corpus stats 已改變（不再 3x title），需重建 corpus stats
+- **RSN-4 前端**：需讀取 `verification_status` / `verification_message` 顯示未驗證提示
+
+---
+
 ## 統計總覽
 
 | 模組 | CRITICAL | HIGH | MEDIUM | LOW | 合計 |
@@ -109,7 +211,41 @@ if not set(final_report.sources_used).issubset(set(analyst_citations)):
 
 **問題**：Gap resolution 迴圈中 `current_context` 無限累積，`source_map` build 時註明 "no limit"。Writer compose 路徑無 draft 截斷。system hints 跨 iteration 累積。可能導致 LLM API 400 錯誤或靜默截斷。
 
-**修復**：加入 context budget（如 token 計數器），draft 傳入前截斷。
+**修復方向（討論定案）**：Lossless Agent Isolation + Structured Working Memory
+
+不使用 LLM 摘要（多 agent 下累積資訊損失太大）。改為每個 agent 只注入它需要的 context：
+
+**1. Analyst Gap Loop 改造**：
+- Round 1: query + docs 全文
+- Round N: query + 上輪 `extracted_knowledge` + 上輪 `draft` + 新檢索的 docs 全文
+- 不重複注入已讀過的 docs → context 大小不隨輪次無限增長
+
+**2. Analyst Structured Output 強化**（防止「後知後覺」資訊遺失）：
+```json
+{
+  "current_draft": "...",
+  "identified_gaps": ["..."],
+  "citation_map": {},
+  "extracted_knowledge": [
+    {"fact": "事實描述", "source": "doc_id"}
+  ]
+}
+```
+`extracted_knowledge` 記錄所有值得保留的事實（不只跟 draft 直接相關的），供下一輪 Analyst 使用。
+`extracted_knowledge` 跨輪由 Orchestrator 累積 merge（確定性邏輯，非 LLM），不是每輪覆蓋，避免 Round N 的 Analyst 遺漏 Round N-1 記錄的事實。
+
+**3. Critic On-Demand Context**：
+- Orchestrator 解析 draft 中的 citation IDs
+- 從 source_map 抓取被引用的 chunks（不是全文、不是只有 metadata）
+- 組成 Reference Sheet 給 Critic 做 fact checking
+
+**4. Writer Minimal Context**：
+- 只收 query + approved draft + citation metadata + plan
+- 不需要原始文件（Critic 已驗證過事實）
+
+**5. system hints 每輪重建**（同時解決 RSN-5）
+
+**原始資料保存**：source_map 作為 Single Source of Truth，完整保存所有文件，不進 LLM context 除非被特定 agent 需要。
 
 ---
 
@@ -324,7 +460,7 @@ SEARCH_REQUIRED + failed gap search 路徑下，`response.draft` 可能為空字
 | IDX-9 | `dashboard_api.py:829-876` | `_websockets` list 並行修改，應改 set + discard |
 | IDX-10 | `crawled_registry.py:659-680` | `_nf_buffer` 非 thread-safe，`executemany` 和 `clear` 之間可丟資料 |
 | RSN-2 | `reasoning/agents/base.py:377` | 雙重 timeout（inner ask_llm + outer wait_for）同值，行為不可預期 |
-| RSN-3 | `orchestrator.py:311-325` | sync 方法 `_check_connection()` 檢查 async state，TOCTOU race |
+| RSN-3 | `orchestrator.py:311-325` | sync 方法 `_check_connection()` 檢查 async state，TOCTOU race。**調查結論：`_check_connection()` 是取消機制的核心（8 個 checkpoint），不可移除。TOCTOU gap = 一次 LLM call 時間，無法避免。現有機制已能阻止後續 LLM call，但進行中的 call 會跑完（被收費但結果丟棄）。未來可改 streaming LLM response 進一步省錢。** |
 
 ### 錯誤狀態映射
 
@@ -379,7 +515,7 @@ SEARCH_REQUIRED + failed gap search 路徑下，`response.draft` 可能為空字
 
 | ID | 檔案 | 問題 |
 |----|------|------|
-| RSN-4 | `critic.py:361` | CoV 失敗 silent 降級無使用者通知（違反 Silent Fail 規則） |
+| RSN-4 | `critic.py:361` | CoV 失敗 silent 降級無使用者通知（違反 Silent Fail 規則）。**CEO 指示：CoV 失敗必須主動 alert 使用者，不可只 log warning。前端需顯示明確提示（如「本報告未經完整驗證」）。** |
 | RSN-5 | `orchestrator.py:687` | system hints 跨 iteration 累積（重複 token 浪費） |
 | RSN-6 | `orchestrator.py:890` | graceful degradation 條件 `reject_count >= max_iterations` 永遠不成立（dead code） |
 | RSN-7 | `orchestrator.py:869` | `response` 變數在首次 analyst 呼叫失敗時可能未綁定（UnboundLocalError） |
@@ -460,44 +596,122 @@ SEARCH_REQUIRED + failed gap search 路徑下，`response.draft` 可能為空字
 
 ---
 
-## 修復優先建議
+## 修復優先建議（CEO 討論後定案 2026-02-23）
 
-### Phase 1：安全緊急修復（立即）
+**背景**：產品將以 webapp 形式對外提供服務。SEC-12（rate limiting）和 SEC-4（prompt guardrail）已在進行中，不列入。
 
-1. **SEC-1** 修 JWT 認證 — 無效 token 回 401
-2. **SEC-2** 修 CORS — 改為明確 origin 白名單
-3. **SEC-9** 修 WS JWT — 用 `jwt.decode()` 驗簽
-4. **SEC-8** 修 WS 身份 — 從 server-side auth 取 user_id，不信任 client
-5. **SEC-10** 修 XSS — 加 DOMPurify
-6. **SEC-12** 加 rate limiting（至少 /ask 和 /api/deep_research）
+### Phase 1：上線前必修（Security + 資料正確性）
 
-### Phase 2：資料正確性修復（1 週內）
+| # | ID | 修復內容 | 難度 | 討論結論 |
+|---|-----|---------|:----:|---------|
+| 1 | **SEC-1 + SEC-9** | JWT 認證修復（HTTP + WS） | 中 | 無效 JWT → 401，WS 用 jwt.decode() 驗簽，共用驗證函式 |
+| 2 | **SEC-2** | CORS origin 白名單 | 低 | 移除 `*`，設前端 domain 白名單 |
+| 3 | **SEC-10** | XSS — 加 DOMPurify | 低 | 所有 innerHTML 加 DOMPurify.sanitize() |
+| 4 | **SEC-5 + RSN-1** | 幻覺防護 | 低 | Analyst citations 驗證 ⊆ source_map + 空 draft 攔截 |
+| 5 | **ENG-1** | Save 失敗回傳正確狀態 | 低 | 改回傳 FETCH_ERROR 或新增 SAVE_ERROR |
+| 6 | **IDX-4** | Resumable mode flush Qdrant | 中 | 合併為單一模式：checkpoint + flush 並行，flush 失敗 checkpoint 不前進 |
+| 7 | **SEC-3** | SQL 注入防禦 | 低 | table/column 白名單驗證 |
+| 8 | **IDX-1** | QdrantClient 連線洩漏 | 低 | 加 finally: client.close() |
+| 9 | **RNK-3** | XGBoost production mode crash | 低 | `result.xgboost_score` → `result['xgboost_score']` |
 
-1. **ENG-1** pipeline save 失敗回傳正確狀態
-2. **ENG-2** 評估 `_run_parse_in_thread` 改用 `run_in_executor`
-3. **IDX-4** resumable mode 加 Qdrant flush
-4. **IDX-7** `mark_failed` 改用 `INSERT ... ON CONFLICT DO UPDATE`
-5. **IDX-1** QdrantClient 加 `finally: client.close()`
-6. **ENG-6** TimeoutError 改映射為 FETCH_ERROR
-7. **ENG-7** Parse exception 改映射為 PARSE_ERROR
+### Phase 2：穩定性修復
 
-### Phase 3：穩定性改善（2 週內）
+| # | ID | 修復內容 | 難度 | 討論結論 |
+|---|-----|---------|:----:|---------|
+| 1 | **ENG-6** | TimeoutError 映射修正 | 低 | → FETCH_ERROR（可 retry），不是 NOT_FOUND（永久跳過） |
+| 2 | **ENG-7** | Parse exception 映射修正 | 低 | → PARSE_ERROR，不計入 blocked 計數器 |
+| 3 | **IDX-7** | mark_failed TOCTOU | 低 | INSERT ... ON CONFLICT DO UPDATE |
+| 4 | **SEC-6** | 無界 context | 高 | **Lossless Agent Isolation 方案**（見 SEC-6 條目詳細記錄）：Analyst structured output（含 extracted_knowledge）+ Critic on-demand chunk injection + Writer minimal context。extracted_knowledge 由 Orchestrator 跨輪累積 merge（確定性邏輯）。不使用 LLM 摘要。 |
+| 5 | **IDX-6** | SQLite operation-level locking | 中 | Lock 包覆整個 SQL 操作，或改 threading.local() 獨立 connection |
+| 6 | **RSN-7** | response 未綁定 | 低 | 初始化 response = None + None check |
+| 7 | **ENG-4** | stats failed 雙重計數 | 低 | 移除 _process_article 的計數，統一在 _evaluate_batch_results |
+| 8 | **RNK-10** | exception handler name 未綁定 | 低 | 初始化 name = "unknown" |
+| 9 | **IDX-3** | _save_tasks fire-and-forget | 中 | 原子寫入（temp + os.replace）+ asyncio.Lock |
+| 10 | **RSN-4** | CoV silent 降級 | 低 | **必須主動 alert 使用者**，前端顯示「本報告未經完整驗證」 |
+| 11 | **RSN-2** | 雙重 timeout | 低 | Inner timeout < Outer timeout，明確分工 |
+| 12 | **RSN-3** | _check_connection TOCTOU | — | **不修（保留）**。是取消機制核心（8 個 checkpoint）。未來可改 streaming LLM 進一步省錢。 |
+| 13 | **RNK-4** | rankedAnswers 並行 mutation | 低 | 改用 asyncio.gather return values |
+| 14 | **IDX-8+9** | WebSocket list 並行修改 | 低 | 改 set + discard + broadcast 前 snapshot |
+| 15 | **IDX-10** | _nf_buffer 非 thread-safe | 低 | swap 取代 clear |
 
-1. **SEC-5 + RSN-1** 強化幻覺防護（Analyst citations 驗證 + 空 draft 檢查）
-2. **SEC-6** 加 context size budget
-3. **ENG-4** stats 雙重計數修正
-4. **IDX-3** `_save_tasks` 原子寫入 + asyncio.Lock
-5. **IDX-6** SQLite 連線 operation-level locking
-6. **IDX-2** `os.system` 改 `subprocess.run` + PID 驗證
-7. **RSN-4** CoV 失敗加使用者通知
+### 排除項目
 
-### Phase 4：效能優化
+| ID | 原因 |
+|----|------|
+| **SEC-12** | 已在進行中（rate limiting） |
+| **SEC-4** | 已在進行中（prompt guardrail） |
+| **IDX-2** | Crawler 內部工具，安全性非必要 |
+| **RSN-3** | 不修，是取消機制核心 |
+| **ENG-2** | 所有 parser 為 no-await async def，刻意設計 |
 
-1. **RNK-2** MMR 矩陣化 cosine similarity
-2. **RNK-12** `_retrieval_lock` 改為 per-query 或移除
-3. **ENG-9** crawled_ids 改 bloom filter 或分頁載入
-4. **IDX-5** embed_texts 加 retry with backoff
+### Phase 3：效能優化
+
+| # | ID | 修復內容 | 難度 | 討論結論 |
+|---|-----|---------|:----:|---------|
+| 1 | **RNK-2** | MMR cosine similarity 重複計算 | 中 | 預計算 similarity matrix（一次 numpy 矩陣乘法），消除 O(k²*n*d) |
+| 2 | **RNK-12** | _retrieval_lock 序列化所有搜尋 | 低 | 移除 lock。讀操作不需要保護，_client_cache 有自己的 lock。寫操作如需保護可加 per-endpoint lock。是重構時的防禦性設計，非必要。 |
+| 3 | **ENG-9** | crawled_ids 全量載入記憶體 | 中 | 改用 SQLite 查詢（`registry.exists(url)`）。不用 Bloom filter（額外依賴不值得）。HTTP 請求才是瓶頸，SQLite 0.3ms overhead 可忽略。批次可用 `WHERE url IN (...)`。 |
+| 4 | **IDX-5** | embed_texts 失敗整批丟失 | 低 | 加 retry with exponential backoff（1s, 2s, 4s），max_retries 後才放棄 |
+
+### Phase 4：MEDIUM/LOW 修復
+
+| # | ID | 修復內容 | 難度 | 討論結論 |
+|---|-----|---------|:----:|---------|
+| 1 | **ENG-5** | asyncio.get_event_loop() deprecated | 低 | 改 get_running_loop()，機械性替換 |
+| 2 | **ENG-8 + ENG-17** | _process_url 未呼叫 _ensure_date | 低 | 加 _ensure_date 呼叫，合併為一項 |
+| 3 | **ENG-10** | Logger FileHandler 從未 close | 低 | engine.close() 中清理 handler |
+| 4 | **ENG-11** | charset fallback 可能亂碼 | 低 | 加 Big5 fallback |
+| 5 | **ENG-12** | engine.close() 在 except 可能 raise | 低 | try/except 包住 close，保留原始 exception |
+| 6 | **IDX-11** | _crawler_tasks 無界成長 | 低 | 只保留最近 50 筆完成的任務 |
+| 7 | **IDX-12** | _stderr_log_file 洩漏 fd | 低 | subprocess 建立失敗時 close file handle |
+| 8 | **IDX-13** | buffer.jsonl 不 rotate | 低 | flush 成功後清空 |
+| 9 | **IDX-14** | Checkpoint off-by-one | 低 | 記錄「下一行行號」，跟 IDX-4 一起修 |
+| 10 | **IDX-15** | LIKE %article_id% false positive | 低 | 改更精確的 pattern |
+| 11 | **IDX-16** | close() 不 flush _nf_buffer | 低 | close() 前先 flush，跟 IDX-10 一起修 |
+| 12 | **IDX-17** | embed_texts 回傳數量未驗證 | 低 | 加 len(embeddings) != len(texts) 檢查 |
+| 13 | **IDX-21** | delete_by_article_url docstring 不符 | 低 | 修 docstring 或回傳值 |
+| 14 | **SEC-13** | OAuth states 無清理 | 低 | 加 TTL 600 秒自動清理 |
+| 15 | **SEC-18** | verify_participant 永遠 True | — | 合併到 SEC-1 一起修 |
+| 16 | **SEC-19** | 10MB upload 無認證 | — | 合併到 SEC-1 一起修 |
+| 17 | **SEC-20** | OAuth URL params 未 URL encode | 低 | 用 urllib.parse.urlencode() |
+| 18 | **SEC-24** | DB connections 未用 context manager | 低 | 改 with sqlite3.connect() |
+| 19 | **RNK-1 + RNK-9** | _client_cache 混存 + 忽略 query_params | 中 | 分離兩個 cache dict + 加 params 到 cache key，跟 RNK-12 一起修 |
+| 20 | **RNK-5** | dimension mismatch silent 回傳 0.0 | 低 | 加 warning log，或排除不匹配結果 |
+| 21 | **RNK-7** | N-gram 膨脹 doc_length | 中 | title weighting 改為 score multiplier，**排在 XGBoost Phase C 前** |
+| 22 | **RNK-8** | kendalltau NaN | 低 | NaN → 0.0 |
+| 23 | **RNK-11** | runtime pip install | 低 | 移除，放 requirements.txt |
+| 24 | **RNK-14** | num_results_sent off-by-one | 低 | `>` 改 `>=` |
+| 25 | **RNK-15** | ranking["score"] KeyError | 低 | 改 ranking.get("score", 0) |
+| 26 | **RNK-20** | bare except catches SystemExit | 低 | 改 except Exception |
+| 27 | **RSN-8** | writer inline prompt 重複 | 低 | 統一用 WriterPromptBuilder |
+| 28 | **RSN-10** | tracer.start_time 未設定 | 低 | 初始化時設定 start_time |
+| 29 | **RSN-11** | empty context 只 warning | 低 | 回傳「查無相關資料」，不進 Analyst |
+| 30 | **RSN-12** | total_iterations=0 ZeroDivisionError | 低 | 初始化檢查 ≤0 → 設為 1 |
+
+### 確定非問題（不修）
+
+| ID | 問題 | 理由 |
+|----|------|------|
+| RSN-6 | Dead code | 不影響功能 |
+| ENG-13 | Monkey-patch chain | subprocess_runner 只跑一次 |
+| ENG-14 | BASE_DIR 5 層 parent | 專案結構固定 |
+| ENG-15 | Import-time mkdir | 無害 side effect |
+| IDX-20 | datetime.utcnow() deprecated | Python 3.11 不受影響 |
+| IDX-22 | content_hash 截斷 64 bits | 碰撞機率可忽略 |
+| IDX-23 | singleton get_registry() 非 thread-safe | 每個 source 是獨立 process，不會碰撞 |
+| RNK-6 | MMR lambda 被覆蓋 | 設計意圖（intent-based 調整） |
+| RNK-13 + RSN-9 | API key 前幾碼 logged | 前綴是公開格式，不構成威脅。改 log 後幾碼反而更危險 |
+| RNK-16 | json.loads malformed | json_str 來自 DB 不是 LLM，幾乎不會失敗 |
+| RNK-17 | sync file I/O in async path | mmr_metrics.log 寫入很快，影響可忽略 |
+| RNK-18 | Cosine clamp 丟負值 | 新聞搜尋不需要負相似度 |
+| RNK-19 | Tied scores 取 lowest | 訓練資料特性 |
+| SEC-21 | print() 輸出 user data | 不需改動 |
+| SEC-22 | Anonymous user ID 4 位數 | 未來會有新登入系統 |
+| SEC-23 | 無 CSRF | 等 SEC-1 定案，如用 Bearer token 則不需要 |
+| SEC-25 | pong_timeout 600s | 暫不修 |
+| ENG-16 | SSRF via subprocess params | Crawler 內部工具 |
 
 ---
 
 *報告生成：2026-02-23，by Claude Code Review*
+*CEO 討論定案：2026-02-23*

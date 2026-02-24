@@ -58,7 +58,7 @@ News Sites → Parser → Schema.org NewsArticle → TSV Output
 | CNA | `full_scan` | 無 sitemap。Date-based ID (YYYYMMDDXXXX)，逐日掃描所有 suffix |
 | einfo | `full_scan` | 無 sitemap。Sequential ID，但極慢（5-10s/req, concurrent=1）|
 | ESG BT | `full_scan` | Sitemap 自 2021 年停止更新。Date-based ID，逐日掃描 |
-| Chinatimes | `full_scan` | Date-based ID (14 位，suffix_digits=6)。Category 分佈均勻（前4各~19%），Top 6=96.6% 覆蓋率。max_candidate_urls=6 |
+| Chinatimes | `full_scan` | Date-based ID (14 位，suffix_digits=6)。260402 不是萬用路徑——每篇文章只有其正確 category code 能存取。Top 40 categories 覆蓋 95.6%。max_candidate_urls=39 |
 | MOEA | `full_scan` | Sequential ID (news_id)。直接 URL 存取，無需 ViewState。Soft-404 由 parser 處理 |
 
 ### Backfill 目標範圍
@@ -144,7 +144,7 @@ REFERENCE_POINTS = {
 
 掃描指定範圍內的每一個 ID，不做 interpolation，不做 early-stop（僅 `FULL_SCAN_BLOCKED_LIMIT=50`，較 auto mode 的 5 寬鬆）。Full scan 模式下：
 - Blocked cooldown 為 120s（normal=20s），給伺服器充足恢復時間
-- 每個 source 有 `max_candidate_urls` 限制 404 fallback 的 HTTP 請求數（LTN=0, chinatimes=6, 其他=0）
+- 每個 source 有 `max_candidate_urls` 限制 404 fallback 的 HTTP 請求數（LTN=0, chinatimes=39, 其他=0）
 
 ```bash
 # 透過 Dashboard API 啟動
@@ -339,7 +339,7 @@ NEWS_SOURCES = {
     "cna":  {"concurrent_limit": 4, "delay_range": (0.8, 2.0)},  # ~1.5 req/s
     "einfo": {"concurrent_limit": 1, "delay_range": (5.0, 10.0)}, # ~0.1 req/s（站方限制）
     "esg_businesstoday": {"concurrent_limit": 3, "delay_range": (1.0, 2.5)},
-    "chinatimes": {"concurrent_limit": 3, "delay_range": (1.0, 2.5)},
+    "chinatimes": {"concurrent_limit": 5, "delay_range": (0.8, 2.0), "max_candidate_urls": 39},
     "moea": {"concurrent_limit": 2, "delay_range": (2.0, 4.0)},  # 低併發避免 429
 }
 

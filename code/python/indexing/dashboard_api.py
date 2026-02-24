@@ -93,7 +93,7 @@ class IndexingDashboardAPI:
     def __init__(self):
         self._crawler_tasks: Dict[str, CrawlerTask] = {}
         self._task_counter = 0
-        self._websockets: list = []
+        self._websockets: set = set()
         self._last_save_time: float = 0.0  # Throttle _save_tasks
         self._save_interval: float = 5.0   # Save at most every 5 seconds
         self._pending_auto_resume: list = []  # zombie task IDs to auto-resume
@@ -159,8 +159,10 @@ class IndexingDashboardAPI:
                     }
                 except Exception:
                     return {"vectors_count": 0, "points_count": 0, "error": "Collection not found"}
+                finally:
+                    client.close()
 
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             return await loop.run_in_executor(None, _sync_qdrant)
 
         except ImportError:
@@ -256,9 +258,15 @@ class IndexingDashboardAPI:
             return web.json_response({"error": f"Invalid mode: {mode}. Allowed: {sorted(ALLOWED_MODES)}"}, status=400)
 
         # Cap count/limit to prevent resource exhaustion
-        count = min(int(count), MAX_COUNT)
+        try:
+            count = min(int(count), MAX_COUNT)
+        except (ValueError, TypeError):
+            return web.json_response({"error": "Invalid count parameter"}, status=400)
         if "limit" in body:
-            body["limit"] = min(int(body["limit"]), MAX_LIMIT)
+            try:
+                body["limit"] = min(int(body["limit"]), MAX_LIMIT)
+            except (ValueError, TypeError):
+                return web.json_response({"error": "Invalid limit parameter"}, status=400)
 
         # Check if there's already a running task for this source
         for task in self._crawler_tasks.values():
@@ -333,15 +341,19 @@ class IndexingDashboardAPI:
         stderr_log_path = log_dir / f"{task.task_id}.stderr.log"
         stderr_log_file = open(stderr_log_path, "w", encoding="utf-8")
 
-        proc = await asyncio.create_subprocess_exec(
-            sys.executable, "-m", "crawler.subprocess_runner",
-            "--params", params_json,
-            "--task-id", task.task_id,
-            "--signal-dir", str(signal_dir),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=stderr_log_file,
-            cwd=code_dir,
-        )
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "crawler.subprocess_runner",
+                "--params", params_json,
+                "--task-id", task.task_id,
+                "--signal-dir", str(signal_dir),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=stderr_log_file,
+                cwd=code_dir,
+            )
+        except Exception:
+            stderr_log_file.close()
+            raise
         task._process = proc
         task._pid = proc.pid
         task._stderr_log_file = stderr_log_file
@@ -702,32 +714,51 @@ class IndexingDashboardAPI:
             logger.warning(f"Failed to kill orphan PID={pid}: {e}")
             return False
 
-    def _save_tasks(self) -> None:
-        """將 tasks 保存到檔案（非阻塞：序列化在主線程，寫檔在背景線程）"""
-        import json
+    _save_lock: Optional[asyncio.Lock] = None  # Initialized lazily to avoid event loop issues
 
+    def _get_save_lock(self) -> asyncio.Lock:
+        """Get or create the save lock (must be called from async context)."""
+        if self._save_lock is None:
+            self._save_lock = asyncio.Lock()
+        return self._save_lock
+
+    def _save_tasks(self) -> None:
+        """將 tasks 保存到檔案（atomic write: temp file + os.replace）.
+
+        Called from both sync and async contexts. Uses atomic write to prevent
+        corruption from concurrent writes or crashes.
+        """
         tasks_path = Path(self.TASKS_FILE)
         tasks_path.parent.mkdir(parents=True, exist_ok=True)
 
         try:
+            # Prune old completed/failed tasks (keep most recent 50)
+            completed = [(k, v) for k, v in self._crawler_tasks.items()
+                         if v.status in (CrawlerTaskStatus.COMPLETED, CrawlerTaskStatus.FAILED,
+                                         CrawlerTaskStatus.EARLY_STOPPED)]
+            if len(completed) > 50:
+                completed.sort(key=lambda x: x[1].finished_at or 0, reverse=True)
+                for k, v in completed[50:]:
+                    del self._crawler_tasks[k]
+
             data = {
                 'tasks': [self._task_to_dict(t) for t in self._crawler_tasks.values()],
                 'task_counter': self._task_counter,
             }
-            # Serialize in main thread (needs access to task objects),
-            # then write to file in background thread to avoid blocking event loop
             content = json.dumps(data, ensure_ascii=False, indent=2)
 
-            def _write():
-                with open(tasks_path, 'w', encoding='utf-8') as f:
+            def _atomic_write():
+                temp_path = tasks_path.with_suffix('.tmp')
+                with open(temp_path, 'w', encoding='utf-8') as f:
                     f.write(content)
+                os.replace(str(temp_path), str(tasks_path))
 
             try:
                 loop = asyncio.get_running_loop()
-                loop.run_in_executor(None, _write)
+                loop.run_in_executor(None, _atomic_write)
             except RuntimeError:
                 # No running event loop (e.g. during sync init) — write directly
-                _write()
+                _atomic_write()
 
         except Exception as e:
             logger.warning(f"Failed to save tasks: {e}")
@@ -826,7 +857,7 @@ class IndexingDashboardAPI:
         ws = web.WebSocketResponse()
         await ws.prepare(request)
 
-        self._websockets.append(ws)
+        self._websockets.add(ws)
         logger.info(f"WebSocket client connected. Total: {len(self._websockets)}")
 
         try:
@@ -848,7 +879,7 @@ class IndexingDashboardAPI:
                     break
 
         finally:
-            self._websockets.remove(ws)
+            self._websockets.discard(ws)
             logger.info(f"WebSocket client disconnected. Total: {len(self._websockets)}")
 
         return ws
@@ -869,11 +900,10 @@ class IndexingDashboardAPI:
                     await ws.send_json(message)
                 except Exception as e:
                     logger.warning(f"Failed to send WebSocket message: {e}")
-                    if ws in self._websockets:
-                        self._websockets.remove(ws)
+                    self._websockets.discard(ws)
 
             await asyncio.gather(
-                *[_send_safe(ws) for ws in self._websockets[:]],
+                *[_send_safe(ws) for ws in list(self._websockets)],
                 return_exceptions=True
             )
 
@@ -905,8 +935,11 @@ class IndexingDashboardAPI:
             source = request.query.get("source")
             error_type = request.query.get("error_type")
             error_types_str = request.query.get("error_types")
-            limit = int(request.query.get("limit", 100))
-            offset = int(request.query.get("offset", 0))
+            try:
+                limit = int(request.query.get("limit", 100))
+                offset = int(request.query.get("offset", 0))
+            except (ValueError, TypeError):
+                return web.json_response({"error": "Invalid limit or offset parameter"}, status=400)
 
             # Parse multiple error types
             error_types = None

@@ -39,7 +39,8 @@ class AnalystAgent(BaseReasoningAgent):
         mode: str,
         temporal_context: Optional[Dict[str, Any]] = None,
         enable_kg: bool = False,
-        enable_web_search: bool = False
+        enable_web_search: bool = False,
+        previous_draft: Optional[str] = None  # SEC-6 Phase 1
     ) -> AnalystResearchOutput:
         """
         Enhanced research with optional argument graph generation and knowledge graph.
@@ -76,7 +77,8 @@ class AnalystAgent(BaseReasoningAgent):
             enable_argument_graph=enable_graphs,  # Phase 2
             enable_knowledge_graph=enable_kg,  # Phase KG
             enable_gap_enrichment=enable_gap_enrichment,  # Stage 5
-            enable_web_search=enable_web_search  # Stage 5
+            enable_web_search=enable_web_search,  # Stage 5
+            previous_draft=previous_draft  # SEC-6 Phase 1
         )
 
         # Choose schema based on feature flags (dynamic schema selection)

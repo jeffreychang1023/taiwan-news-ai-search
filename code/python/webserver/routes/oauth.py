@@ -9,9 +9,12 @@ import secrets
 import time
 from typing import Dict, Any, Optional
 from datetime import datetime, timedelta
+from urllib.parse import urlencode
 import os
 from pathlib import Path
 from core.config import CONFIG
+
+_OAUTH_STATE_TTL = 600  # seconds
 
 logger = logging.getLogger(__name__)
 
@@ -69,10 +72,20 @@ async def oauth_config_handler(request: web.Request) -> web.Response:
         return web.json_response({})
 
 
+def _cleanup_expired_states(app: web.Application):
+    """Remove OAuth states older than _OAUTH_STATE_TTL seconds."""
+    states = app.get('oauth_states', {})
+    now = time.time()
+    expired = [k for k, v in states.items()
+               if now - v.get('created_at', 0) > _OAUTH_STATE_TTL]
+    for k in expired:
+        del states[k]
+
+
 async def oauth_login_handler(request: web.Request) -> web.Response:
     """Handle OAuth login redirect"""
     provider = request.match_info['provider']
-    
+
     # Check if provider is configured
     oauth_providers = CONFIG.oauth_providers if hasattr(CONFIG, 'oauth_providers') else {}
     if provider not in oauth_providers:
@@ -80,21 +93,23 @@ async def oauth_login_handler(request: web.Request) -> web.Response:
             {'error': f'OAuth provider {provider} not configured'},
             status=400
         )
-    
+
     provider_config = oauth_providers[provider]
-    
+
     # Build OAuth authorization URL
     base_url = f"{request.scheme}://{request.host}"
     redirect_uri = f"{base_url}/oauth/callback/{provider}"
-    
+
     # Create state parameter for CSRF protection
     state = secrets.token_urlsafe(32)
-    request.app['oauth_states'] = getattr(request.app, 'oauth_states', {})
+    if 'oauth_states' not in request.app:
+        request.app['oauth_states'] = {}
+    _cleanup_expired_states(request.app)
     request.app['oauth_states'][state] = {
         'provider': provider,
         'created_at': time.time()
     }
-    
+
     # Build authorization URL based on provider
     auth_params = {
         'client_id': provider_config['client_id'],
@@ -102,7 +117,7 @@ async def oauth_login_handler(request: web.Request) -> web.Response:
         'state': state,
         'scope': provider_config['scope']
     }
-    
+
     if provider == 'google':
         auth_params.update({
             'response_type': 'code',
@@ -121,12 +136,11 @@ async def oauth_login_handler(request: web.Request) -> web.Response:
         auth_params.update({
             'response_type': 'code'
         })
-    
-    # Build URL with parameters
+
+    # Build URL with properly encoded parameters
     auth_url = provider_config['auth_url']
-    params = '&'.join([f"{k}={v}" for k, v in auth_params.items()])
-    full_auth_url = f"{auth_url}?{params}"
-    
+    full_auth_url = f"{auth_url}?{urlencode(auth_params)}"
+
     # Redirect to OAuth provider
     return web.Response(
         status=302,

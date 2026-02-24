@@ -58,6 +58,7 @@ class CrawledRegistry:
         self.logger = logging.getLogger(self.__class__.__name__)
         self._conn: Optional[sqlite3.Connection] = None
         self._conn_lock = threading.Lock()
+        self._db_lock = threading.RLock()  # Protects all SQL operations (reentrant for nested calls)
 
         self._init_db()
         self.logger.info(f"CrawledRegistry initialized: {self.db_path}")
@@ -145,12 +146,13 @@ class CrawledRegistry:
 
     def is_crawled(self, url: str) -> bool:
         """Check if URL has been crawled."""
-        conn = self._get_conn()
-        cursor = conn.execute(
-            "SELECT 1 FROM crawled_articles WHERE url = ?",
-            (url,)
-        )
-        return cursor.fetchone() is not None
+        with self._db_lock:
+            conn = self._get_conn()
+            cursor = conn.execute(
+                "SELECT 1 FROM crawled_articles WHERE url = ?",
+                (url,)
+            )
+            return cursor.fetchone() is not None
 
     def needs_update(self, url: str, new_date_modified: Optional[str]) -> bool:
         """
@@ -166,12 +168,13 @@ class CrawledRegistry:
         if new_date_modified is None:
             return False
 
-        conn = self._get_conn()
-        cursor = conn.execute(
-            "SELECT date_modified FROM crawled_articles WHERE url = ?",
-            (url,)
-        )
-        row = cursor.fetchone()
+        with self._db_lock:
+            conn = self._get_conn()
+            cursor = conn.execute(
+                "SELECT date_modified FROM crawled_articles WHERE url = ?",
+                (url,)
+            )
+            row = cursor.fetchone()
 
         if row is None:
             return True  # Not crawled yet
@@ -211,13 +214,14 @@ class CrawledRegistry:
 
         date_crawled = datetime.now().isoformat()
 
-        conn = self._get_conn()
-        conn.execute("""
-            INSERT OR REPLACE INTO crawled_articles
-            (url, source_id, date_published, date_modified, date_crawled, content_hash, task_id, batch_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """, (url, source_id, date_published, date_modified, date_crawled, content_hash, task_id, batch_id))
-        conn.commit()
+        with self._db_lock:
+            conn = self._get_conn()
+            conn.execute("""
+                INSERT OR REPLACE INTO crawled_articles
+                (url, source_id, date_published, date_modified, date_crawled, content_hash, task_id, batch_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (url, source_id, date_published, date_modified, date_crawled, content_hash, task_id, batch_id))
+            conn.commit()
 
     def find_duplicate_by_hash(self, content: str, exclude_url: Optional[str] = None) -> Optional[str]:
         """
@@ -232,60 +236,66 @@ class CrawledRegistry:
         """
         content_hash = hashlib.sha256(content[:500].encode('utf-8')).hexdigest()[:16]
 
-        conn = self._get_conn()
-        if exclude_url:
-            cursor = conn.execute(
-                "SELECT url FROM crawled_articles WHERE content_hash = ? AND url != ?",
-                (content_hash, exclude_url)
-            )
-        else:
-            cursor = conn.execute(
-                "SELECT url FROM crawled_articles WHERE content_hash = ?",
-                (content_hash,)
-            )
+        with self._db_lock:
+            conn = self._get_conn()
+            if exclude_url:
+                cursor = conn.execute(
+                    "SELECT url FROM crawled_articles WHERE content_hash = ? AND url != ?",
+                    (content_hash, exclude_url)
+                )
+            else:
+                cursor = conn.execute(
+                    "SELECT url FROM crawled_articles WHERE content_hash = ?",
+                    (content_hash,)
+                )
 
-        row = cursor.fetchone()
-        return row['url'] if row else None
+            row = cursor.fetchone()
+            return row['url'] if row else None
 
     def get_count_by_source(self, source_id: str) -> int:
         """Get count of articles from a specific source."""
-        conn = self._get_conn()
-        cursor = conn.execute(
-            "SELECT COUNT(*) as count FROM crawled_articles WHERE source_id = ?",
-            (source_id,)
-        )
-        return cursor.fetchone()['count']
+        with self._db_lock:
+            conn = self._get_conn()
+            cursor = conn.execute(
+                "SELECT COUNT(*) as count FROM crawled_articles WHERE source_id = ?",
+                (source_id,)
+            )
+            return cursor.fetchone()['count']
 
     def get_count_by_date(self, date: str) -> int:
         """Get count of articles published on a specific date (YYYY-MM-DD)."""
-        conn = self._get_conn()
-        cursor = conn.execute(
-            "SELECT COUNT(*) as count FROM crawled_articles WHERE date_published LIKE ?",
-            (f"{date}%",)
-        )
-        return cursor.fetchone()['count']
+        with self._db_lock:
+            conn = self._get_conn()
+            cursor = conn.execute(
+                "SELECT COUNT(*) as count FROM crawled_articles WHERE date_published LIKE ?",
+                (f"{date}%",)
+            )
+            return cursor.fetchone()['count']
 
     def get_total_count(self) -> int:
         """Get total count of all crawled articles."""
-        conn = self._get_conn()
-        cursor = conn.execute("SELECT COUNT(*) as count FROM crawled_articles")
-        return cursor.fetchone()['count']
+        with self._db_lock:
+            conn = self._get_conn()
+            cursor = conn.execute("SELECT COUNT(*) as count FROM crawled_articles")
+            return cursor.fetchone()['count']
 
     def get_stats(self) -> dict:
         """Get statistics about crawled articles."""
-        conn = self._get_conn()
+        with self._db_lock:
+            conn = self._get_conn()
 
-        # Total count
-        total = self.get_total_count()
+            # Total count
+            cursor = conn.execute("SELECT COUNT(*) as count FROM crawled_articles")
+            total = cursor.fetchone()['count']
 
-        # Count by source
-        cursor = conn.execute("""
-            SELECT source_id, COUNT(*) as count
-            FROM crawled_articles
-            GROUP BY source_id
-            ORDER BY count DESC
-        """)
-        by_source = {row['source_id']: row['count'] for row in cursor}
+            # Count by source
+            cursor = conn.execute("""
+                SELECT source_id, COUNT(*) as count
+                FROM crawled_articles
+                GROUP BY source_id
+                ORDER BY count DESC
+            """)
+            by_source = {row['source_id']: row['count'] for row in cursor}
 
         return {
             'total': total,
@@ -299,27 +309,28 @@ class CrawledRegistry:
         Returns:
             Dict mapping source_id to {oldest, newest, count}
         """
-        conn = self._get_conn()
+        with self._db_lock:
+            conn = self._get_conn()
 
-        cursor = conn.execute("""
-            SELECT
-                source_id,
-                MIN(date_published) as oldest,
-                MAX(date_published) as newest,
-                COUNT(*) as count
-            FROM crawled_articles
-            WHERE date_published IS NOT NULL
-            GROUP BY source_id
-            ORDER BY source_id
-        """)
+            cursor = conn.execute("""
+                SELECT
+                    source_id,
+                    MIN(date_published) as oldest,
+                    MAX(date_published) as newest,
+                    COUNT(*) as count
+                FROM crawled_articles
+                WHERE date_published IS NOT NULL
+                GROUP BY source_id
+                ORDER BY source_id
+            """)
 
-        result = {}
-        for row in cursor:
-            result[row['source_id']] = {
-                'oldest': row['oldest'],
-                'newest': row['newest'],
-                'count': row['count']
-            }
+            result = {}
+            for row in cursor:
+                result[row['source_id']] = {
+                    'oldest': row['oldest'],
+                    'newest': row['newest'],
+                    'count': row['count']
+                }
 
         return result
 
@@ -333,15 +344,16 @@ class CrawledRegistry:
         Returns:
             List of {month: "YYYY-MM", count: N} sorted by month
         """
-        conn = self._get_conn()
-        cursor = conn.execute("""
-            SELECT strftime('%Y-%m', date_published) as month, COUNT(*) as count
-            FROM crawled_articles
-            WHERE source_id = ? AND date_published IS NOT NULL
-            GROUP BY month
-            ORDER BY month
-        """, (source_id,))
-        return [{"month": row["month"], "count": row["count"]} for row in cursor]
+        with self._db_lock:
+            conn = self._get_conn()
+            cursor = conn.execute("""
+                SELECT strftime('%Y-%m', date_published) as month, COUNT(*) as count
+                FROM crawled_articles
+                WHERE source_id = ? AND date_published IS NOT NULL
+                GROUP BY month
+                ORDER BY month
+            """, (source_id,))
+            return [{"month": row["month"], "count": row["count"]} for row in cursor]
 
     def load_urls_for_source(self, source_id: str) -> set[str]:
         """
@@ -356,12 +368,13 @@ class CrawledRegistry:
         Returns:
             Set of URLs
         """
-        conn = self._get_conn()
-        cursor = conn.execute(
-            "SELECT url FROM crawled_articles WHERE source_id = ?",
-            (source_id,)
-        )
-        return {row['url'] for row in cursor}
+        with self._db_lock:
+            conn = self._get_conn()
+            cursor = conn.execute(
+                "SELECT url FROM crawled_articles WHERE source_id = ?",
+                (source_id,)
+            )
+            return {row['url'] for row in cursor}
 
     def migrate_from_txt(self, source_id: str, txt_path: Path) -> int:
         """
@@ -398,7 +411,7 @@ class CrawledRegistry:
         error_message: Optional[str] = None
     ) -> None:
         """
-        Mark a URL as failed.
+        Mark a URL as failed (atomic upsert, no TOCTOU race).
 
         Args:
             url: The URL that failed
@@ -407,30 +420,18 @@ class CrawledRegistry:
             error_message: Optional error message details
         """
         failed_at = datetime.now().isoformat()
-        conn = self._get_conn()
-
-        # Check if already in failed_urls
-        cursor = conn.execute(
-            "SELECT retry_count FROM failed_urls WHERE url = ?",
-            (url,)
-        )
-        row = cursor.fetchone()
-
-        if row:
-            # Update existing record, increment retry count
-            conn.execute("""
-                UPDATE failed_urls
-                SET error_type = ?, error_message = ?, failed_at = ?, retry_count = retry_count + 1
-                WHERE url = ?
-            """, (error_type, error_message, failed_at, url))
-        else:
-            # Insert new record
+        with self._db_lock:
+            conn = self._get_conn()
             conn.execute("""
                 INSERT INTO failed_urls (url, source_id, error_type, error_message, failed_at, retry_count)
                 VALUES (?, ?, ?, ?, ?, 0)
+                ON CONFLICT(url) DO UPDATE SET
+                    error_type = excluded.error_type,
+                    error_message = excluded.error_message,
+                    failed_at = excluded.failed_at,
+                    retry_count = retry_count + 1
             """, (url, source_id, error_type, error_message, failed_at))
-
-        conn.commit()
+            conn.commit()
 
     def remove_failed(self, url: str) -> bool:
         """
@@ -442,10 +443,11 @@ class CrawledRegistry:
         Returns:
             True if removed, False if not found
         """
-        conn = self._get_conn()
-        cursor = conn.execute("DELETE FROM failed_urls WHERE url = ?", (url,))
-        conn.commit()
-        return cursor.rowcount > 0
+        with self._db_lock:
+            conn = self._get_conn()
+            cursor = conn.execute("DELETE FROM failed_urls WHERE url = ?", (url,))
+            conn.commit()
+            return cursor.rowcount > 0
 
     def get_failed_urls(
         self,
@@ -468,8 +470,6 @@ class CrawledRegistry:
         Returns:
             List of failed URL records
         """
-        conn = self._get_conn()
-
         query = "SELECT * FROM failed_urls WHERE 1=1"
         params = []
 
@@ -489,8 +489,10 @@ class CrawledRegistry:
         query += " ORDER BY failed_at DESC LIMIT ? OFFSET ?"
         params.extend([limit, offset])
 
-        cursor = conn.execute(query, params)
-        return [dict(row) for row in cursor]
+        with self._db_lock:
+            conn = self._get_conn()
+            cursor = conn.execute(query, params)
+            return [dict(row) for row in cursor]
 
     def get_failed_stats(self) -> Dict[str, Any]:
         """
@@ -499,29 +501,30 @@ class CrawledRegistry:
         Returns:
             Dict with total count, by source, and by error type
         """
-        conn = self._get_conn()
+        with self._db_lock:
+            conn = self._get_conn()
 
-        # Total count
-        cursor = conn.execute("SELECT COUNT(*) as count FROM failed_urls")
-        total = cursor.fetchone()['count']
+            # Total count
+            cursor = conn.execute("SELECT COUNT(*) as count FROM failed_urls")
+            total = cursor.fetchone()['count']
 
-        # Count by source
-        cursor = conn.execute("""
-            SELECT source_id, COUNT(*) as count
-            FROM failed_urls
-            GROUP BY source_id
-            ORDER BY count DESC
-        """)
-        by_source = {row['source_id']: row['count'] for row in cursor}
+            # Count by source
+            cursor = conn.execute("""
+                SELECT source_id, COUNT(*) as count
+                FROM failed_urls
+                GROUP BY source_id
+                ORDER BY count DESC
+            """)
+            by_source = {row['source_id']: row['count'] for row in cursor}
 
-        # Count by error type
-        cursor = conn.execute("""
-            SELECT error_type, COUNT(*) as count
-            FROM failed_urls
-            GROUP BY error_type
-            ORDER BY count DESC
-        """)
-        by_error_type = {row['error_type']: row['count'] for row in cursor}
+            # Count by error type
+            cursor = conn.execute("""
+                SELECT error_type, COUNT(*) as count
+                FROM failed_urls
+                GROUP BY error_type
+                ORDER BY count DESC
+            """)
+            by_error_type = {row['error_type']: row['count'] for row in cursor}
 
         return {
             'total': total,
@@ -541,8 +544,6 @@ class CrawledRegistry:
         Returns:
             Number of records deleted
         """
-        conn = self._get_conn()
-
         query = "DELETE FROM failed_urls WHERE 1=1"
         params = []
         if source_id:
@@ -553,18 +554,21 @@ class CrawledRegistry:
             query += f" AND error_type IN ({placeholders})"
             params.extend(error_types)
 
-        cursor = conn.execute(query, params)
-        conn.commit()
-        return cursor.rowcount
+        with self._db_lock:
+            conn = self._get_conn()
+            cursor = conn.execute(query, params)
+            conn.commit()
+            return cursor.rowcount
 
     def has_blocked_failures(self, source_id: str) -> bool:
         """Check if there are any blocked failures for the given source."""
-        conn = self._get_conn()
-        cursor = conn.execute(
-            "SELECT 1 FROM failed_urls WHERE source_id = ? AND error_type = 'blocked' LIMIT 1",
-            (source_id,)
-        )
-        return cursor.fetchone() is not None
+        with self._db_lock:
+            conn = self._get_conn()
+            cursor = conn.execute(
+                "SELECT 1 FROM failed_urls WHERE source_id = ? AND error_type = 'blocked' LIMIT 1",
+                (source_id,)
+            )
+            return cursor.fetchone() is not None
 
     def get_failed_urls_for_retry(
         self,
@@ -583,26 +587,28 @@ class CrawledRegistry:
         Returns:
             List of URLs to retry
         """
-        conn = self._get_conn()
-        cursor = conn.execute("""
-            SELECT url FROM failed_urls
-            WHERE source_id = ? AND retry_count < ?
-            ORDER BY failed_at ASC
-            LIMIT ?
-        """, (source_id, max_retries, limit))
-        return [row['url'] for row in cursor]
+        with self._db_lock:
+            conn = self._get_conn()
+            cursor = conn.execute("""
+                SELECT url FROM failed_urls
+                WHERE source_id = ? AND retry_count < ?
+                ORDER BY failed_at ASC
+                LIMIT ?
+            """, (source_id, max_retries, limit))
+            return [row['url'] for row in cursor]
 
     # ==================== Scan Watermark Management ====================
 
     def get_scan_watermark(self, source_id: str) -> Optional[Dict[str, Any]]:
         """Get the scan watermark for a source."""
-        conn = self._get_conn()
-        cursor = conn.execute(
-            "SELECT * FROM scan_watermarks WHERE source_id = ?",
-            (source_id,)
-        )
-        row = cursor.fetchone()
-        return dict(row) if row else None
+        with self._db_lock:
+            conn = self._get_conn()
+            cursor = conn.execute(
+                "SELECT * FROM scan_watermarks WHERE source_id = ?",
+                (source_id,)
+            )
+            row = cursor.fetchone()
+            return dict(row) if row else None
 
     def update_scan_watermark(
         self,
@@ -618,41 +624,43 @@ class CrawledRegistry:
             last_scanned_id: For sequential sources
             last_scanned_date: For date-based sources (YYYY-MM-DD)
         """
-        conn = self._get_conn()
         now = datetime.now().isoformat()
 
-        existing = self.get_scan_watermark(source_id)
+        with self._db_lock:
+            conn = self._get_conn()
+            existing = self.get_scan_watermark(source_id)
 
-        if existing:
-            # Only advance forward
-            new_id = last_scanned_id
-            if new_id is not None and existing.get('last_scanned_id') is not None:
-                new_id = max(new_id, existing['last_scanned_id'])
+            if existing:
+                # Only advance forward
+                new_id = last_scanned_id
+                if new_id is not None and existing.get('last_scanned_id') is not None:
+                    new_id = max(new_id, existing['last_scanned_id'])
 
-            new_date = last_scanned_date
-            if new_date is not None and existing.get('last_scanned_date') is not None:
-                new_date = max(new_date, existing['last_scanned_date'])
+                new_date = last_scanned_date
+                if new_date is not None and existing.get('last_scanned_date') is not None:
+                    new_date = max(new_date, existing['last_scanned_date'])
 
-            conn.execute("""
-                UPDATE scan_watermarks
-                SET last_scanned_id = COALESCE(?, last_scanned_id),
-                    last_scanned_date = COALESCE(?, last_scanned_date),
-                    updated_at = ?
-                WHERE source_id = ?
-            """, (new_id, new_date, now, source_id))
-        else:
-            conn.execute("""
-                INSERT INTO scan_watermarks (source_id, last_scanned_id, last_scanned_date, updated_at)
-                VALUES (?, ?, ?, ?)
-            """, (source_id, last_scanned_id, last_scanned_date, now))
+                conn.execute("""
+                    UPDATE scan_watermarks
+                    SET last_scanned_id = COALESCE(?, last_scanned_id),
+                        last_scanned_date = COALESCE(?, last_scanned_date),
+                        updated_at = ?
+                    WHERE source_id = ?
+                """, (new_id, new_date, now, source_id))
+            else:
+                conn.execute("""
+                    INSERT INTO scan_watermarks (source_id, last_scanned_id, last_scanned_date, updated_at)
+                    VALUES (?, ?, ?, ?)
+                """, (source_id, last_scanned_id, last_scanned_date, now))
 
-        conn.commit()
+            conn.commit()
 
     def get_all_watermarks(self) -> Dict[str, Dict[str, Any]]:
         """Get all scan watermarks (for Dashboard display)."""
-        conn = self._get_conn()
-        cursor = conn.execute("SELECT * FROM scan_watermarks")
-        return {row['source_id']: dict(row) for row in cursor}
+        with self._db_lock:
+            conn = self._get_conn()
+            cursor = conn.execute("SELECT * FROM scan_watermarks")
+            return {row['source_id']: dict(row) for row in cursor}
 
     # ==================== Not-Found Article Management ====================
 
@@ -671,22 +679,27 @@ class CrawledRegistry:
         self.__init_not_found_buffer()
         if not self._nf_buffer:
             return
-        conn = self._get_conn()
-        conn.executemany(
-            "INSERT OR IGNORE INTO not_found_articles (source_id, article_id, confirmed_at) VALUES (?, ?, ?)",
-            self._nf_buffer
-        )
-        conn.commit()
-        self._nf_buffer.clear()
+        # Swap pattern: atomically grab the buffer and replace with empty list
+        # to avoid race between executemany and concurrent mark_not_found appends
+        buffer = self._nf_buffer
+        self._nf_buffer = []
+        with self._db_lock:
+            conn = self._get_conn()
+            conn.executemany(
+                "INSERT OR IGNORE INTO not_found_articles (source_id, article_id, confirmed_at) VALUES (?, ?, ?)",
+                buffer
+            )
+            conn.commit()
 
     def load_not_found_ids(self, source_id: str) -> Set[int]:
         """Load all 404 article IDs for a source into a memory set."""
-        conn = self._get_conn()
-        cursor = conn.execute(
-            "SELECT article_id FROM not_found_articles WHERE source_id = ?",
-            (source_id,)
-        )
-        return {row['article_id'] for row in cursor}
+        with self._db_lock:
+            conn = self._get_conn()
+            cursor = conn.execute(
+                "SELECT article_id FROM not_found_articles WHERE source_id = ?",
+                (source_id,)
+            )
+            return {row['article_id'] for row in cursor}
 
     def load_blocked_ids(self, source_id: str) -> Set[int]:
         """Load article IDs that failed with 'blocked' (429) status.
@@ -696,13 +709,16 @@ class CrawledRegistry:
 
         Extracts numeric article IDs from URLs using source-specific patterns.
         """
-        conn = self._get_conn()
-        cursor = conn.execute(
-            "SELECT url FROM failed_urls WHERE source_id = ? AND error_type = 'blocked'",
-            (source_id,)
-        )
+        with self._db_lock:
+            conn = self._get_conn()
+            cursor = conn.execute(
+                "SELECT url FROM failed_urls WHERE source_id = ? AND error_type = 'blocked'",
+                (source_id,)
+            )
+            rows = cursor.fetchall()
+
         blocked_ids = set()
-        for row in cursor:
+        for row in rows:
             url = row['url']
             # Try source-specific patterns first, then date-based fallback
             m = (_RE_MOEA_ID.search(url)
@@ -720,13 +736,16 @@ class CrawledRegistry:
         Used to prevent day-level watermark skip from skipping days
         that have blocked (429) URLs needing retry.
         """
-        conn = self._get_conn()
-        cursor = conn.execute(
-            "SELECT url FROM failed_urls WHERE source_id = ? AND error_type = 'blocked'",
-            (source_id,)
-        )
+        with self._db_lock:
+            conn = self._get_conn()
+            cursor = conn.execute(
+                "SELECT url FROM failed_urls WHERE source_id = ? AND error_type = 'blocked'",
+                (source_id,)
+            )
+            rows = cursor.fetchall()
+
         blocked_dates = set()
-        for row in cursor:
+        for row in rows:
             # Extract 8-digit date from article ID in URL (YYYYMMDD)
             m = _RE_DATE_BASED_ID.search(row['url'])
             if m:
@@ -736,15 +755,16 @@ class CrawledRegistry:
 
     def get_not_found_count(self, source_id: Optional[str] = None) -> int:
         """Get count of 404 records (for stats/debug)."""
-        conn = self._get_conn()
-        if source_id:
-            cursor = conn.execute(
-                "SELECT COUNT(*) as count FROM not_found_articles WHERE source_id = ?",
-                (source_id,)
-            )
-        else:
-            cursor = conn.execute("SELECT COUNT(*) as count FROM not_found_articles")
-        return cursor.fetchone()['count']
+        with self._db_lock:
+            conn = self._get_conn()
+            if source_id:
+                cursor = conn.execute(
+                    "SELECT COUNT(*) as count FROM not_found_articles WHERE source_id = ?",
+                    (source_id,)
+                )
+            else:
+                cursor = conn.execute("SELECT COUNT(*) as count FROM not_found_articles")
+            return cursor.fetchone()['count']
 
     # ==================== Reference Points Validation ====================
 
@@ -766,44 +786,55 @@ class CrawledRegistry:
         Returns:
             List of validation results with status
         """
-        conn = self._get_conn()
         results = []
 
-        for point in points:
-            article_id = point["id"]
-            article_id_str = str(article_id)
+        with self._db_lock:
+            conn = self._get_conn()
+            for point in points:
+                article_id = point["id"]
+                article_id_str = str(article_id)
 
-            # Check crawled_articles (URL contains article_id)
-            cursor = conn.execute(
-                "SELECT url, date_published FROM crawled_articles "
-                "WHERE source_id = ? AND url LIKE ? LIMIT 1",
-                (source_id, f"%{article_id_str}%")
-            )
-            row = cursor.fetchone()
-
-            if row:
-                status = "found"
-                url = row["url"]
-                date_published = row["date_published"]
-            else:
-                url = None
-                date_published = None
-                # Check not_found_articles
-                nf_cursor = conn.execute(
-                    "SELECT 1 FROM not_found_articles "
-                    "WHERE source_id = ? AND article_id = ?",
-                    (source_id, article_id)
+                # Check crawled_articles (URL contains article_id with path boundary)
+                # Use path separator to avoid false positives (e.g. "123" matching "1234")
+                # Match: /article_id. or /article_id/ or /article_id at end of URL
+                # Also match: =article_id& or =article_id at end (query params like news_id=123)
+                cursor = conn.execute(
+                    "SELECT url, date_published FROM crawled_articles "
+                    "WHERE source_id = ? AND ("
+                    "  url LIKE '%/' || ? || '.%' OR"
+                    "  url LIKE '%/' || ? || '/%' OR"
+                    "  url LIKE '%/' || ? OR"
+                    "  url LIKE '%=' || ? || '&%' OR"
+                    "  url LIKE '%=' || ?"
+                    ") LIMIT 1",
+                    (source_id, article_id_str, article_id_str, article_id_str,
+                     article_id_str, article_id_str)
                 )
-                status = "confirmed_404" if nf_cursor.fetchone() else "not_scanned"
+                row = cursor.fetchone()
 
-            results.append({
-                "id": article_id,
-                "date": point.get("date", ""),
-                "note": point.get("note", ""),
-                "status": status,
-                "url": url,
-                "date_published": date_published,
-            })
+                if row:
+                    status = "found"
+                    url = row["url"]
+                    date_published = row["date_published"]
+                else:
+                    url = None
+                    date_published = None
+                    # Check not_found_articles
+                    nf_cursor = conn.execute(
+                        "SELECT 1 FROM not_found_articles "
+                        "WHERE source_id = ? AND article_id = ?",
+                        (source_id, article_id)
+                    )
+                    status = "confirmed_404" if nf_cursor.fetchone() else "not_scanned"
+
+                results.append({
+                    "id": article_id,
+                    "date": point.get("date", ""),
+                    "note": point.get("note", ""),
+                    "status": status,
+                    "url": url,
+                    "date_published": date_published,
+                })
 
         return results
 
@@ -815,25 +846,26 @@ class CrawledRegistry:
         Returns:
             List of {"url", "date", "date_published"} sorted by date
         """
-        conn = self._get_conn()
-        cursor = conn.execute("""
-            SELECT url, date_published, SUBSTR(date_published, 1, 7) as month
-            FROM crawled_articles
-            WHERE source_id = ?
-              AND date_published IS NOT NULL
-              AND date_published != ''
-            GROUP BY SUBSTR(date_published, 1, 7)
-            ORDER BY date_published
-        """, (source_id,))
+        with self._db_lock:
+            conn = self._get_conn()
+            cursor = conn.execute("""
+                SELECT url, date_published, SUBSTR(date_published, 1, 7) as month
+                FROM crawled_articles
+                WHERE source_id = ?
+                  AND date_published IS NOT NULL
+                  AND date_published != ''
+                GROUP BY SUBSTR(date_published, 1, 7)
+                ORDER BY date_published
+            """, (source_id,))
 
-        return [
-            {
-                "url": row["url"],
-                "date": row["month"],
-                "date_published": row["date_published"],
-            }
-            for row in cursor
-        ]
+            return [
+                {
+                    "url": row["url"],
+                    "date": row["month"],
+                    "date_published": row["date_published"],
+                }
+                for row in cursor
+            ]
 
     def get_daily_article_counts(
         self, source_id: str, year_month: str
@@ -849,23 +881,32 @@ class CrawledRegistry:
         Returns:
             Dict mapping "YYYY-MM-DD" to article count
         """
-        conn = self._get_conn()
-        cursor = conn.execute("""
-            SELECT SUBSTR(date_published, 1, 10) as day, COUNT(*) as count
-            FROM crawled_articles
-            WHERE source_id = ?
-              AND date_published LIKE ?
-            GROUP BY SUBSTR(date_published, 1, 10)
-            ORDER BY day
-        """, (source_id, f"{year_month}%"))
+        with self._db_lock:
+            conn = self._get_conn()
+            cursor = conn.execute("""
+                SELECT SUBSTR(date_published, 1, 10) as day, COUNT(*) as count
+                FROM crawled_articles
+                WHERE source_id = ?
+                  AND date_published LIKE ?
+                GROUP BY SUBSTR(date_published, 1, 10)
+                ORDER BY day
+            """, (source_id, f"{year_month}%"))
 
-        return {row["day"]: row["count"] for row in cursor}
+            return {row["day"]: row["count"] for row in cursor}
 
     def close(self) -> None:
-        """Close database connection."""
-        if self._conn:
-            self._conn.close()
-            self._conn = None
+        """Close database connection, flushing any buffered data first."""
+        # Flush any remaining not-found buffer before closing
+        if hasattr(self, '_nf_buffer') and self._nf_buffer:
+            try:
+                self.flush_not_found()
+            except Exception as e:
+                self.logger.error(f"Error flushing _nf_buffer during close: {e}")
+
+        with self._db_lock:
+            if self._conn:
+                self._conn.close()
+                self._conn = None
 
 
 # Singleton instance for easy access

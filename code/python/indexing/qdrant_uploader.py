@@ -6,6 +6,7 @@ qdrant_uploader.py - Qdrant 向量上傳模組
 
 import logging
 import os
+import time
 import uuid
 from dataclasses import dataclass
 from typing import Optional
@@ -128,8 +129,24 @@ class QdrantUploader:
                 for c in batch_chunks
             ]
 
-            # Generate embeddings
-            embeddings = embed_texts(texts)
+            # Generate embeddings with retry
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    embeddings = embed_texts(texts)
+                    break
+                except Exception as e:
+                    if attempt < max_retries - 1:
+                        wait = 2 ** attempt  # 1s, 2s, 4s
+                        self.logger.warning(f"embed_texts failed (attempt {attempt+1}), retrying in {wait}s: {e}")
+                        time.sleep(wait)
+                    else:
+                        self.logger.error(f"embed_texts failed after {max_retries} attempts: {e}")
+                        raise
+
+            # Validate embedding count matches input
+            if len(embeddings) != len(texts):
+                raise ValueError(f"Embedding count mismatch: got {len(embeddings)} embeddings for {len(texts)} texts")
 
             # Create points
             points = []
@@ -228,7 +245,7 @@ class QdrantUploader:
 
         return existing
 
-    def delete_by_article_url(self, article_url: str) -> int:
+    def delete_by_article_url(self, article_url: str):
         """
         Delete all chunks for a specific article.
 
@@ -236,7 +253,7 @@ class QdrantUploader:
             article_url: The article URL to delete chunks for
 
         Returns:
-            Number of points deleted
+            UpdateResult status from Qdrant (e.g. UpdateStatus.COMPLETED)
         """
         from qdrant_client.models import Filter, FieldCondition, MatchValue
 

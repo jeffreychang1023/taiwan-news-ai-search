@@ -166,6 +166,10 @@ class MMRReranker:
             Cosine similarity score (0 to 1)
         """
         try:
+            if len(vec1) != len(vec2):
+                logger.warning(f"Dimension mismatch in cosine similarity: {len(vec1)} vs {len(vec2)}")
+                return 0.0
+
             # Convert to numpy arrays
             v1 = np.array(vec1)
             v2 = np.array(vec2)
@@ -186,6 +190,33 @@ class MMRReranker:
         except Exception as e:
             logger.error(f"Error calculating cosine similarity: {e}")
             return 0.0
+
+    def _precompute_similarity_matrix(self, embeddings: List[List[float]]) -> np.ndarray:
+        """
+        Pre-compute pairwise cosine similarity matrix for all embeddings.
+
+        This avoids O(k^2 * n * d) repeated cosine similarity calculations
+        in the MMR selection loop by computing all pairs once as a matrix operation.
+
+        Args:
+            embeddings: List of embedding vectors
+
+        Returns:
+            numpy array of shape (n, n) with pairwise cosine similarities
+        """
+        if not embeddings:
+            return np.array([])
+
+        matrix = np.array(embeddings)
+        # Normalize rows
+        norms = np.linalg.norm(matrix, axis=1, keepdims=True)
+        norms = np.where(norms == 0, 1, norms)  # avoid division by zero
+        normalized = matrix / norms
+        # Cosine similarity matrix via dot product of normalized vectors
+        sim_matrix = normalized @ normalized.T
+        # Clamp to [0, 1] range (embeddings typically have non-negative similarity)
+        np.clip(sim_matrix, 0.0, 1.0, out=sim_matrix)
+        return sim_matrix
 
     def rerank(self,
                ranked_results: List[Dict[str, Any]],
@@ -219,6 +250,10 @@ class MMRReranker:
 
         logger.info(f"Applying MMR to {len(candidates)} results")
 
+        # Pre-compute pairwise cosine similarity matrix for all candidates
+        embeddings = [c['vector'] for c in candidates]
+        sim_matrix = self._precompute_similarity_matrix(embeddings)
+
         # Normalize ranking scores to [0, 1] for MMR calculation
         scores = [r['ranking'].get('score', 0) for r in candidates]
         max_score = max(scores) if scores else 1.0
@@ -228,12 +263,14 @@ class MMRReranker:
         # Initialize
         selected_results = []
         selected_indices = set()
+        selected_indices_list = []  # ordered list for matrix lookup
         mmr_scores = []
 
         # Select first result (highest relevance score)
         first_idx = 0
         selected_results.append(candidates[first_idx])
         selected_indices.add(first_idx)
+        selected_indices_list.append(first_idx)
 
         # Normalized relevance score for first item
         normalized_relevance = (candidates[first_idx]['ranking'].get('score', 0) - min_score) / score_range
@@ -247,20 +284,21 @@ class MMRReranker:
             best_idx = None
 
             # Evaluate each unselected candidate
-            for idx, candidate in enumerate(candidates):
+            for idx in range(len(candidates)):
                 if idx in selected_indices:
                     continue
 
                 # Calculate relevance score (normalized)
-                relevance = (candidate['ranking'].get('score', 0) - min_score) / score_range
+                relevance = (candidates[idx]['ranking'].get('score', 0) - min_score) / score_range
 
-                # Calculate max similarity to already-selected documents
+                # Calculate max similarity to already-selected documents using pre-computed matrix
                 max_similarity = 0.0
-                for selected in selected_results:
-                    similarity = self.cosine_similarity(candidate['vector'], selected['vector'])
-                    max_similarity = max(max_similarity, similarity)
+                for sel_idx in selected_indices_list:
+                    similarity = float(sim_matrix[idx, sel_idx])
+                    if similarity > max_similarity:
+                        max_similarity = similarity
 
-                # MMR formula: λ * relevance - (1-λ) * max_similarity
+                # MMR formula: lambda * relevance - (1-lambda) * max_similarity
                 mmr_score = self.lambda_param * relevance - (1 - self.lambda_param) * max_similarity
 
                 if mmr_score > best_mmr_score:
@@ -270,27 +308,28 @@ class MMRReranker:
             if best_idx is not None:
                 selected_results.append(candidates[best_idx])
                 selected_indices.add(best_idx)
+                selected_indices_list.append(best_idx)
                 mmr_scores.append(best_mmr_score)
 
                 logger.debug(f"[MMR] Selected {iteration + 1}th: {candidates[best_idx]['name'][:50]} "
                            f"(mmr={best_mmr_score:.3f}, score={candidates[best_idx]['ranking'].get('score', 0):.1f})")
 
-        # Log diversity improvement
+        # Log diversity improvement using pre-computed matrix
         if len(selected_results) >= 2:
             # Calculate average similarity before MMR (top-k results)
-            original_top_k = candidates[:top_k]
+            orig_k = min(top_k, len(candidates))
             original_similarities = []
-            for i in range(len(original_top_k)):
-                for j in range(i + 1, len(original_top_k)):
-                    sim = self.cosine_similarity(original_top_k[i]['vector'], original_top_k[j]['vector'])
-                    original_similarities.append(sim)
+            for i in range(orig_k):
+                for j in range(i + 1, orig_k):
+                    original_similarities.append(float(sim_matrix[i, j]))
 
-            # Calculate average similarity after MMR
+            # Calculate average similarity after MMR using selected indices
             mmr_similarities = []
-            for i in range(len(selected_results)):
-                for j in range(i + 1, len(selected_results)):
-                    sim = self.cosine_similarity(selected_results[i]['vector'], selected_results[j]['vector'])
-                    mmr_similarities.append(sim)
+            for i_pos in range(len(selected_indices_list)):
+                for j_pos in range(i_pos + 1, len(selected_indices_list)):
+                    idx_i = selected_indices_list[i_pos]
+                    idx_j = selected_indices_list[j_pos]
+                    mmr_similarities.append(float(sim_matrix[idx_i, idx_j]))
 
             avg_orig_sim = np.mean(original_similarities) if original_similarities else 0.0
             avg_mmr_sim = np.mean(mmr_similarities) if mmr_similarities else 0.0

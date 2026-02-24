@@ -36,16 +36,50 @@ class ChinatimesParser(BaseParser):
     ]
 
     # realtimenews category codes（URL 中 - 後的 6 位數字）
-    # get_url() 用 260402（社會）作 primary，其餘作 candidate
+    # 按文章數量排序。get_url() 用第一個作 primary，其餘作 candidate。
+    # Top 40 覆蓋 ~95.6% 的 realtimenews 文章（2026-02-23 統計）。
+    # 注意：每篇文章只有其正確 category 能存取，260402 不是萬用路徑。
     REALTIMENEWS_CATEGORY_CODES = [
-        '260402',  # 社會 (primary, highest volume)
-        '260407',  # 政治
-        '260405',  # 生活
-        '260404',  # 國際
-        '260408',  # 科技
-        '260410',  # 娛樂
-        '260412',  # 體育
-        '260403',  # 財經
+        '260402',  # 社會 13.2%
+        '260410',  # 娛樂 8.2%
+        '263201',  # 中時社論/評論 7.7%
+        '263301',  # 旺報 7.1%
+        '261502',  # 工商時報 6.5%
+        '260405',  # 生活 6.4%
+        '263101',  # 中時新聞網 5.6%
+        '260407',  # 政治 4.8%
+        '260404',  # 國際 4.0%
+        '261507',  # 工商財經 3.2%
+        '261101',  # 房產新聞 3.0%
+        '261701',  # 健康 2.3%
+        '261509',  # 工商產業 2.0%
+        '260421',  # 軍事 1.9%
+        '261504',  # 工商科技 1.8%
+        '260403',  # 財經 1.5%
+        '260408',  # 科技 1.5%
+        '260409',  # 兩岸 1.4%
+        '261511',  # 工商特刊 1.4%
+        '261601',  # 消費/時尚 1.3%
+        '261505',  # 工商產業 1.1%
+        '261109',  # 房產其他 0.8%
+        '260418',  # 政治/專欄 0.8%
+        '260417',  # 社會/地方 0.7%
+        '261306',  # 體育/綜合 0.7%
+        '263504',  # 中天新聞 0.7%
+        '265002',  # 網推 0.6%
+        '261105',  # 房產/建案 0.5%
+        '261312',  # 體育/籃球 0.5%
+        '265001',  # 網推 0.5%
+        '261809',  # 寵物 0.5%
+        '263306',  # 旺報/綜合 0.5%
+        '263302',  # 旺報/兩岸 0.5%
+        '261307',  # 體育/棒球 0.5%
+        '260423',  # 選舉 0.5%
+        '264401',  # 遊戲 0.4%
+        '263401',  # 翻爆 0.4%
+        '261702',  # 健康/醫藥 0.3%
+        '264209',  # 汽車 0.3%
+        '264210',  # 機車 0.3%
     ]
 
     def __init__(self):
@@ -64,18 +98,16 @@ class ChinatimesParser(BaseParser):
         return f"https://www.chinatimes.com/realtimenews/{article_id}-260402"
 
     def get_candidate_urls(self, article_id: int) -> List[str]:
-        """嘗試不同 section path。
+        """嘗試不同 category code。
 
-        Chinatimes 同一 section 內 category code 不影響結果（任何 code 都回同篇文章），
-        但不同 section（realtimenews/newspapers/opinion）是不同文章。
-        Primary URL = realtimenews，candidates 優先試 newspapers 和 opinion。
+        每篇文章只有其正確的 category code 能存取（260402 不是萬用路徑）。
+        依文章數量排序嘗試，命中即停止（由 engine 控制）。
+        Primary URL 使用 REALTIMENEWS_CATEGORY_CODES[0]，candidates 為其餘。
         """
-        candidates = [
-            # 不同 section 優先（各自有獨立文章，非重複）
-            f"https://www.chinatimes.com/newspapers/{article_id}-260109",
-            f"https://www.chinatimes.com/opinion/{article_id}-262101",
+        return [
+            f"https://www.chinatimes.com/realtimenews/{article_id}-{cat}"
+            for cat in self.REALTIMENEWS_CATEGORY_CODES[1:]  # skip primary (already in get_url)
         ]
-        return candidates
 
     def get_sitemap_config(self) -> Optional[Dict[str, Any]]:
         """Sitemap 爬取配置（1000 個 sub-sitemap，涵蓋全部歷史文章）"""

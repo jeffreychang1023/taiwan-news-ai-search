@@ -229,10 +229,19 @@ class IndexingPipeline:
                         self.checkpoint.failed_urls[cdm.url] = str(e)
                         result.failed += 1
 
+                    # Flush to Qdrant periodically
+                    if self.upload_to_qdrant and len(self._chunk_buffer) >= self.batch_size:
+                        try:
+                            self._flush_qdrant_buffer()
+                        except Exception as e:
+                            logger.error(f"Qdrant flush failed, NOT advancing checkpoint: {e}")
+                            self._save_checkpoint()
+                            raise
+
                     # Save checkpoint periodically
                     processed = result.success + result.failed + result.buffered
                     if processed % self.checkpoint_interval == 0:
-                        self.checkpoint.last_processed_line = line_num
+                        self.checkpoint.last_processed_line = line_num + 1  # Next line to process
                         self.checkpoint.updated_at = datetime.utcnow().isoformat()
                         self._save_checkpoint()
 
@@ -240,6 +249,9 @@ class IndexingPipeline:
             # Save checkpoint on error
             self._save_checkpoint()
             raise
+
+        # Final flush
+        self._flush_qdrant_buffer()
 
         # Success: delete checkpoint
         self._delete_checkpoint()
@@ -317,6 +329,16 @@ class IndexingPipeline:
             total_uploaded += uploaded
 
         self._chunk_buffer.clear()
+
+        # Truncate buffer.jsonl after successful flush to prevent unbounded growth
+        buffer_path = Path(__file__).parents[3] / "data" / "indexing" / "buffer.jsonl"
+        if buffer_path.exists():
+            try:
+                with open(buffer_path, 'w') as f:
+                    pass  # Truncate
+            except Exception as e:
+                logger.warning(f"Failed to truncate buffer.jsonl: {e}")
+
         return total_uploaded
 
     def _buffer_article(self, cdm: CanonicalDataModel, reasons: list[str]) -> None:

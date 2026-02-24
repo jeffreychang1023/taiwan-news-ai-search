@@ -79,6 +79,8 @@ class ProgressConfig:
     @staticmethod
     def calculate_progress(stage: str, iteration: int, total_iterations: int) -> int:
         """計算給定stage的進度百分比。"""
+        if total_iterations <= 0:
+            total_iterations = 1
         stage_info = ProgressConfig.STAGES.get(stage, {"weight": 0.5})
         base = int((iteration - 1) / total_iterations * 100)
         offset = int(stage_info["weight"] * (100 / total_iterations))
@@ -119,7 +121,7 @@ class DeepResearchOrchestrator:
         self.formatted_context = ""
         self.source_map = {}
 
-    def _format_context_shared(self, items: List[Dict[str, Any]]) -> tuple[str, Dict[int, Dict]]:
+    def _format_context_shared(self, items: List[Dict[str, Any]], start_id: int = 1) -> tuple[str, Dict[int, Dict]]:
         """
         Format context with citation markers - SINGLE SOURCE OF TRUTH.
 
@@ -149,7 +151,7 @@ class DeepResearchOrchestrator:
         # ===== Step 1: Build COMPLETE source_map (no limit) =====
         # This is the ground truth for citation -> item mapping
         # Frontend will use this to display all citation references
-        for idx, item in enumerate(items, 1):
+        for idx, item in enumerate(items, start_id):
             source_map[idx] = item
 
         # ===== Step 2: Calculate how many items fit in token budget =====
@@ -189,7 +191,7 @@ class DeepResearchOrchestrator:
             snippet_length = MAX_SNIPPET_LENGTH
 
         # ===== Step 4: Format context for AI (only budgeted items) =====
-        for idx, item in enumerate(items[:items_in_budget], 1):
+        for idx, item in enumerate(items[:items_in_budget], start_id):
             # Handle both dict and tuple/list formats
             if isinstance(item, dict):
                 title = item.get("title") or item.get("name", "No title")
@@ -234,6 +236,83 @@ class DeepResearchOrchestrator:
             )
 
         return formatted_string, source_map
+
+    def _build_critic_reference_sheet(self, citations_used: List[int]) -> str:
+        """
+        SEC-6: Build a compact reference sheet for Critic containing only cited sources.
+
+        Instead of passing full formatted_context to Critic, extract only the
+        sources actually cited by Analyst, reducing token usage significantly.
+
+        Args:
+            citations_used: List of citation IDs from Analyst's response
+
+        Returns:
+            Formatted reference sheet string
+        """
+        snippet_length = CONFIG.reasoning_params.get("agent_isolation", {}).get(
+            "reference_sheet_snippet_length", 500
+        )
+        parts = []
+        for cid in sorted(set(citations_used)):
+            item = self.source_map.get(cid)
+            if not item:
+                self.logger.warning(f"SEC-6: citation [{cid}] not found in source_map")
+                continue
+
+            if isinstance(item, dict):
+                title = item.get("title") or item.get("name", "No title")
+                source = item.get("site", "Unknown")
+                description = item.get("description", "")
+            elif isinstance(item, (list, tuple)):
+                title = item[2] if len(item) > 2 else "No title"
+                source = item[3] if len(item) > 3 else "Unknown"
+                try:
+                    schema_json = item[1] if len(item) > 1 else "{}"
+                    schema_obj = json.loads(schema_json) if isinstance(schema_json, str) else schema_json
+                    description = schema_obj.get("description", "")
+                except Exception as e:
+                    self.logger.warning(f"SEC-6: Failed to parse description for citation [{cid}]: {e}")
+                    description = ""
+            else:
+                title = "No title"
+                source = "Unknown"
+                description = ""
+
+            snippet = description[:snippet_length] + ("..." if len(description) > snippet_length else "")
+            parts.append(f"[{cid}] {source} - {title}\n{snippet}\n")
+
+        return "\n".join(parts)
+
+    def _create_no_results_response(self, query: str) -> List[Dict[str, Any]]:
+        """
+        Create a response indicating no relevant documents were found.
+
+        Used when the formatted context is empty, preventing the Analyst
+        from hallucinating content without any source material.
+
+        Args:
+            query: The user's original query
+
+        Returns:
+            List with single NLWeb Item dict with no-results message
+        """
+        return [{
+            "@type": "Item",
+            "url": "internal://no-results",
+            "name": f"查無相關資料：{query}",
+            "site": "系統訊息",
+            "siteUrl": "internal",
+            "score": 0,
+            "description": (
+                f"# 查無相關資料\n\n"
+                f"針對「{query}」的搜尋未找到任何相關文件。\n\n"
+                f"**建議**：\n"
+                f"1. 嘗試使用不同的關鍵詞\n"
+                f"2. 擴大搜尋範圍（使用 `site=all`）\n"
+                f"3. 確認資料庫中有相關內容"
+            )
+        }]
 
     def _get_current_time_header(self) -> str:
         """
@@ -509,12 +588,24 @@ class DeepResearchOrchestrator:
                 tracer=tracer,
             )
 
+            # RSN-11: Early return if context is empty to prevent hallucination
+            if not self.formatted_context or not self.formatted_context.strip():
+                self.logger.warning("Empty context - no relevant documents found")
+                return self._create_no_results_response(query)
+
             # Phase 2: Actor-Critic Loop
             max_iterations = CONFIG.reasoning_params.get("max_iterations", 3)
             iteration = 0
             draft = None
             review = None
+            response = None  # RSN-7: Initialize to avoid unbound variable if first analyst call fails
             reject_count = 0
+
+            # SEC-6: Agent isolation state
+            enable_isolation = CONFIG.reasoning_params.get("features", {}).get("agent_isolation", False)
+            if enable_isolation:
+                self.logger.info("SEC-6: Agent isolation ENABLED")
+            seen_citation_ids: set = set()
 
             while iteration < max_iterations:
                 self._check_connection()  # Checkpoint 1: loop start
@@ -672,8 +763,25 @@ class DeepResearchOrchestrator:
                                 }
                             )
 
-                        # Re-format unified context with updated citations
-                        self.formatted_context, self.source_map = self._format_context_shared(current_context)
+                        if enable_isolation:
+                            # SEC-6: Only format NEW documents for LLM context
+                            new_start_id = max(self.source_map.keys(), default=0) + 1
+                            new_formatted, new_source_map = self._format_context_shared(
+                                new_context, start_id=new_start_id
+                            )
+                            # SEC-6: Invariant check - new IDs must not collide with existing
+                            overlap = set(new_source_map.keys()) & set(self.source_map.keys())
+                            if overlap:
+                                self.logger.error(f"SEC-6: source_map ID collision detected: {overlap}")
+                            self.source_map.update(new_source_map)
+                            self.formatted_context = new_formatted  # Only new docs for Analyst
+                            self.logger.info(
+                                f"SEC-6: gap_search new_docs={len(new_context)}, "
+                                f"new_start_id={new_start_id}, total_source_map={len(self.source_map)}"
+                            )
+                        else:
+                            # Re-format unified context with updated citations
+                            self.formatted_context, self.source_map = self._format_context_shared(current_context)
 
                         # Continue to next iteration (Analyst will retry with expanded context)
                         iteration += 1
@@ -682,7 +790,9 @@ class DeepResearchOrchestrator:
                         # No results found - force Analyst to work with existing data
                         self.logger.warning("Secondary search returned no results")
 
-                        # Add system hint to context
+                        # RSN-5: Rebuild formatted_context fresh instead of accumulating hints
+                        # Re-format from source of truth to avoid stale hints from previous iterations
+                        self.formatted_context, self.source_map = self._format_context_shared(current_context)
                         system_hint = "\n\n[系統提示] 針對缺口的補充搜尋未發現有效結果，請基於現有資訊推論。"
                         self.formatted_context += system_hint
 
@@ -712,6 +822,29 @@ class DeepResearchOrchestrator:
                         # (will be caught in next iteration with system hint)
 
                 draft = response.draft
+
+                # SEC-6: Track and validate citations
+                if enable_isolation and response and hasattr(response, 'citations_used'):
+                    seen_citation_ids.update(response.citations_used)
+                    invalid_citations = [c for c in response.citations_used if c not in self.source_map]
+                    if invalid_citations:
+                        self.logger.error(f"SEC-6: citations not in source_map: {invalid_citations}")
+
+                # RSN-1: Guard against empty draft before proceeding to Critic
+                if not draft or not draft.strip():
+                    self.logger.warning("Empty draft detected after gap resolution, cannot proceed to review")
+                    # If we still have iterations left, increment and retry
+                    if iteration + 1 < max_iterations:
+                        self.logger.info("Retrying with next iteration due to empty draft")
+                        iteration += 1
+                        continue
+                    else:
+                        # Max iterations exhausted with empty draft
+                        self.logger.error("Max iterations reached with empty draft")
+                        return self._format_error_result(
+                            query,
+                            "分析階段無法產生有效內容，請嘗試調整搜尋條件或使用不同的查詢。"
+                        )
 
                 # Stage 5: Process gap_resolutions for web search
                 gap_resolution_added_data = False
@@ -756,11 +889,32 @@ class DeepResearchOrchestrator:
                     }
 
                     self._check_connection()  # Checkpoint 6: before analyst re-run with enriched data
-                    # Format context for re-analysis with enriched data
-                    formatted_context_enriched = "\n".join([
-                        f"[{i+1}] {doc.get('title', 'Unknown')} ({doc.get('site', 'Unknown')})"
-                        for i, doc in enumerate(current_context)
-                    ])
+
+                    if enable_isolation:
+                        # SEC-6: Format only NEW context items for Analyst
+                        new_items = current_context[context_before:]
+                        new_start_id = max(self.source_map.keys(), default=0) + 1
+                        formatted_context_enriched, new_source_map = self._format_context_shared(
+                            new_items, start_id=new_start_id
+                        )
+                        # SEC-6: Invariant check before merge
+                        overlap = set(new_source_map.keys()) & set(self.source_map.keys())
+                        if overlap:
+                            self.logger.error(f"SEC-6: enriched source_map ID collision: {overlap}")
+                        self.source_map.update(new_source_map)
+                        previous_draft_for_analyst = draft  # Pass previous draft so Analyst knows prior analysis
+                        self.logger.info(
+                            f"SEC-6: enriched re-run new_docs={len(new_items)}, "
+                            f"previous_draft_len={len(draft) if draft else 0}, "
+                            f"total_source_map={len(self.source_map)}"
+                        )
+                    else:
+                        # Format context for re-analysis with enriched data
+                        formatted_context_enriched = "\n".join([
+                            f"[{i+1}] {doc.get('title', 'Unknown')} ({doc.get('site', 'Unknown')})"
+                            for i, doc in enumerate(current_context)
+                        ])
+                        previous_draft_for_analyst = None
 
                     if tracer:
                         with tracer.agent_span("analyst", "research_with_enriched_data", analyst_input) as span:
@@ -770,7 +924,8 @@ class DeepResearchOrchestrator:
                                 mode=mode,
                                 temporal_context=temporal_context,
                                 enable_kg=enable_kg,
-                                enable_web_search=False  # Disable for re-analysis (already got data)
+                                enable_web_search=False,  # Disable for re-analysis (already got data)
+                                previous_draft=previous_draft_for_analyst  # SEC-6
                             )
                             span.set_result(response)
                     else:
@@ -780,7 +935,8 @@ class DeepResearchOrchestrator:
                             mode=mode,
                             temporal_context=temporal_context,
                             enable_kg=enable_kg,
-                            enable_web_search=False  # Disable for re-analysis (already got data)
+                            enable_web_search=False,  # Disable for re-analysis (already got data)
+                            previous_draft=previous_draft_for_analyst  # SEC-6
                         )
 
                     draft = response.draft
@@ -814,19 +970,48 @@ class DeepResearchOrchestrator:
                     "mode": mode
                 }
 
+                # SEC-6: Build critic context (reference sheet or full context)
+                if enable_isolation and hasattr(response, 'citations_used') and response.citations_used:
+                    ref_sheet = self._build_critic_reference_sheet(response.citations_used)
+                    iso_config = CONFIG.reasoning_params.get("agent_isolation", {})
+                    min_chars = iso_config.get("critic_reference_sheet_min_chars", 1000)
+                    min_citations = iso_config.get("critic_reference_sheet_min_citations", 2)
+                    if (len(ref_sheet) < min_chars
+                            or len(response.citations_used) < min_citations):
+                        # Rebuild full context from source of truth (self.formatted_context
+                        # may only contain latest batch in isolation mode)
+                        full_context, _ = self._format_context_shared(current_context)
+                        self.logger.info(
+                            f"SEC-6: Reference sheet too small "
+                            f"(chars={len(ref_sheet)}<{min_chars} or "
+                            f"citations={len(response.citations_used)}<{min_citations}), "
+                            f"falling back to full context ({len(full_context)} chars)"
+                        )
+                        critic_context = full_context
+                    else:
+                        full_len = len(self.formatted_context)
+                        reduction = 1.0 - (len(ref_sheet) / full_len) if full_len > 0 else 0
+                        self.logger.info(
+                            f"SEC-6: critic ref_sheet={len(ref_sheet)} chars "
+                            f"(full={full_len}, reduction={reduction:.0%})"
+                        )
+                        critic_context = ref_sheet
+                else:
+                    critic_context = self.formatted_context
+
                 if tracer:
                     with tracer.agent_span("critic", "review", critic_input) as span:
                         review = await self.critic.review(
                             draft, query, mode,
                             analyst_output=response,
-                            formatted_context=self.formatted_context  # Phase 2 CoV
+                            formatted_context=critic_context  # Phase 2 CoV / SEC-6
                         )
                         span.set_result(review)
                 else:
                     review = await self.critic.review(
                         draft, query, mode,
                         analyst_output=response,
-                        formatted_context=self.formatted_context  # Phase 2 CoV
+                        formatted_context=critic_context  # Phase 2 CoV / SEC-6
                     )
 
                 iteration_logger.log_agent_output(
@@ -895,8 +1080,24 @@ class DeepResearchOrchestrator:
                 # Add warning to critique (Pydantic models are immutable by default)
                 # We'll pass original review to Writer, which will handle REJECT status
 
+            # SEC-6: Writer draft length monitoring
+            if draft and enable_isolation:
+                threshold = CONFIG.reasoning_params.get("agent_isolation", {}).get(
+                    "draft_length_warning_threshold", 20000
+                )
+                if len(draft) > threshold:
+                    self.logger.warning(
+                        f"SEC-6: draft length {len(draft)} exceeds threshold {threshold}"
+                    )
+
             # Phase 3: Writer formats final report
-            analyst_citations = response.citations_used
+            # SEC-5: Validate analyst citations against source_map
+            raw_citations = response.citations_used
+            valid_citations = [c for c in raw_citations if c in self.source_map]
+            if len(valid_citations) < len(raw_citations):
+                removed = set(raw_citations) - set(valid_citations)
+                logger.warning(f"Removed phantom citations not in source_map: {removed}")
+            analyst_citations = valid_citations
 
             # Check if plan-and-write is enabled (Phase 3)
             enable_plan_and_write = CONFIG.reasoning_params.get("features", {}).get("plan_and_write", False)
@@ -1085,7 +1286,14 @@ class DeepResearchOrchestrator:
             self.logger.info(f"Research completed: {iteration + 1} iterations")
 
             # Tracing: Research end
-            total_time = time.time() - tracer.start_time if tracer else 0
+            # RSN-10: Safe access to tracer.start_time
+            if tracer:
+                start_time = getattr(tracer, 'start_time', None)
+                if start_time is None:
+                    start_time = time.time()  # fallback to now
+                total_time = time.time() - start_time
+            else:
+                total_time = 0
             if tracer:
                 tracer.end_research(
                     final_status=review.status,
