@@ -260,7 +260,7 @@
       <returnStruc>
         {
           "score": "integer between 0 and 100",
-          "description": "2-3 factual sentences with specific details, NO meta-commentary about the article itself"
+          "description": "2-3 factual sentences with specific details, NO meta-commentary about the article itself. IMPORTANT: description 必須使用繁體中文撰寫。"
         }
       </returnStruc>
     </Prompt>
@@ -337,7 +337,7 @@
           "freshness_score": "integer 0-100",
           "authority_score": "integer 0-100",
           "final_score": "integer 0-100 (weighted average)",
-          "description": "2-3 factual sentences with specific details, NO meta-commentary about the article itself"
+          "description": "2-3 factual sentences with specific details, NO meta-commentary about the article itself. IMPORTANT: description 必須使用繁體中文撰寫。"
         }
       </returnStruc>
     </Prompt>
@@ -417,8 +417,15 @@
      <Prompt ref="SummarizeResultsPrompt">
       <promptString>
         Given the following items, provide a comprehensive summary that answers the user's question.
-        IMPORTANT: Respond in the same language as the user's question. If the question is in Chinese, respond in Chinese. If in English, respond in English.
+        IMPORTANT: 必須使用台灣用語的繁體中文回應。所有摘要、分析、結論都必須以繁體中文撰寫，不得切換為英文。
 
+        {system.temporal_range}
+
+        TIME AWARENESS INSTRUCTION:
+        如果上方有時間範圍資訊，請比對搜尋結果中文章的實際發布日期。
+        若文章日期與使用者要求的時間範圍明顯不符（例如使用者問「今日」但文章是上個月的），
+        你必須在摘要開頭明確告知：「目前資料庫中沒有符合指定時間的新聞，以下是最近的相關報導。」
+        不可假裝搜尋結果符合使用者的時間需求。
         CRITICAL: You MUST carefully read and analyze the ACTUAL CONTENT of each article. Look at the article titles, descriptions, and all available details. Do not write generic summaries.
 
         CRITICAL LENGTH REQUIREMENT: Your summary MUST be at least 100-200 Chinese characters (or 150-300 words for English). Write in paragraph form with at least 2-3 paragraphs.
