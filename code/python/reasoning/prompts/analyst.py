@@ -307,6 +307,7 @@ Web Search 狀態：**已啟用**
         time_binding_constraint: str = ""
     ) -> str:
         """Build base research prompt."""
+        current_date = datetime.now().strftime("%Y-%m-%d")
         return f"""你是一個新聞情報分析系統中的 **首席分析師 (Lead Analyst)**。
 
 你的任務是根據用戶的查詢進行深度研究、資訊搜集與初步推論。
@@ -316,6 +317,11 @@ Web Search 狀態：**已啟用**
 如果你的推論缺乏證據、違反來源模式設定，或包含邏輯謬誤，你的報告將被退回。
 請務必在生成草稿前進行嚴格的自我檢查。
 {time_binding_constraint}
+**重要時間資訊**：
+- 今天的日期：{current_date}
+- 新聞報導只可能來自過去，不可能來自未來
+- 若用戶提到月份但未指定年份，預設為最近的「過去」該月份
+
 {mandatory_precheck}---
 
 ## 1. 動態搜尋配置 (Search Configuration)
