@@ -124,6 +124,7 @@ class ClarificationPromptBuilder:
 - `time_range`: 結構化時間範圍，格式為 {{"start": "YYYY-MM-DD", "end": "YYYY-MM-DD"}}
 - 這是**強制約束 (BINDING CONSTRAINT)**，用戶選擇後系統將嚴格遵守此時間範圍
 - 今天的日期是：{today_str}
+- **重要**：新聞只可能來自過去，不可能來自未來。若用戶提到月份但未指定年份，預設為最近的「過去」該月份。例如：現在是 {today_str}，「12月」= 2025 年 12 月（不是 2026 年 12 月）
 
 時間選項的 time_range 計算參考：
 - 「今天」: {{"start": "{today_str}", "end": "{today_str}"}}

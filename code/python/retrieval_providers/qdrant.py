@@ -1240,27 +1240,34 @@ class QdrantVectorClient(RetrievalClientBase):
             return results
             
         except Exception as e:
-            logger.exception(f"Error in Qdrant search: {str(e)}")
-            
+            # Diagnostic: unwrap ResponseHandlingException to see real error
+            source_err = getattr(e, 'source', None)
+            logger.error(f"Error in Qdrant search: type={type(e).__name__}, str={str(e)}, source={source_err}, source_type={type(source_err).__name__ if source_err else 'N/A'}")
+            if source_err:
+                logger.error(f"  ResponseHandlingException source traceback:", exc_info=source_err)
+            logger.exception(f"  Full exception chain:")
+
             # Try fallback if we're using a URL endpoint and it fails
-            if self.api_endpoint and "Connection refused" in str(e):
+            err_str = str(e) + str(source_err or '')
+            if self.api_endpoint and "Connection refused" in err_str:
                 logger.info("Connection to Qdrant server failed, trying fallback")
                 # Create a new client with local path as fallback
                 self.api_endpoint = None  # Disable URL for fallback
-                
+
                 # Clear client cache to force recreation
                 with self._client_lock:
                     self._qdrant_clients = {}
-                    
+
                 # Try search again with new local client
                 return await self.search(query, site, num_results, collection_name, query_params)
-            
+
             logger.log_with_context(
                 LogLevel.ERROR,
                 "Qdrant search failed",
                 {
                     "error_type": type(e).__name__,
                     "error_message": str(e),
+                    "source_error": str(source_err) if source_err else "N/A",
                     "collection": collection_name,
                     "site": site,
                 }
