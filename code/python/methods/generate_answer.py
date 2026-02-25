@@ -785,7 +785,7 @@ class GenerateAnswer(NLWebHandler):
                 message = {
                     "message_type": msg_type,
                     "@type": "GeneratedAnswer",
-                    "answer": "I couldn't find relevant information to answer your question.",
+                    "answer": "抱歉，找不到與您問題相關的資訊。",
                     "items": []
                 }
                 await self.send_message(message)
@@ -895,7 +895,7 @@ class GenerateAnswer(NLWebHandler):
             logger.exception(f"Error in synthesizeAnswer: {e}")
             if self.connection_alive_event.is_set():
                 try:
-                    error_msg = {"message_type": "nlws", "@type": "GeneratedAnswer", "answer": "I encountered an error while generating your answer. Please try again.", "items": []}
+                    error_msg = {"message_type": "nlws", "@type": "GeneratedAnswer", "answer": "抱歉，生成回答時發生錯誤，請重新嘗試。", "items": []}
                     await self.send_message(error_msg)
                 except Exception as e:
                     logger.warning(f"Failed to send error message to client: {e}")
