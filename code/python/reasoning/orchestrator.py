@@ -197,24 +197,36 @@ class DeepResearchOrchestrator:
                 title = item.get("title") or item.get("name", "No title")
                 description = item.get("description", "")
                 source = item.get("site", "Unknown")
+                date_published = item.get("datePublished", "")
             elif isinstance(item, (list, tuple)):
                 title = item[2] if len(item) > 2 else "No title"
                 try:
                     schema_json = item[1] if len(item) > 1 else "{}"
                     schema_obj = json.loads(schema_json) if isinstance(schema_json, str) else schema_json
                     description = schema_obj.get("description", "")
+                    date_published = schema_obj.get("datePublished", "")
                 except:
                     description = ""
+                    date_published = ""
                 source = item[3] if len(item) > 3 else "Unknown"
             else:
                 title = "No title"
                 description = ""
                 source = "Unknown"
+                date_published = ""
+
+            # Format date for display (extract YYYY-MM-DD from ISO format)
+            date_str = ""
+            if date_published:
+                date_str = str(date_published).split("T")[0]
 
             snippet = description[:snippet_length] + (
                 "..." if len(description) > snippet_length else ""
             )
-            formatted_parts.append(f"[{idx}] {source} - {title}\n{snippet}\n")
+            header = f"[{idx}] {source} - {title}"
+            if date_str:
+                header += f" ({date_str})"
+            formatted_parts.append(f"{header}\n{snippet}\n")
 
         formatted_string = "\n".join(formatted_parts)
 
