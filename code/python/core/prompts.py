@@ -408,7 +408,7 @@ class PromptRunner:
             prompt_runner_logger.debug(f"Filling prompt template with handler data")
             prompt = fill_prompt(prompt_str, self.handler)
             if (verbose):
-                print(f"Prompt: {prompt}")
+                print(f"Prompt: {prompt}".encode('utf-8', errors='replace').decode('utf-8'))
             prompt_runner_logger.debug(f"Filled prompt length: {len(prompt)} chars")
 
             prompt_runner_logger.info(f"Calling LLM with level={level}, max_length={max_length}")
@@ -421,7 +421,7 @@ class PromptRunner:
                 prompt_runner_logger.debug(f"Response type: {type(response)}, size: {len(str(response))} chars")
             
             if (verbose):
-                print(f"Response: {response}")
+                print(f"Response: {response}".encode('utf-8', errors='replace').decode('utf-8'))
             
             return response
             

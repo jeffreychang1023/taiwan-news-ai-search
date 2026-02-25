@@ -221,7 +221,7 @@ class GenerateAnswer(NLWebHandler):
                 cached_results = cache.retrieve(cache_key)
 
                 if cached_results:
-                    print(f"[CACHE] ✓ Reusing {len(cached_results)} cached results for key {cache_key}")
+                    print(f"[CACHE] OK: Reusing {len(cached_results)} cached results for key {cache_key}")
                     logger.info(f"Reusing {len(cached_results)} cached results - skipping retrieval and ranking")
 
                     # Use cached results directly
@@ -240,7 +240,7 @@ class GenerateAnswer(NLWebHandler):
                     await self.synthesizeAnswer()
                     return
                 else:
-                    print(f"[CACHE] ✗ No cached results found for key {cache_key}")
+                    print(f"[CACHE] MISS: No cached results found for key {cache_key}")
                     logger.warning(f"No cached results found for key {cache_key}, falling back to fresh retrieval")
             except Exception as e:
                 logger.error(f"Error retrieving cached results: {e}, falling back to fresh retrieval")
@@ -274,7 +274,7 @@ class GenerateAnswer(NLWebHandler):
                     cached_results = cache.retrieve(cache_key)
 
                     if cached_results:
-                        print(f"[FREE_CONVERSATION] ✓ Found {len(cached_results)} cached results for free conversation")
+                        print(f"[FREE_CONVERSATION] OK: Found {len(cached_results)} cached results for free conversation")
                         logger.info(f"Free conversation using {len(cached_results)} cached results as context")
 
                         # Use cached results
@@ -284,7 +284,7 @@ class GenerateAnswer(NLWebHandler):
                             schema_json = json.dumps(r['schema_object']) if 'schema_object' in r else '{}'
                             self.items.append([r['url'], schema_json, r['name'], r['site']])
                     else:
-                        print(f"[FREE_CONVERSATION] ✗ No cached results found, proceeding without articles")
+                        print(f"[FREE_CONVERSATION] MISS: No cached results found, proceeding without articles")
                 except Exception as e:
                     logger.exception(f"Error retrieving cached results for free conversation: {e}")
 
@@ -309,7 +309,7 @@ class GenerateAnswer(NLWebHandler):
 
                     if private_results:
                         logger.info(f"[FREE_CONVERSATION] Found {len(private_results)} private documents")
-                        print(f"[FREE_CONVERSATION] ✓ Found {len(private_results)} private documents")
+                        print(f"[FREE_CONVERSATION] OK: Found {len(private_results)} private documents")
 
                         # Format private results and add to items
                         private_items = []
@@ -791,7 +791,7 @@ class GenerateAnswer(NLWebHandler):
                 await self.send_message(message)
                 return
 
-            response = await PromptRunner(self).run_prompt(self.SYNTHESIZE_PROMPT_NAME, timeout=100, verbose=True, max_length=2048)
+            response = await PromptRunner(self).run_prompt(self.SYNTHESIZE_PROMPT_NAME, timeout=100, verbose=False, max_length=2048)
             logger.debug(f"Synthesis response received")
 
             # Check if response is None (prompt not found or LLM error)
