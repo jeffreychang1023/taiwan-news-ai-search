@@ -251,6 +251,19 @@ class QueryUnderstanding(PromptRunner):
         else:
             self.handler.domain_context = {'detected': False, 'boost_keywords': []}
 
+        # Build query_analysis_hints for downstream prompts (Summarize, Synthesize)
+        self._build_query_analysis_hints()
+
+    def _build_query_analysis_hints(self):
+        """Build query_analysis_hints string from analysis results for downstream prompts."""
+        hints = []
+        if self.handler.display_instruction:
+            hints.append(f"USER FORMAT REQUEST: The user wants the answer formatted as: {self.handler.display_instruction}")
+        author = getattr(self.handler, 'author_search', {})
+        if author.get('is_author_search'):
+            hints.append(f"AUTHOR FILTER: Results are filtered by author: {author.get('author_name', '')}")
+        self.handler.query_analysis_hints = '\n'.join(hints)
+
     def _set_defaults(self):
         """Set safe defaults when everything fails."""
         self.handler.rewritten_queries = []
@@ -259,3 +272,4 @@ class QueryUnderstanding(PromptRunner):
         self.handler.temporal_range = {'is_temporal': False}
         self.handler.author_search = {'is_author_search': False}
         self.handler.domain_context = {'detected': False, 'boost_keywords': []}
+        self.handler.query_analysis_hints = ''
