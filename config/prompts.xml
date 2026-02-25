@@ -421,6 +421,8 @@
 
         {system.temporal_range}
 
+        {system.query_analysis_hints}
+
         TIME AWARENESS INSTRUCTION:
         如果上方有時間範圍資訊，請比對搜尋結果中文章的實際發布日期。
         若文章日期與使用者要求的時間範圍明顯不符（例如使用者問「今日」但文章是上個月的），
@@ -1170,6 +1172,8 @@
           Given the following items, synthesize a comprehensive answer to the user's question.
 
           CURRENT DATE: Today is {system.current_date}. You are answering questions based on news articles. Do not make predictions about the future.
+
+          {system.query_analysis_hints}
 
           IMPORTANT: Answer in the same language as the user's question. If the question is in Chinese, answer in Chinese. If in English, answer in English.
 
