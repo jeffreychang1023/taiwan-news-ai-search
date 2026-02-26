@@ -983,6 +983,11 @@
                     addLogEntry('↻', `偵測到資訊缺口，正在補充搜尋...`, 'active gap-search');
                     break;
 
+                case 'analyst_integrating_new_data':
+                    completeLastActive('✓');
+                    addLogEntry('○', '整合新資料中，重新分析...', 'active');
+                    break;
+
                 case 'cov_verifying':
                     addLogEntry('○', '正在驗證事實宣稱...', 'active cov');
                     break;
@@ -4677,12 +4682,14 @@
         });
 
         // Feedback buttons — open modal for user comment (Bug #14)
-        const feedbackButtons = document.querySelectorAll('.btn-feedback');
-        feedbackButtons.forEach(btn => {
-            btn.addEventListener('click', () => {
+        // Use event delegation because .btn-feedback buttons are created dynamically
+        // after search results render, not at page load time
+        document.addEventListener('click', (e) => {
+            const btn = e.target.closest('.btn-feedback');
+            if (btn) {
                 const rating = btn.dataset.rating || (btn.textContent.includes('👍') ? 'positive' : 'negative');
                 openFeedbackModal(rating);
-            });
+            }
         });
 
         // Feedback modal logic (Bug #14)
