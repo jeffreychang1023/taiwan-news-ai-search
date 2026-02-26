@@ -75,5 +75,8 @@ def get_param(query_params, param_name, param_type=str, default_value=None):
             raise ValueError(f"Unsupported parameter type: {param_type}")
     return default_value
 
+import logging as _logging
+_utils_logger = _logging.getLogger("nlweb.debug")
+
 def log(message):
-    print(message)
+    _utils_logger.debug(message)

@@ -162,6 +162,8 @@ def get_prompt_variable_value(variable, handler):
             value = f"Focus on the most recent {temporal_range['relative_days']} days"
         else:
             value = ""
+    elif variable == "system.query_analysis_hints":
+        value = getattr(handler, 'query_analysis_hints', '')
     else:
         logger.warning(f"Unknown variable: {variable}")
         value = ""
@@ -399,14 +401,14 @@ class PromptRunner:
             prompt_str, ans_struc = self.get_prompt(prompt_name)
             if (prompt_str is None):
                 if (verbose):
-                    print(f"Prompt {prompt_name} not found")
+                    prompt_runner_logger.debug(f"Prompt {prompt_name} not found")
                 prompt_runner_logger.debug(f"Cannot run prompt '{prompt_name}' - prompt not found")
                 return None
 
             prompt_runner_logger.debug(f"Filling prompt template with handler data")
             prompt = fill_prompt(prompt_str, self.handler)
             if (verbose):
-                print(f"Prompt: {prompt}")
+                prompt_runner_logger.debug(f"Prompt: {prompt[:200]}...")
             prompt_runner_logger.debug(f"Filled prompt length: {len(prompt)} chars")
 
             prompt_runner_logger.info(f"Calling LLM with level={level}, max_length={max_length}")
@@ -419,7 +421,7 @@ class PromptRunner:
                 prompt_runner_logger.debug(f"Response type: {type(response)}, size: {len(str(response))} chars")
             
             if (verbose):
-                print(f"Response: {response}")
+                prompt_runner_logger.debug(f"Response: {str(response)[:200]}...")
             
             return response
             
@@ -434,5 +436,5 @@ class PromptRunner:
                 raise Exception(f"LLM call failed for prompt '{prompt_name}': {type(e).__name__}: {str(e)}") from e
             else:
                 # In production mode, log and return None
-                print(f"ERROR in run_prompt: {type(e).__name__}: {str(e)}")
+                prompt_runner_logger.error(f"ERROR in run_prompt: {type(e).__name__}: {str(e)}")
                 return None

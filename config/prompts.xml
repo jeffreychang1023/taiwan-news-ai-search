@@ -260,7 +260,7 @@
       <returnStruc>
         {
           "score": "integer between 0 and 100",
-          "description": "2-3 factual sentences with specific details, NO meta-commentary about the article itself"
+          "description": "2-3 factual sentences with specific details, NO meta-commentary about the article itself. IMPORTANT: description 必須使用繁體中文撰寫。"
         }
       </returnStruc>
     </Prompt>
@@ -337,7 +337,7 @@
           "freshness_score": "integer 0-100",
           "authority_score": "integer 0-100",
           "final_score": "integer 0-100 (weighted average)",
-          "description": "2-3 factual sentences with specific details, NO meta-commentary about the article itself"
+          "description": "2-3 factual sentences with specific details, NO meta-commentary about the article itself. IMPORTANT: description 必須使用繁體中文撰寫。"
         }
       </returnStruc>
     </Prompt>
@@ -417,8 +417,17 @@
      <Prompt ref="SummarizeResultsPrompt">
       <promptString>
         Given the following items, provide a comprehensive summary that answers the user's question.
-        IMPORTANT: Respond in the same language as the user's question. If the question is in Chinese, respond in Chinese. If in English, respond in English.
+        IMPORTANT: 必須使用台灣用語的繁體中文回應。所有摘要、分析、結論都必須以繁體中文撰寫，不得切換為英文。
 
+        {system.temporal_range}
+
+        {system.query_analysis_hints}
+
+        TIME AWARENESS INSTRUCTION:
+        如果上方有時間範圍資訊，請比對搜尋結果中文章的實際發布日期。
+        若文章日期與使用者要求的時間範圍明顯不符（例如使用者問「今日」但文章是上個月的），
+        你必須在摘要開頭明確告知：「目前資料庫中沒有符合指定時間的新聞，以下是最近的相關報導。」
+        不可假裝搜尋結果符合使用者的時間需求。
         CRITICAL: You MUST carefully read and analyze the ACTUAL CONTENT of each article. Look at the article titles, descriptions, and all available details. Do not write generic summaries.
 
         CRITICAL LENGTH REQUIREMENT: Your summary MUST be at least 100-200 Chinese characters (or 150-300 words for English). Write in paragraph form with at least 2-3 paragraphs.
@@ -589,6 +598,79 @@
       <returnStruc>
         {
           "comparison": "Comparison of the two items"
+        }
+      </returnStruc>
+    </Prompt>
+
+    <Prompt ref="QueryUnderstanding">
+      <promptString>
+你是新聞搜尋查詢分析助手。分析以下查詢，提取所有結構化資訊。
+
+今天日期：{system.current_date}
+
+使用者查詢：「{request.query}」
+
+{system.query_analysis_hints}
+
+請執行以下所有分析：
+
+## 1. 查詢擴展 (Query Expansion)
+判斷查詢是否需要擴展為更具體的新聞搜尋詞。
+- 已經具體的查詢（含特定人名+事件）→ 不擴展，回傳空 list
+- 抽象或廣泛的查詢 → 生成 2-4 個具體的新聞用語搜尋詞
+- 擴展詞必須是記者實際會使用的用語，不是抽象同義詞
+- 不要包含原始查詢本身
+- 使用與原始查詢相同的語言
+
+## 2. 呈現指令分離 (Display Instruction)
+若查詢包含呈現指令（條列、比較、整理、歸納、排名、列出...），從搜尋意圖中分離出來。
+- 「條列出12月十大新聞」→ display_instruction: "條列出十大"
+- 純搜尋查詢 → display_instruction: null
+
+## 3. 作者/記者偵測 (Author Detection)
+判斷使用者是否在搜尋特定記者或作者的文章。
+- 提到人名 + 記者/作者/編輯（任何順序、任何標點）→ 提取純名字
+- 提到人名 + 「的文章」「寫過」「報導」→ 提取純名字
+- 「媒體名 的 人名」→ 提取人名
+- 純名字只保留中文名 2-4 字，不帶職稱（記者、副總編輯等）
+- 英文名保留全名（First Last）
+- 如果不確定，回傳 detected: false
+
+## 4. 時間範圍偵測 (Time Range Detection)
+判斷查詢是否包含時間意圖，並解析為精確日期範圍。
+- 今天日期為 {system.current_date}，所有相對時間以此為基準
+- 「12月中」且現在是2月 → 去年12月（例：2025-12-10 ~ 2025-12-20）
+- 「最近一個月」→ 過去30天
+- 「2025 9月之前」→ end_date = 2025-08-31
+- 如果查詢沒有時間意圖 → detected: false
+- confidence: 0.0-1.0（明確日期=1.0，推測=0.7-0.9）
+
+## 5. 主題/領域偵測 (Domain/Topic Detection)
+識別查詢的核心主題，提取可用於搜尋結果加分的關鍵字。
+- 「政府治安政策」→ primary_topic: "治安", boost_keywords: ["治安", "犯罪", "刑案", "公共安全"]
+- 理解語意：「政府」在此是修飾詞，核心是「治安」
+- boost_keywords 應包含新聞文章標題中可能出現的具體用語
+- 如果查詢已經足夠具體（如人名搜尋）→ detected: false
+      </promptString>
+      <returnStruc>
+        {
+          "rewritten_queries": ["expanded query 1", "expanded query 2"],
+          "display_instruction": "呈現指令文字 or null",
+          "author": {
+            "detected": "true or false",
+            "name": "純名字 or null"
+          },
+          "time_range": {
+            "detected": "true or false",
+            "start_date": "YYYY-MM-DD or null",
+            "end_date": "YYYY-MM-DD or null",
+            "confidence": "0.0-1.0"
+          },
+          "domain": {
+            "detected": "true or false",
+            "primary_topic": "主題名稱 or null",
+            "boost_keywords": ["keyword1", "keyword2"]
+          }
         }
       </returnStruc>
     </Prompt>
@@ -1090,6 +1172,8 @@
           Given the following items, synthesize a comprehensive answer to the user's question.
 
           CURRENT DATE: Today is {system.current_date}. You are answering questions based on news articles. Do not make predictions about the future.
+
+          {system.query_analysis_hints}
 
           IMPORTANT: Answer in the same language as the user's question. If the question is in Chinese, answer in Chinese. If in English, answer in English.
 

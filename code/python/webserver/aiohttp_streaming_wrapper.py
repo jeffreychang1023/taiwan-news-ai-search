@@ -51,11 +51,11 @@ class AioHttpStreamingWrapper:
             return  # Already marked
         self.connection_alive = False
         logger.info("Client disconnected - SSE connection closed")
-        print("[CANCEL] Client disconnected - SSE connection closed")
+        logger.debug("[CANCEL] Client disconnected - SSE connection closed")
         if self._on_disconnect:
             try:
                 self._on_disconnect()
-                print("[CANCEL] Handler notified of disconnection")
+                logger.debug("[CANCEL] Handler notified of disconnection")
             except Exception as e:
                 logger.debug(f"Disconnect callback error: {e}")
         

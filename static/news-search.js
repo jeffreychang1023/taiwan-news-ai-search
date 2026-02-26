@@ -693,14 +693,78 @@
                 const session = sessionHistory[sessionIndex];
                 console.log('Restoring session:', session);
 
-                // Populate UI with the stored session data
-                populateResultsFromAPI(session.data, session.query);
+                if (session.isDeepResearch && session.researchReport) {
+                    // Restore deep research report
+                    currentResearchReport = { ...session.researchReport };
+                    currentArgumentGraph = session.argumentGraph ? [...session.argumentGraph] : null;
+                    currentChainAnalysis = session.chainAnalysis ? { ...session.chainAnalysis } : null;
+
+                    // Render research report in research view
+                    renderResearchReportToView(currentResearchReport, currentArgumentGraph, currentChainAnalysis);
+
+                    // Also populate news list if article data exists
+                    if (session.data) {
+                        populateResultsFromAPI(session.data, session.query);
+                    }
+
+                    // Switch to research tab
+                    const researchTab = document.querySelector('.tab[data-view="research"]');
+                    if (researchTab) researchTab.click();
+                } else {
+                    // Normal search — clear research view and restore news list
+                    currentResearchReport = null;
+                    currentArgumentGraph = null;
+                    currentChainAnalysis = null;
+                    const researchViewEl = document.getElementById('researchView');
+                    if (researchViewEl) researchViewEl.innerHTML = '';
+
+                    populateResultsFromAPI(session.data, session.query);
+
+                    // Switch to list tab
+                    const listTab = document.querySelector('.tab[data-view="list"]');
+                    if (listTab) listTab.click();
+                }
 
                 // Show results section
                 resultsSection.classList.add('active');
 
                 // Scroll to results
                 resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+        }
+
+        // Render a research report into the researchView element (shared by restoreSession and loadSavedSession)
+        function renderResearchReportToView(report, argGraph, chainAnalysis) {
+            const researchViewEl = document.getElementById('researchView');
+            if (!researchViewEl || !report || !report.report) return;
+
+            console.log('[Session] Rendering research report to research view');
+            researchViewEl.innerHTML = '';
+
+            const reportContainer = document.createElement('div');
+            reportContainer.className = 'deep-research-report';
+            reportContainer.style.cssText = 'padding: 20px; max-width: 900px; margin: 0 auto;';
+
+            let reportHTML = DOMPurify.sanitize(marked.parse(report.report));
+
+            if (report.sources && report.sources.length > 0) {
+                reportHTML = addCitationLinks(reportHTML, report.sources);
+            }
+
+            reportHTML = addCollapsibleSections(reportHTML);
+
+            if (report.sources && report.sources.length > 0) {
+                reportHTML += generateCitationReferenceList(report.sources);
+            }
+
+            reportContainer.innerHTML = reportHTML;
+            researchViewEl.appendChild(reportContainer);
+
+            bindCollapsibleHandlers(researchViewEl);
+            addToggleAllToolbar(reportContainer);
+
+            if (argGraph && argGraph.length > 0) {
+                displayReasoningChainInContainer(argGraph, chainAnalysis, researchViewEl);
             }
         }
 
@@ -753,6 +817,12 @@
                             case 'time_filter_relaxed':
                                 // Time filter was too strict — show warning banner
                                 console.warn('[Temporal] Time filter relaxed:', data.content);
+                                showTimeFilterRelaxedWarning(data.content);
+                                break;
+
+                            case 'author_search_no_results':
+                                // Author filter found no matching articles
+                                console.warn('[Author] No results for author:', data.content);
                                 showTimeFilterRelaxedWarning(data.content);
                                 break;
 
@@ -852,6 +922,11 @@
 
                                     case 'time_filter_relaxed':
                                         console.warn('[Temporal] Time filter relaxed:', data.content);
+                                        showTimeFilterRelaxedWarning(data.content);
+                                        break;
+
+                                    case 'author_search_no_results':
+                                        console.warn('[Author] No results for author:', data.content);
                                         showTimeFilterRelaxedWarning(data.content);
                                         break;
 
@@ -981,6 +1056,11 @@
 
                 case 'gap_search_started':
                     addLogEntry('↻', `偵測到資訊缺口，正在補充搜尋...`, 'active gap-search');
+                    break;
+
+                case 'analyst_integrating_new_data':
+                    completeLastActive('✓');
+                    addLogEntry('○', '整合新資料中，重新分析...', 'active');
                     break;
 
                 case 'cov_verifying':
@@ -1441,16 +1521,25 @@
                 return;
             }
 
+            // Use actual rendered article count instead of backend count
+            const listView = document.getElementById('listView');
+            const renderedCards = listView ? listView.querySelectorAll('.news-card:not(.skeleton-card)').length : 0;
+            const displayCount = renderedCards > 0 ? renderedCards : articleCount;
+
             const formattedAnswer = convertMarkdownToHtml(answerData.answer);
             const isUpdate = aiSummaryContent.querySelector('.summary-content') !== null &&
                              !aiSummaryContent.querySelector('.skeleton-summary');
+
+            const sourceInfoText = displayCount > 0
+                ? `\u26A0\uFE0F 資料來源：基於 ${displayCount} 則報導生成`
+                : `\u26A0\uFE0F AI 生成回答（未找到直接相關報導）`;
 
             aiSummaryContent.innerHTML = `
                 <div class="summary-section ${isUpdate ? 'content-updated' : 'progressive-fade-in'}">
                     <div class="summary-content">${formattedAnswer}</div>
                 </div>
                 <div class="summary-footer">
-                    <div class="source-info">\u26A0\uFE0F 資料來源：基於 ${articleCount} 則報導生成</div>
+                    <div class="source-info">${sourceInfoText}</div>
                     <div class="feedback-buttons">
                         <button class="btn-feedback" data-rating="positive">\uD83D\uDC4D 有幫助</button>
                         <button class="btn-feedback" data-rating="negative">\uD83D\uDC4E 不準確</button>
@@ -1554,6 +1643,38 @@
             if (chatLoadingEl) chatLoadingEl.classList.remove('active');
         }
 
+        // Clear all query-related UI state before starting a new search
+        function clearQueryState() {
+            // Clear deep research state
+            currentResearchReport = null;
+            currentArgumentGraph = null;
+            currentChainAnalysis = null;
+
+            // Clear research view DOM
+            const researchViewEl = document.getElementById('researchView');
+            if (researchViewEl) researchViewEl.innerHTML = '';
+
+            // Clear time filter warning
+            const timeWarning = document.getElementById('timeFilterWarning');
+            if (timeWarning) timeWarning.remove();
+
+            // Clear time_filter_relaxed notification
+            const relaxedNotice = document.getElementById('timeFilterRelaxedNotice');
+            if (relaxedNotice) relaxedNotice.remove();
+
+            // Clear AI summary content
+            const aiSummaryContent = document.getElementById('aiSummaryContent');
+            if (aiSummaryContent) aiSummaryContent.innerHTML = '';
+
+            // Hide AI summary section
+            const aiSummarySection = document.getElementById('aiSummarySection');
+            if (aiSummarySection) aiSummarySection.style.display = 'none';
+
+            // Reset summary expand/collapse button state
+            summaryExpanded = false;
+            if (btnToggleSummary) btnToggleSummary.textContent = '\uD83D\uDCDD 展開摘要';
+        }
+
         // Bug #23: UI state machine — toggle between idle and processing states
         function setProcessingState(isProcessing) {
             const searchBtn = document.getElementById('btnSearch');
@@ -1587,6 +1708,7 @@
 
             // Bug #23: Cancel all active requests (search, DR, FC) before starting new search
             cancelAllActiveRequests();
+            clearQueryState();
             setProcessingState(true);
             const mySearchGeneration = searchGenerationId;
             currentSearchAbortController = new AbortController();
@@ -1889,6 +2011,20 @@
 
                             // Display results
                             displayDeepResearchResults(fullReport, data, savedQuery);
+
+                            // Store deep research session in history for within-session restore
+                            sessionHistory.push({
+                                query: savedQuery,
+                                data: data,
+                                timestamp: Date.now(),
+                                isDeepResearch: true,
+                                researchReport: currentResearchReport ? { ...currentResearchReport } : null,
+                                argumentGraph: currentArgumentGraph ? [...currentArgumentGraph] : null,
+                                chainAnalysis: currentChainAnalysis ? { ...currentChainAnalysis } : null
+                            });
+
+                            // Update conversation history sidebar
+                            renderConversationHistory();
 
                             // 自動建立/更新 session
                             saveCurrentSession();
@@ -4656,12 +4792,14 @@
         });
 
         // Feedback buttons — open modal for user comment (Bug #14)
-        const feedbackButtons = document.querySelectorAll('.btn-feedback');
-        feedbackButtons.forEach(btn => {
-            btn.addEventListener('click', () => {
+        // Use event delegation because .btn-feedback buttons are created dynamically
+        // after search results render, not at page load time
+        document.addEventListener('click', (e) => {
+            const btn = e.target.closest('.btn-feedback');
+            if (btn) {
                 const rating = btn.dataset.rating || (btn.textContent.includes('👍') ? 'positive' : 'negative');
                 openFeedbackModal(rating);
-            });
+            }
         });
 
         // Feedback modal logic (Bug #14)
@@ -5231,6 +5369,9 @@
                 openTab('files');
             }
         }
+
+        // Bind private sources checkbox (JS listener, not inline onchange)
+        document.getElementById('includePrivateSourcesCheckbox')?.addEventListener('change', togglePrivateSources);
 
         // Bind toolbar buttons for source tree
         document.getElementById('btnAddSourceFolder')?.addEventListener('click', addSourceFolder);

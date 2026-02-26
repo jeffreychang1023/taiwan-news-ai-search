@@ -185,7 +185,7 @@ class ToolSelector:
         if self.site_id is None:
             self.site_id = 'default'
         
-        print(f"\n[TOOL-SELECTOR] Initializing for site: {self.site_id}")
+        logger.debug(f"[TOOL-SELECTOR] Initializing for site: {self.site_id}")
         
         # Load tools if not already cached
         tools_xml_path = os.path.join(CONFIG.config_directory, "tools.xml")
