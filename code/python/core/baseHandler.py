@@ -398,7 +398,7 @@ class NLWebHandler:
             # Skip retrieval for free conversation mode - use conversation context only
             elif self.free_conversation:
                 logger.info("[FREE_CONVERSATION] Skipping public vector search - using conversation context")
-                print("[FREE_CONVERSATION] Skipping public vector search - using conversation context")
+                logger.debug("[FREE_CONVERSATION] Skipping public vector search - using conversation context")
 
                 # Note: Research report is now passed directly from frontend via query_params
                 # in Free Conversation mode, handled by generate_answer.py
@@ -472,6 +472,7 @@ class NLWebHandler:
                 # Construct generic filters from temporal_range and author_search
                 search_filters = []
                 self.time_filter_relaxed = False
+                self.author_search_no_results = False
 
                 if temporal_range and temporal_range.get('is_temporal'):
                     start_date = temporal_range.get('start_date')
@@ -573,6 +574,18 @@ class NLWebHandler:
                         })
                     except Exception as e:
                         logger.warning(f"Failed to send time_filter_relaxed message: {e}")
+
+                # Author search returned no results — strict filter, don't show unrelated articles
+                if getattr(self, 'author_search_no_results', False):
+                    author_name = author_search.get('author_name', '') if author_search else ''
+                    logger.warning(f"[AUTHOR] No articles found for author '{author_name}' in retrieved candidates")
+                    try:
+                        await self.message_sender.send_message({
+                            "message_type": "author_search_no_results",
+                            "content": f"在目前的搜尋範圍中找不到作者「{author_name}」的文章，請嘗試限縮資料來源再搜尋"
+                        })
+                    except Exception as e:
+                        logger.warning(f"Failed to send author_search_no_results message: {e}")
 
                 self.final_retrieved_items = items
 

@@ -894,7 +894,13 @@ class QdrantVectorClient(RetrievalClientBase):
                 # CRITICAL: Need to retrieve many more results because vector search alone
                 # ranks keyword-matching articles very low (e.g., retail articles at rank 127+)
                 # With keywords, we need a much larger pool for boosting to work effectively
-                retrieval_limit = min(500, num_results * 10) if all_keywords else num_results
+                _has_author_filter = any(f.get('field') == 'author' for f in (kwargs.get('filters') or []))
+                if _has_author_filter:
+                    # Author metadata is NOT in embeddings — need much larger pool for post-filter
+                    retrieval_limit = min(3000, num_results * 60)
+                    logger.info(f"[AUTHOR] Increased retrieval limit to {retrieval_limit} for author search")
+                else:
+                    retrieval_limit = min(500, num_results * 10) if all_keywords else num_results
 
                 # Perform standard vector search
                 search_result = await client.search(
@@ -1082,11 +1088,20 @@ class QdrantVectorClient(RetrievalClientBase):
                             scored_results = _filtered_scored
                             logger.info(f"[FILTER] Payload filter applied: {_pre_filter_count} → {len(scored_results)} scored results")
                         else:
-                            # No results after filter — keep original, set relaxed flag on handler
+                            # No results after filter — check if author filter is involved
+                            _has_author = any(f.get('field') == 'author' for f in _payload_filters)
                             _handler = kwargs.get('handler')
-                            if _handler:
-                                _handler.time_filter_relaxed = True
-                            logger.warning(f"[FILTER] No results after payload filter, keeping {_pre_filter_count} unfiltered results")
+                            if _has_author:
+                                # Author filter is strict — return empty, don't show unrelated articles
+                                scored_results = []
+                                if _handler:
+                                    _handler.author_search_no_results = True
+                                logger.warning(f"[FILTER] Author filter returned 0 results from {_pre_filter_count} candidates — returning empty (strict filter)")
+                            else:
+                                # Date-only filter — relax and show unfiltered results
+                                if _handler:
+                                    _handler.time_filter_relaxed = True
+                                logger.warning(f"[FILTER] No results after payload filter, keeping {_pre_filter_count} unfiltered results")
 
                     # Take top num_results
                     top_results = [point for _, point in scored_results[:num_results]]
@@ -1119,11 +1134,18 @@ class QdrantVectorClient(RetrievalClientBase):
                             top_results = _filtered_points[:num_results]
                             logger.info(f"[FILTER] Vector-only filter: {_pre_count} → {len(_filtered_points)}, returning top {len(top_results)}")
                         else:
-                            top_results = search_result[:num_results]
+                            _has_author = any(f.get('field') == 'author' for f in _payload_filters)
                             _handler = kwargs.get('handler')
-                            if _handler:
-                                _handler.time_filter_relaxed = True
-                            logger.warning(f"[FILTER] No results after vector-only filter, keeping {len(top_results)} unfiltered")
+                            if _has_author:
+                                top_results = []
+                                if _handler:
+                                    _handler.author_search_no_results = True
+                                logger.warning(f"[FILTER] Author filter returned 0 from {_pre_count} vector results — returning empty (strict filter)")
+                            else:
+                                top_results = search_result[:num_results]
+                                if _handler:
+                                    _handler.time_filter_relaxed = True
+                                logger.warning(f"[FILTER] No results after vector-only filter, keeping {len(top_results)} unfiltered")
                     else:
                         top_results = search_result[:num_results]
                     logger.info(f"No keywords found, using {'filtered' if _payload_filters else 'pure'} vector search: {len(top_results)} results")
