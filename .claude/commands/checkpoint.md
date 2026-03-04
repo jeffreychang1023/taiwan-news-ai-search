@@ -58,7 +58,7 @@ git stash push -m "checkpoint: [簡短描述] - [YYYYMMDD-HHMM]"
 
 ### Step 4：更新 CONTEXT.md
 
-將目前狀態同步更新到 `.claude/CONTEXT.md`。
+將目前狀態同步更新到 `docs/status.md`。
 
 ### Step 5：重置 Compact 計數器
 

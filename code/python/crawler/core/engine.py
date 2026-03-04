@@ -2225,10 +2225,7 @@ class CrawlerEngine:
         """關閉 Session 和 Logger FileHandlers"""
         if self.session is not None:
             try:
-                if self.session_type == SessionType.AIOHTTP:
-                    await asyncio.wait_for(self.session.close(), timeout=5.0)
-                else:
-                    self.session.close()
+                await asyncio.wait_for(self.session.close(), timeout=5.0)
                 self.logger.info("Session closed")
             except asyncio.TimeoutError:
                 self.logger.warning("Session close timed out")

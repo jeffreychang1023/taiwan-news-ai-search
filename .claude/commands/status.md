@@ -9,9 +9,8 @@ description: 顯示專案狀態
 ## 執行步驟
 
 讀取並摘要顯示：
-1. `.claude/CONTEXT.md` - 目前重點
-2. `.claude/NEXT_STEPS.md` - 下一步計劃
-3. `.claude/systemmap.md` - 模組狀態
+1. `docs/status.md` - 目前重點與下一步計劃
+2. `docs/reference/systemmap.md` - 模組狀態
 
 ## 輸出格式
 
@@ -19,7 +18,7 @@ description: 顯示專案狀態
 === NLWeb 專案狀態 ===
 
 目前重點：
-[從 CONTEXT.md 提取 1-2 項]
+[從 status.md 提取 1-2 項]
 
 模組狀態：
 ┌─────────────────────┬────────┐
@@ -33,12 +32,12 @@ description: 顯示專案狀態
 └─────────────────────┴────────┘
 
 下一步（前 3 項）：
-1. [從 NEXT_STEPS.md 提取]
+1. [從 status.md 提取]
 2. ...
 3. ...
 
 最近完成：
-- [從 PROGRESS.md 提取最新里程碑]
+- [從 status.md 提取最新里程碑]
 ```
 
 ## 使用時機

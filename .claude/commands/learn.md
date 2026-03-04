@@ -55,7 +55,7 @@ description: 記錄這次對話學到的 lesson
 
 ### Step 5：寫入 lessons-learned.md
 
-讀取 `.claude/memory/lessons-learned.md`，在對應領域區塊追加：
+讀取 `~/.claude/projects/C--users-user-nlweb/memory/lessons-learned.md`（專案 memory），在對應領域區塊追加：
 
 ```markdown
 ### [簡短標題]
@@ -66,9 +66,21 @@ description: 記錄這次對話學到的 lesson
 **日期**：[YYYY-MM]
 ```
 
-### Step 6：更新最後更新日期
+### Step 6：在 MEMORY.md 加索引摘要
 
-更新檔案底部的 `*最後更新：YYYY-MM-DD*`
+讀取 `~/.claude/projects/C--users-user-nlweb/memory/MEMORY.md`，在檔案末尾的 `## Lessons Index` 區塊追加一行摘要：
+
+```markdown
+- **[簡短標題]**（[領域], [信心]）：[一句話摘要] — 見 `memory/lessons-learned.md`
+```
+
+如果 `## Lessons Index` 區塊不存在，在檔案末尾建立。
+
+**為什麼**：MEMORY.md 會自動載入到每個 session。加索引讓新 session 能看到 lesson 存在，不需額外讀檔。
+
+### Step 7：更新最後更新日期
+
+更新 lessons-learned.md 底部的 `*最後更新：YYYY-MM-DD*`
 
 ---
 

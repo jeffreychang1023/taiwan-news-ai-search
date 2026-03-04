@@ -22,7 +22,7 @@
 | 情況 | 做法 |
 |------|------|
 | ❌ 禁止 | 遍歷目錄結構、讀取多個檔案來了解專案 |
-| ✅ 必須 | 先讀 `.claude/systemmap.md` |
+| ✅ 必須 | 先讀 `docs/reference/systemmap.md` |
 
 ---
 
@@ -31,7 +31,7 @@
 | 情況 | 做法 |
 |------|------|
 | ❌ 禁止 | 問使用者「目前在做什麼」 |
-| ✅ 必須 | 先讀 `.claude/CONTEXT.md` 和 `.claude/PROGRESS.md` |
+| ✅ 必須 | 先讀 `docs/status.md` |
 
 ---
 
@@ -39,11 +39,11 @@
 
 | 要修改 | 先讀 |
 |--------|------|
-| Reasoning 相關 | `.claude/systemmap.md` Reasoning 章節 |
-| Ranking 相關 | `algo/BM25_implementation.md`、`algo/XGBoost_implementation.md`、`algo/MMR_implementation.md` |
-| 查詢分析相關 | `.claude/systemmap.md` Pre-Retrieval 章節 |
-| API 相關 | `.claude/API_ENDPOINTS.md` |
-| 資料流 | `.claude/systemmap.md` 的 Data Flow 章節 |
+| Reasoning 相關 | `docs/reference/systemmap.md` Reasoning 章節 |
+| Ranking 相關 | `docs/specs/bm25-spec.md`、`docs/specs/xgboost-spec.md`、`docs/specs/mmr-spec.md` |
+| 查詢分析相關 | `docs/reference/systemmap.md` Pre-Retrieval 章節 |
+| API 相關 | `docs/reference/api-endpoints.md` |
+| 資料流 | `docs/reference/systemmap.md` 的 Data Flow 章節 |
 
 **禁止**：直接讀取所有 agent 檔案或整個目錄
 
@@ -54,9 +54,9 @@
 當需要了解某功能時，依序執行：
 
 ```
-1. 讀設計文件 → algo/*.md
+1. 讀設計文件 → docs/specs/*-spec.md
          ↓
-2. 讀模組總覽 → .claude/systemmap.md 對應段落
+2. 讀模組總覽 → docs/reference/systemmap.md 對應段落
          ↓
 3. 讀具體程式碼（只讀必要部分）
 ```
@@ -110,8 +110,8 @@
 - 無法記住對話早期的內容
 
 ### 清理策略
-1. 總結目前進度到 `PROGRESS.md`
-2. 更新 `CONTEXT.md` 的目前狀態
+1. 總結目前進度到 `docs/status.md`
+2. 更新 `docs/status.md` 的目前狀態
 3. 開新對話繼續
 
 ---
@@ -120,7 +120,7 @@
 
 每次開始任務前，確認：
 
-- [ ] 已讀 `.claude/CONTEXT.md`？
-- [ ] 已讀 `.claude/systemmap.md` 相關段落？
+- [ ] 已讀 `docs/status.md`？
+- [ ] 已讀 `docs/reference/systemmap.md` 相關段落？
 - [ ] 知道要修改哪些檔案？
 - [ ] 沒有載入不必要的檔案？

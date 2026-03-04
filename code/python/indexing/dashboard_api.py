@@ -420,6 +420,16 @@ class IndexingDashboardAPI:
                 task.finished_at = time.time()
                 logger.error(f"Subprocess exited with code {proc.returncode}: {task.task_id}")
 
+            # Process exited cleanly but we didn't get a completed message
+            elif proc.returncode == 0 and task.status == CrawlerTaskStatus.RUNNING:
+                if task.stats.get("early_stopped"):
+                    task.status = CrawlerTaskStatus.EARLY_STOPPED
+                    task.early_stop_reason = task.stats.get("early_stop_reason")
+                else:
+                    task.status = CrawlerTaskStatus.COMPLETED
+                task.finished_at = time.time()
+                logger.info(f"Subprocess exited cleanly (inferred completed): {task.task_id}")
+
         except asyncio.CancelledError:
             # Reader task cancelled — happens when force-killing a subprocess
             # (Windows pipes may not close cleanly after proc.kill())

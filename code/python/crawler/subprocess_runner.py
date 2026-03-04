@@ -132,6 +132,7 @@ async def main(params: dict, task_id: str, signal_dir: str):
 
         await engine.close()
         _send({"type": "completed", "stats": result})
+        sys.stdout.close()  # Ensure pipe EOF reaches parent
 
     except asyncio.CancelledError:
         logger.info("Subprocess cancelled via stop signal")
@@ -144,6 +145,7 @@ async def main(params: dict, task_id: str, signal_dir: str):
         result["early_stopped"] = True
         result["early_stop_reason"] = "User stopped via dashboard"
         _send({"type": "completed", "stats": result})
+        sys.stdout.close()
 
     except Exception as e:
         logger.error(f"Subprocess error: {e}", exc_info=True)
@@ -152,6 +154,7 @@ async def main(params: dict, task_id: str, signal_dir: str):
         except Exception as close_err:
             logger.warning(f"Error closing engine: {close_err}")
         _send({"type": "error", "error": str(e)[:500]})
+        sys.stdout.close()
         sys.exit(1)
 
 
@@ -163,4 +166,12 @@ if __name__ == "__main__":
     args = arg_parser.parse_args()
 
     params = json.loads(args.params)
-    asyncio.run(main(params, args.task_id, args.signal_dir))
+    try:
+        asyncio.run(main(params, args.task_id, args.signal_dir))
+    except SystemExit:
+        raise  # Re-raise sys.exit() from main() on real errors
+    except Exception:
+        # asyncio.run() cleanup may fail with ValueError('I/O operation on closed file')
+        # when stderr fd is closed during interpreter shutdown on Windows.
+        # main() already sent "completed"/"error" message before this point.
+        pass

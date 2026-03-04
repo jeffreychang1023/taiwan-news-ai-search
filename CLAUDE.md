@@ -10,7 +10,7 @@
 
 新聞網站自然語言搜尋系統。目標：可信、準確、邏輯嚴謹的搜尋與推論。
 
-**目前狀態**（2026-02）：核心系統完成（Indexing + Reasoning + Ranking）。重點：E2E 驗證與效能優化。
+**目前狀態**（2026-03）：核心系統完成（Indexing + Reasoning + Ranking）。重點：UX 修復、Zoe 智慧派工系統。
 
 ---
 
@@ -58,7 +58,7 @@
 
 **例外情況**：只有當索引系統失敗時，才可向使用者報錯並改用 Grep。
 
-**詳細文件**：`docs/code-in-sqlite.md`
+**詳細文件**：`docs/specs/code-in-sqlite.md`
 
 ---
 
@@ -66,19 +66,19 @@
 
 **重要**：當被詢問特定模組或檔案時，必須先閱讀對應文件了解上下游模組關係：
 
-| 詢問主題       | 需閱讀的文件                                                 |
-| ---------- | ------------------------------------------------------ |
-| 系統狀態機、運作流程 | `docs/architecture/state-machine-diagram.md`           |
-| 狀態機詳細說明    | `docs/architecture/state-machine-diagram-explained.md` |
-| 系統總覽與 API  | `.claude/systemmap.md`                                 |
-| Chat 架構設計  | `.claude/SIMPLE_ARCHITECTURE.md`                       |
-| 程式碼規範      | `.claude/codingrules.md`                               |
-| UX 流程      | `.claude/userworkflow.md`                              |
-| 開發進度       | `.claude/PROGRESS.md`                                  |
-| 已完成工作      | `.claude/COMPLETED_WORK.md`                            |
-| 下一步規劃      | `.claude/NEXT_STEPS.md`                                |
-| 演算法規格      | `algo/*.md` (BM25, MMR, XGBoost 等)                     |
-| Docker 部署  | `.claude/docker_deployment.md`                         |
+| 詢問主題       | 需閱讀的文件                                                       |
+| ---------- | ------------------------------------------------------------ |
+| 系統狀態機、運作流程 | `docs/reference/architecture/state-machine-diagram.md`       |
+| 狀態機詳細說明    | `docs/reference/architecture/state-machine-diagram-explained.md` |
+| 系統總覽與 API  | `docs/reference/systemmap.md`                                |
+| Chat 架構設計  | `docs/reference/chat-architecture.md`                        |
+| 程式碼規範      | `docs/reference/codingrules.md`                              |
+| UX 流程      | `docs/reference/userworkflow.md`                             |
+| 專案狀態       | `docs/status.md`                                             |
+| 已完成工作      | `docs/archive/completed-work.md`                             |
+| 決策日誌       | `docs/decisions.md`                                          |
+| 演算法規格      | `docs/specs/*-spec.md` (bm25, mmr, xgboost 等)               |
+| Docker 部署  | `docs/reference/docker-deployment.md`                        |
 
 ---
 
@@ -94,7 +94,7 @@
 | **M5: Output**         | 🟡 部分完成 | API + Frontend ✅ / Visualizer ❌      |
 | **M6: Infrastructure** | 🟢 完成   | DB + Cache + LLM + Analytics         |
 
-**詳細模組資訊**：見 `.claude/systemmap.md`
+**詳細模組資訊**：見 `docs/reference/systemmap.md`
 
 ---
 
@@ -104,16 +104,18 @@
 
 Track A-W 共 23 個完成項目，涵蓋 Analytics、BM25、MMR、Reasoning、XGBoost、Crawler Subprocess、Dashboard 穩定性、三機協作、Chinatimes Multi-Category 修復等。
 
-**詳細資訊**：見 `.claude/COMPLETED_WORK.md`
+**詳細資訊**：見 `docs/archive/completed-work.md`
 
 ### 目前工作
 
-🔄 **全專案 Code Review 修復完成**：47 項 Security/Bug/效能修復（21 檔案），見 `docs/code-review-0223.md`
+🔄 **UX Issues #1-11 修復完成**：QueryUnderstanding 統一模組、LLM-based boost scoring、前端 polish
+🔄 **Zoe Plan Phase 2 完成**：`/delegate` + `/update-docs` + `/zoe` 完成
 🔄 **待後續**：JWT 認證（SEC-1/9）、Agent Isolation（SEC-6）、BM25 corpus stats 重建
-🔄 **GCP Chinatimes full_scan（新版 multi-category）** 持續運行
+✅ **GCP Chinatimes full_scan 完成**（~186,744 篇），待合併至桌機
+🔄 **einfo 爬取停止**，需調查失敗原因
 🔄 **Registry 總計 1,910,520 筆**
 
-**規劃**：見 `.claude/NEXT_STEPS.md` 與 `.claude/CONTEXT.md`
+**規劃**：見 `docs/status.md`
 
 ---
 
@@ -154,11 +156,11 @@ Track A-W 共 23 個完成項目，涵蓋 Analytics、BM25、MMR、Reasoning、X
 
 ### 演算法變更
 
-**關鍵**：修改搜尋/排序演算法時，**必須**更新 `algo/` 目錄文件。
+**關鍵**：修改搜尋/排序演算法時，**必須**更新 `docs/specs/` 目錄文件。
 
-- 建立/更新 `algo/{ALGORITHM_NAME}_implementation.md`
+- 建立/更新 `docs/specs/{algorithm}-spec.md`
 - 內容包含：目的、公式、參數、實作細節、測試策略
-- 範例：`algo/BM25_implementation.md`、`algo/XGBoost_implementation.md`
+- 範例：`docs/specs/bm25-spec.md`、`docs/specs/xgboost-spec.md`
 
 ### Python 版本
 
@@ -177,9 +179,10 @@ Track A-W 共 23 個完成項目，涵蓋 Analytics、BM25、MMR、Reasoning、X
 - 實作前先檢查鄰近檔案的 pattern
 - 設定變更需重啟 server
 - 除非明確要求，否則不使用 emoji
+- Code review 後若有 simplification 類建議，可用 `simplify` skill 自動處理
 
 ### Docker 部署
 
 **關鍵**：變更 base image 時務必清除 Docker build cache。
 
-**詳細資訊**：見 `.claude/docker_deployment.md`（僅在 Docker 部署時需要）
+**詳細資訊**：見 `docs/reference/docker-deployment.md`（僅在 Docker 部署時需要）

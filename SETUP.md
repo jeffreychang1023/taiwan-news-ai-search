@@ -2,11 +2,11 @@
 
 ## 系統需求
 
-| 需求 | 說明 |
-|------|------|
+| 需求              | 說明                                       |
+| --------------- | ---------------------------------------- |
 | **Python 3.11** | 必須是 3.11，3.12/3.13 會導致 qdrant-client 不相容 |
-| **Git** | 版本管理 |
-| **C++ 編譯器** | 部分 Python 套件（chroma-hnswlib）需要從原始碼編譯 |
+| **Git**         | 版本管理                                     |
+| **C++ 編譯器**     | 部分 Python 套件（chroma-hnswlib）需要從原始碼編譯     |
 
 ### 安裝 Python 3.11
 
@@ -58,24 +58,21 @@ python app-file.py
 
 ## Environment Variables
 
-見 `.env.example`，每個變數都有說明。
-
-**最少需要**：
-- `OPENAI_API_KEY` — LLM
-- `QDRANT_URL` — 向量資料庫 endpoint
-- `QDRANT_API_KEY` — 向量資料庫 key
+把我後來給你們的那個.env版本放進去。
 
 ## Troubleshooting
 
 ### `pip install` 失敗
 
 通常是 chroma-hnswlib 編譯問題，缺 C++ 編譯器：
+
 - **macOS**: `xcode-select --install`
 - **Windows**: 安裝 Visual Studio Build Tools（C++ workload）
 
 ### `qdrant-client` 報錯
 
 Python 版本不對。確認：
+
 ```bash
 python --version  # 必須是 3.11.x
 ```

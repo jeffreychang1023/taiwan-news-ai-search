@@ -739,3 +739,32 @@ python -m indexing.pipeline data.tsv --site udn --resume
 ---
 
 *更新：2026-02-23*
+
+---
+
+## ✅ Track Z：UX Issues #1-11 修復（2026-02-24）
+
+**目標**：修復 UX 測試回報的 11 個問題 + 前端 polish。
+
+### 主要修改
+
+| 變更 | 說明 |
+|------|------|
+| QueryUnderstanding 統一模組 | `core/query_analysis/query_understanding.py` — 取代 3 個獨立 pre-checks |
+| Qdrant LLM-based boost | `retrieval_providers/qdrant.py` — domain filter 改為 LLM 動態 boost scoring |
+| 年份推論規則 | `reasoning/prompts/clarification.py` — 防止未來日期誤判 |
+| zh-TW 錯誤訊息 | `methods/generate_answer.py` — 英文 → 繁中 |
+| datePublished 注入 | `reasoning/orchestrator.py` — Analyst formatted_context 包含發布日期 |
+| Author search strict filter | `retrieval_providers/qdrant.py` — 精確 author 過濾 |
+| Frontend polish | `static/news-search.js` — session history、feedback buttons、state cleanup |
+
+## ✅ Track AA：Zoe Plan Phase 2 — /delegate + /update-docs 擴充（2026-03-04）
+
+**目標**：建立 Zoe 智慧派工 skill 與文件更新 skill 擴充。
+
+### 主要修改
+
+| 變更 | 說明 |
+|------|------|
+| `/delegate` skill | `.claude/commands/delegate.md` — 6 步驟派工流程 |
+| `/update-docs` 擴充 | `.claude/commands/update-docs/SKILL.md` — 新增 decisions/patterns 參數、修正過時路徑 |

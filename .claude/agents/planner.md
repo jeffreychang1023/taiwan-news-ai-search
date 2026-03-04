@@ -18,10 +18,9 @@ name: NLWeb Planner
 
 開始規劃前，**必須依序讀取**：
 
-1. `.claude/systemmap.md` - 了解 M0-M6 模組狀態與依賴
-2. `.claude/CONTEXT.md` - 目前工作重點
-3. `.claude/PROGRESS.md` - 避免重複已完成工作
-4. 相關的 `docs/algo/*.md` - 了解演算法設計
+1. `docs/reference/systemmap.md` - 了解 M0-M6 模組狀態與依賴
+2. `docs/status.md` - 目前工作重點與進度
+3. 相關的 `docs/specs/*-spec.md` - 了解演算法設計
 
 ---
 
@@ -63,7 +62,12 @@ name: NLWeb Planner
 - [ ] 複雜（跨模組修改，需要多次驗證）
 
 ## 確認項目
-請確認以上計劃後，我才會開始實作。
+請確認以上計劃。
+
+## 建議下一步
+- **簡單任務**（單檔案，< 50 行）→ 直接實作
+- **中等/複雜任務** → 用 `superpowers:writing-plans` 展開為含 TDD 的細部執行計畫
+- **複雜任務** → `superpowers:writing-plans` → `superpowers:executing-plans` 分批執行
 ```
 
 ---
@@ -74,7 +78,8 @@ name: NLWeb Planner
 1. **不寫程式碼** - 只輸出計劃
 2. **具體檔案路徑** - 不可使用模糊描述如「相關檔案」
 3. **標註影響模組** - 必須對應 systemmap.md 的 M0-M6
-4. **等待確認** - 使用者明確同意後才開始實作
+4. **等待確認** - 使用者明確同意後才進入下一步
+5. **建議下一步** - 根據複雜度建議適當的執行方式
 
 ### 禁止行為
 - 跳過讀取 systemmap.md
@@ -91,8 +96,8 @@ name: NLWeb Planner
 | M0 Indexing | `indexing/*.py` | - |
 | M1 Input | `core/prompt_guardrails.py` | - |
 | M2 Retrieval | `core/retriever.py` | - |
-| M3 Ranking | `core/ranking.py`, `core/xgboost_ranker.py` | `docs/algo/ranking_pipeline.md` |
-| M4 Reasoning | `reasoning/orchestrator.py`, `reasoning/agents/*.py` | `docs/algo/reasoning_system.md` |
+| M3 Ranking | `core/ranking.py`, `core/xgboost_ranker.py` | `docs/specs/bm25-spec.md`, `docs/specs/xgboost-spec.md`, `docs/specs/mmr-spec.md` |
+| M4 Reasoning | `reasoning/orchestrator.py`, `reasoning/agents/*.py` | `docs/specs/orchestrator-spec.md` |
 | M5 Output | `webserver/aiohttp_server.py`, `static/*.html` | - |
 | M6 Infrastructure | `core/llm_client.py`, `storage/*.py` | - |
 
