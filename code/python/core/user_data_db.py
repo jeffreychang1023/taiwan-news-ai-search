@@ -103,6 +103,7 @@ class UserDataDB:
                 CREATE TABLE IF NOT EXISTS user_sources (
                     source_id TEXT PRIMARY KEY,
                     user_id TEXT NOT NULL,
+                    org_id TEXT,
                     name TEXT NOT NULL,
                     file_type TEXT,
                     status TEXT NOT NULL,
@@ -131,6 +132,7 @@ class UserDataDB:
                 CREATE TABLE IF NOT EXISTS user_sources (
                     source_id VARCHAR(255) PRIMARY KEY,
                     user_id VARCHAR(255) NOT NULL,
+                    org_id VARCHAR(255),
                     name VARCHAR(500) NOT NULL,
                     file_type VARCHAR(50),
                     status VARCHAR(50) NOT NULL,
@@ -237,6 +239,9 @@ class UserDataDB:
             for index_sql in index_sqls:
                 self.execute(conn, index_sql)
 
+            # Migration: add org_id column to user_sources if it doesn't exist
+            self._migrate_add_org_id(conn)
+
             conn.commit()
             logger.info(f"User data database schema initialized successfully ({self.db_type})")
 
@@ -246,6 +251,26 @@ class UserDataDB:
             raise
         finally:
             conn.close()
+
+    def _migrate_add_org_id(self, conn):
+        """Add org_id column to user_sources if missing (idempotent migration)."""
+        try:
+            if self.db_type == 'sqlite':
+                cursor = conn.cursor()
+                cursor.execute("PRAGMA table_info(user_sources)")
+                columns = {row[1] for row in cursor.fetchall()}
+                if 'org_id' not in columns:
+                    cursor.execute("ALTER TABLE user_sources ADD COLUMN org_id TEXT")
+                    logger.info("Migration: added org_id column to user_sources")
+            else:
+                # PostgreSQL: use IF NOT EXISTS (PostgreSQL 9.6+)
+                cursor = conn.cursor()
+                cursor.execute(
+                    "ALTER TABLE user_sources ADD COLUMN IF NOT EXISTS org_id VARCHAR(255)"
+                )
+                logger.info("Migration: ensured org_id column exists in user_sources (PostgreSQL)")
+        except Exception as e:
+            logger.warning(f"org_id migration skipped or failed: {e}")
 
 
 # Global instance for reuse

@@ -144,8 +144,8 @@ class StorageBehaviorConfig:
     max_migrate_conversations: int = 500
 
 class AppConfig:
-    config_paths = ["config.yaml", "config_llm.yaml", "config_embedding.yaml", "config_retrieval.yaml", 
-                   "config_webserver.yaml", "config_nlweb.yaml", "config_conv_store.yaml", "config_oauth.yaml"]
+    config_paths = ["config.yaml", "config_llm.yaml", "config_embedding.yaml", "config_retrieval.yaml",
+                   "config_webserver.yaml", "config_nlweb.yaml", "config_conv_store.yaml"]
 
     def __init__(self):
         load_dotenv()
@@ -160,7 +160,6 @@ class AppConfig:
         self.load_nlweb_config()
         self.load_sites_config()
         self.load_conversation_storage_config()
-        self.load_oauth_config()
         self._apply_qdrant_profile()
 
     def _apply_qdrant_profile(self):
@@ -776,62 +775,6 @@ class AppConfig:
             
         return None
     
-    def load_oauth_config(self, path: str = "config_oauth.yaml"):
-        """Load OAuth provider configuration."""
-        # Build the full path to the config file using the config directory
-        full_path = os.path.join(self.config_directory, path)
-
-        try:
-            with open(full_path, "r", encoding="utf-8") as f:
-                data = yaml.safe_load(f)
-        except FileNotFoundError:
-            # If config file doesn't exist, use defaults
-            logger.warning(f"{path} not found. OAuth authentication will not be available.")
-            self.oauth_providers = {}
-            self.oauth_session_secret = None
-            self.oauth_token_expiration = 86400
-            self.oauth_require_auth = False
-            self.oauth_anonymous_endpoints = []
-            return
-        
-        # Load OAuth providers
-        self.oauth_providers = {}
-        for provider_name, provider_data in data.get("providers", {}).items():
-            if provider_data.get("enabled", False):
-                client_id = self._get_config_value(provider_data.get("client_id_env"))
-                client_secret = self._get_config_value(provider_data.get("client_secret_env"))
-                
-                if client_id and client_secret:
-                    self.oauth_providers[provider_name] = {
-                        "client_id": client_id,
-                        "client_secret": client_secret,
-                        "auth_url": provider_data.get("auth_url"),
-                        "token_url": provider_data.get("token_url"),
-                        "userinfo_url": provider_data.get("userinfo_url"),
-                        "emails_url": provider_data.get("emails_url"),  # For GitHub
-                        "scope": provider_data.get("scope")
-                    }
-                    logger.info(f"Loaded OAuth provider: {provider_name}")
-                else:
-                    logger.warning(f"OAuth provider {provider_name} is enabled but missing credentials")
-        
-        # Load session configuration
-        session_config = data.get("session", {})
-        self.oauth_session_secret = self._get_config_value(session_config.get("secret_key_env"))
-        # Generate a default session secret if not provided
-        if not self.oauth_session_secret:
-            import secrets
-            self.oauth_session_secret = secrets.token_urlsafe(32)
-            logger.warning("No OAuth session secret configured, using generated secret (not recommended for production)")
-        self.oauth_token_expiration = session_config.get("token_expiration", 86400)
-        
-        # Load authentication settings
-        auth_config = data.get("auth", {})
-        self.oauth_require_auth = auth_config.get("require_auth", False)
-        self.oauth_anonymous_endpoints = auth_config.get("anonymous_endpoints", [])
-        
-        logger.info(f"Loaded {len(self.oauth_providers)} OAuth providers")
-
     def load_conversation_storage_config(self, path: str = "config_conv_store.yaml"):
         """Load conversation storage configuration."""
         # Build the full path to the config file using the config directory

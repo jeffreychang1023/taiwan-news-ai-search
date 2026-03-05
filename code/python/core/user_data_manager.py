@@ -169,7 +169,7 @@ class UserDataManager:
         finally:
             conn.close()
 
-    def create_source(self, user_id: str, filename: str, file_size: int) -> str:
+    def create_source(self, user_id: str, filename: str, file_size: int, org_id: str = None) -> str:
         """
         Create a new source record in the database.
 
@@ -177,6 +177,7 @@ class UserDataManager:
             user_id: User identifier
             filename: Original filename
             file_size: File size in bytes
+            org_id: Organization identifier (optional, for B2B isolation)
 
         Returns:
             source_id (UUID)
@@ -191,13 +192,13 @@ class UserDataManager:
                 conn,
                 """
                 INSERT INTO user_sources
-                (source_id, user_id, name, file_type, status, size_bytes, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                (source_id, user_id, org_id, name, file_type, status, size_bytes, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (source_id, user_id, filename, file_type, 'uploading', file_size, current_time, current_time)
+                (source_id, user_id, org_id, filename, file_type, 'uploading', file_size, current_time, current_time)
             )
             conn.commit()
-            logger.info(f"Created source record: {source_id} for user: {user_id}")
+            logger.info(f"Created source record: {source_id} for user: {user_id}, org: {org_id}")
             return source_id
         except Exception as e:
             conn.rollback()

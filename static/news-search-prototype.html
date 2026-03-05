@@ -38,6 +38,15 @@
                     <button class="notification-btn" id="btnNotification" title="通知">
                         🔔
                     </button>
+                    <!-- Auth: Login button / User menu -->
+                    <div class="auth-area" id="authArea">
+                        <button class="btn-login" id="btnShowLogin">登入</button>
+                        <div class="user-menu" id="userMenu" style="display:none;">
+                            <span class="user-name" id="userDisplayName"></span>
+                            <button class="btn-org-manage" id="btnOrgManage" style="display:none;" title="組織管理">組織</button>
+                            <button class="btn-logout" id="btnLogout">登出</button>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -89,9 +98,15 @@
 
             <!-- 過往 Session 列表（自動填入） -->
             <div class="left-sidebar-divider"></div>
+            <!-- Session tabs: My sessions / Shared -->
+            <div class="left-sidebar-sessions-tabs">
+                <button class="left-sidebar-sessions-tab active" data-sessions-tab="my">我的對話</button>
+                <button class="left-sidebar-sessions-tab" data-sessions-tab="shared">共享給我</button>
+            </div>
             <div class="left-sidebar-sessions" id="leftSidebarSessions">
                 <!-- Sessions rendered dynamically -->
             </div>
+            <div class="left-sidebar-sessions" id="leftSidebarSessionsShared" style="display:none"></div>
         </div>
 
         <!-- 底部：說明與設置 -->
@@ -574,6 +589,98 @@
 
     <script src="/static/news-search.js"></script>
 
+    <!-- Org Management Modal -->
+    <div class="org-modal-overlay" id="orgModalOverlay" style="display:none;">
+        <div class="org-modal">
+            <div class="org-modal-header">
+                <h2 class="org-modal-title" id="orgModalTitle">組織管理</h2>
+                <button class="org-modal-close" id="btnCloseOrgModal">&times;</button>
+            </div>
+            <div class="org-modal-body">
+                <div class="org-section">
+                    <h3 class="org-section-title">成員列表</h3>
+                    <div id="orgMembersList"><div class="org-loading">載入中...</div></div>
+                </div>
+                <div class="org-section" id="orgInviteSection" style="display:none;">
+                    <h3 class="org-section-title">邀請成員</h3>
+                    <form class="org-invite-form" id="orgInviteForm">
+                        <input type="email" id="inviteEmail" placeholder="email@example.com" required>
+                        <select id="inviteRole">
+                            <option value="member">成員</option>
+                            <option value="admin">管理員</option>
+                        </select>
+                        <button type="submit" class="btn-invite">邀請</button>
+                    </form>
+                    <div class="org-invite-feedback" id="orgInviteFeedback" style="display:none;"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Accept Invite Toast -->
+    <div class="accept-invite-toast" id="acceptInviteToast" style="display:none;">
+        <div class="accept-invite-content">
+            <p id="acceptInviteMsg">您已收到組織邀請，是否接受加入？</p>
+            <div class="accept-invite-actions">
+                <button class="btn-accept-invite" id="btnAcceptInvite">接受邀請</button>
+                <button class="btn-decline-invite" id="btnDeclineInvite">略過</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Auth Login/Register Modal -->
+    <div class="auth-modal-overlay" id="authModalOverlay" style="display:none;">
+        <div class="auth-modal">
+            <button class="auth-modal-close" id="btnCloseAuthModal">&times;</button>
+            <div class="auth-tabs">
+                <button class="auth-tab active" id="tabLogin" data-tab="login">登入</button>
+                <button class="auth-tab" id="tabRegister" data-tab="register">註冊</button>
+            </div>
+            <!-- Login Form -->
+            <form class="auth-form" id="loginForm">
+                <div class="auth-form-group">
+                    <label for="loginEmail">Email</label>
+                    <input type="email" id="loginEmail" required autocomplete="email" placeholder="you@example.com">
+                </div>
+                <div class="auth-form-group">
+                    <label for="loginPassword">密碼</label>
+                    <input type="password" id="loginPassword" required autocomplete="current-password" placeholder="********">
+                </div>
+                <div class="auth-error" id="loginError" style="display:none;"></div>
+                <button type="submit" class="auth-submit-btn">登入</button>
+                <a href="#" class="auth-link" id="btnForgotPassword">忘記密碼?</a>
+            </form>
+            <!-- Register Form -->
+            <form class="auth-form" id="registerForm" style="display:none;">
+                <div class="auth-form-group">
+                    <label for="registerName">名稱</label>
+                    <input type="text" id="registerName" required placeholder="您的名稱">
+                </div>
+                <div class="auth-form-group">
+                    <label for="registerEmail">Email</label>
+                    <input type="email" id="registerEmail" required autocomplete="email" placeholder="you@example.com">
+                </div>
+                <div class="auth-form-group">
+                    <label for="registerPassword">密碼</label>
+                    <input type="password" id="registerPassword" required autocomplete="new-password" placeholder="至少 8 字元，含大寫與數字">
+                </div>
+                <div class="auth-error" id="registerError" style="display:none;"></div>
+                <div class="auth-success" id="registerSuccess" style="display:none;"></div>
+                <button type="submit" class="auth-submit-btn">註冊</button>
+            </form>
+            <!-- Forgot Password Form -->
+            <form class="auth-form" id="forgotPasswordForm" style="display:none;">
+                <div class="auth-form-group">
+                    <label for="forgotEmail">Email</label>
+                    <input type="email" id="forgotEmail" required placeholder="you@example.com">
+                </div>
+                <div class="auth-error" id="forgotError" style="display:none;"></div>
+                <div class="auth-success" id="forgotSuccess" style="display:none;"></div>
+                <button type="submit" class="auth-submit-btn">發送重設連結</button>
+                <a href="#" class="auth-link" id="btnBackToLogin">返回登入</a>
+            </form>
+        </div>
+    </div>
 
 </body>
 </html>

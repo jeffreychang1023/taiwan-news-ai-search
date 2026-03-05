@@ -89,7 +89,8 @@ class UserDataProcessor:
         self,
         user_id: str,
         source_id: str,
-        progress_callback: Optional[Callable[[int, str, str], None]] = None
+        progress_callback: Optional[Callable[[int, str, str], None]] = None,
+        org_id: str = None,
     ) -> Dict[str, Any]:
         """
         Process an uploaded file through the complete pipeline.
@@ -98,6 +99,7 @@ class UserDataProcessor:
             user_id: User identifier
             source_id: Source identifier
             progress_callback: Optional callback function(progress_percent, status, message)
+            org_id: Organization identifier (stored in Qdrant payload for org-level isolation)
 
         Returns:
             Processing result dictionary
@@ -144,7 +146,7 @@ class UserDataProcessor:
             if progress_callback:
                 progress_callback(75, 'embedding', '正在生成向量並索引...')
 
-            await self._index_chunks(user_id, source_id, doc_id, chunks)
+            await self._index_chunks(user_id, source_id, doc_id, chunks, org_id=org_id)
 
             self.manager.update_source_status(source_id, 'ready')
 
@@ -172,7 +174,7 @@ class UserDataProcessor:
                 'error': str(e)
             }
 
-    async def _index_chunks(self, user_id: str, source_id: str, doc_id: str, chunks: List[Dict[str, Any]]):
+    async def _index_chunks(self, user_id: str, source_id: str, doc_id: str, chunks: List[Dict[str, Any]], org_id: str = None):
         """
         Index chunks to Qdrant with embeddings.
 
@@ -181,6 +183,7 @@ class UserDataProcessor:
             source_id: Source identifier
             doc_id: Document identifier (from database)
             chunks: List of chunk dictionaries
+            org_id: Organization identifier (stored in payload for filtering)
         """
         if not chunks:
             raise ValueError(f"No chunks provided for source_id={source_id}")
@@ -201,6 +204,7 @@ class UserDataProcessor:
                 # Create payload
                 payload = {
                     'user_id': user_id,
+                    'org_id': org_id,
                     'source_id': source_id,
                     'doc_id': doc_id,
                     'chunk_index': chunk['chunk_index'],

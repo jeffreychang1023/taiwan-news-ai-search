@@ -99,6 +99,7 @@ class NLWebHandler:
         self.include_private_sources = include_private_sources not in ["False", "false", "0", None]
 
         self.user_id = get_param(self.query_params, "user_id", str, None)
+        self.org_id = get_param(self.query_params, "org_id", str, None)
 
         self.item_type = siteToItemType(self.site)
         self.required_item_type = get_param(self.query_params, "required_item_type", str, None)
@@ -110,7 +111,6 @@ class NLWebHandler:
         if not self.conversation_id:
             self.conversation_id = f"conv_{uuid.uuid4().hex[:12]}"
         self.session_id = get_param(self.query_params, "session_id", str, "")
-        self.oauth_id = get_param(self.query_params, "oauth_id", str, "")
         self.thread_id = get_param(self.query_params, "thread_id", str, "")
         self.parent_query_id = get_param(self.query_params, "parent_query_id", str, None)
 
@@ -198,7 +198,6 @@ class NLWebHandler:
         # Extract from message metadata
         if message.sender_info:
             query_params["user_id"] = [message.sender_info.get('id', '')]
-            query_params["oauth_id"] = [message.sender_info.get('id', '')]
         
         # Add conversation tracking
         if message.conversation_id:
@@ -243,7 +242,7 @@ class NLWebHandler:
         try:
             query_logger.log_query_start(
                 query_id=self.query_id,
-                user_id=self.oauth_id or "anonymous",
+                user_id=self.user_id or "anonymous",
                 query_text=self.query,
                 site=str(self.site) if isinstance(self.site, list) else self.site,
                 mode=self.generate_mode or "list",
@@ -414,7 +413,8 @@ class NLWebHandler:
                             query=self.decontextualized_query,
                             user_id=self.user_id,
                             top_k=10,
-                            query_params=self.query_params
+                            query_params=self.query_params,
+                            org_id=self.org_id
                         )
 
                         # Format private results to match expected format
@@ -536,7 +536,8 @@ class NLWebHandler:
                             query=self.decontextualized_query,
                             user_id=self.user_id,
                             top_k=10,  # Retrieve top 10 from private files
-                            query_params=self.query_params
+                            query_params=self.query_params,
+                            org_id=self.org_id
                         )
 
                         # Format private results to match public results format

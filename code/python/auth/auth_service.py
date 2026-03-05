@@ -1,0 +1,498 @@
+"""
+Authentication service: register, login, JWT, org management, brute force protection.
+
+All methods are async — uses AuthDB async interface (no event-loop blocking).
+"""
+
+import os
+import uuid
+import time
+import hashlib
+import secrets
+from typing import Optional, Dict, Any
+
+import bcrypt
+import jwt
+
+from auth.auth_db import AuthDB
+from misc.logger.logging_config_helper import get_configured_logger
+
+logger = get_configured_logger("auth_service")
+
+# JWT config — read lazily so load_dotenv() timing doesn't matter
+def _get_jwt_secret() -> str:
+    return os.environ.get('JWT_SECRET', '')
+
+JWT_ALGORITHM = 'HS256'
+ACCESS_TOKEN_EXPIRE_SECONDS = 15 * 60        # 15 minutes
+REFRESH_TOKEN_EXPIRE_SECONDS = 7 * 24 * 3600  # 7 days
+
+# Brute force config
+BRUTE_FORCE_WINDOW_SECONDS = 15 * 60  # 15 minutes
+BRUTE_FORCE_MAX_ATTEMPTS = 5
+
+
+class AuthService:
+    """Core authentication service (async)."""
+
+    def __init__(self):
+        self.db = AuthDB.get_instance()
+
+    # ── Registration ──────────────────────────────────────────────
+
+    async def register_user(self, email: str, password: str, name: str) -> Dict[str, Any]:
+        """Register a new user. Returns user dict or raises ValueError."""
+        email = email.strip().lower()
+        self._validate_password(password)
+
+        existing = await self.db.fetchone("SELECT id FROM users WHERE email = ?", (email,))
+        if existing:
+            raise ValueError("Email already registered")
+
+        user_id = str(uuid.uuid4())
+        password_hash = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+        verification_token = secrets.token_urlsafe(32)
+        now = time.time()
+
+        await self.db.execute(
+            "INSERT INTO users (id, email, password_hash, name, email_verification_token, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (user_id, email, password_hash, name, verification_token, now)
+        )
+
+        # Send verification email
+        from auth.email_service import send_verification_email
+        send_verification_email(email, verification_token, name)
+
+        logger.info(f"User registered: {email} (id={user_id})")
+        return {
+            'id': user_id,
+            'email': email,
+            'name': name,
+            'email_verified': False,
+        }
+
+    # ── Email Verification ────────────────────────────────────────
+
+    async def verify_email(self, token: str) -> Dict[str, Any]:
+        """Verify user email with token. Returns user dict or raises ValueError."""
+        user = await self.db.fetchone(
+            "SELECT id, email, name FROM users WHERE email_verification_token = ? AND is_active = 1",
+            (token,)
+        )
+        if not user:
+            raise ValueError("Invalid or expired verification token")
+
+        await self.db.execute(
+            "UPDATE users SET email_verified = 1, email_verification_token = NULL WHERE id = ?",
+            (user['id'],)
+        )
+
+        logger.info(f"Email verified: {user['email']}")
+        return {'id': user['id'], 'email': user['email'], 'name': user['name'], 'email_verified': True}
+
+    # ── Login ─────────────────────────────────────────────────────
+
+    async def login(self, email: str, password: str, ip: str = None) -> Dict[str, Any]:
+        """Authenticate user. Returns tokens or raises ValueError."""
+        email = email.strip().lower()
+
+        await self._check_brute_force(email, ip)
+
+        user = await self.db.fetchone(
+            "SELECT id, email, password_hash, name, email_verified, is_active FROM users WHERE email = ?",
+            (email,)
+        )
+
+        if not user or not bcrypt.checkpw(password.encode('utf-8'), user['password_hash'].encode('utf-8')):
+            await self._record_login_attempt(email, ip, success=False)
+            raise ValueError("Invalid email or password")
+
+        is_active = user['is_active']
+        if self.db.db_type == 'sqlite':
+            is_active = bool(is_active)
+        if not is_active:
+            raise ValueError("Account is deactivated")
+
+        email_verified = user['email_verified']
+        if self.db.db_type == 'sqlite':
+            email_verified = bool(email_verified)
+        if not email_verified:
+            raise ValueError("Email not verified. Please check your email for verification link.")
+
+        await self._record_login_attempt(email, ip, success=True)
+
+        now = time.time()
+        await self.db.execute("UPDATE users SET last_login = ? WHERE id = ?", (now, user['id']))
+
+        # Get org membership
+        membership = await self.db.fetchone(
+            "SELECT org_id, role FROM org_memberships WHERE user_id = ? AND status = 'active' LIMIT 1",
+            (user['id'],)
+        )
+        org_id = membership['org_id'] if membership else None
+        role = membership['role'] if membership else None
+
+        access_token = self._create_access_token(user['id'], user['email'], user['name'], org_id, role)
+        refresh_token = await self._create_refresh_token(user['id'])
+
+        logger.info(f"User logged in: {email}")
+        return {
+            'access_token': access_token,
+            'refresh_token': refresh_token,
+            'token_type': 'Bearer',
+            'expires_in': ACCESS_TOKEN_EXPIRE_SECONDS,
+            'user': {
+                'id': user['id'],
+                'email': user['email'],
+                'name': user['name'],
+                'org_id': org_id,
+                'role': role,
+            }
+        }
+
+    # ── Token Refresh ─────────────────────────────────────────────
+
+    async def refresh_token(self, token: str) -> Dict[str, Any]:
+        """Refresh access token using refresh token."""
+        token_hash = hashlib.sha256(token.encode('utf-8')).hexdigest()
+
+        row = await self.db.fetchone(
+            "SELECT rt.id, rt.user_id, rt.expires_at, rt.revoked_at, "
+            "u.email, u.name, u.is_active "
+            "FROM refresh_tokens rt JOIN users u ON rt.user_id = u.id "
+            "WHERE rt.token_hash = ?",
+            (token_hash,)
+        )
+
+        if not row:
+            raise ValueError("Invalid refresh token")
+        if row['revoked_at'] is not None:
+            raise ValueError("Refresh token has been revoked")
+        if row['expires_at'] < time.time():
+            raise ValueError("Refresh token expired")
+
+        is_active = row['is_active']
+        if self.db.db_type == 'sqlite':
+            is_active = bool(is_active)
+        if not is_active:
+            raise ValueError("Account is deactivated")
+
+        membership = await self.db.fetchone(
+            "SELECT org_id, role FROM org_memberships WHERE user_id = ? AND status = 'active' LIMIT 1",
+            (row['user_id'],)
+        )
+        org_id = membership['org_id'] if membership else None
+        role = membership['role'] if membership else None
+
+        access_token = self._create_access_token(row['user_id'], row['email'], row['name'], org_id, role)
+
+        logger.info(f"Token refreshed for user: {row['email']}")
+        return {
+            'access_token': access_token,
+            'token_type': 'Bearer',
+            'expires_in': ACCESS_TOKEN_EXPIRE_SECONDS,
+        }
+
+    # ── Logout ────────────────────────────────────────────────────
+
+    async def logout(self, refresh_token_value: str) -> bool:
+        """Revoke a refresh token."""
+        token_hash = hashlib.sha256(refresh_token_value.encode('utf-8')).hexdigest()
+        await self.db.execute(
+            "UPDATE refresh_tokens SET revoked_at = ? WHERE token_hash = ?",
+            (time.time(), token_hash)
+        )
+        logger.info("Refresh token revoked")
+        return True
+
+    # ── Password Reset ────────────────────────────────────────────
+
+    async def forgot_password(self, email: str) -> bool:
+        """Generate password reset token and send email. Always returns True (no email leak)."""
+        email = email.strip().lower()
+
+        user = await self.db.fetchone(
+            "SELECT id, name FROM users WHERE email = ? AND is_active = 1", (email,)
+        )
+        if not user:
+            return True  # Don't reveal if email exists
+
+        reset_token = secrets.token_urlsafe(32)
+        expires = time.time() + 3600  # 1 hour
+
+        await self.db.execute(
+            "UPDATE users SET password_reset_token = ?, password_reset_expires = ? WHERE id = ?",
+            (reset_token, expires, user['id'])
+        )
+
+        from auth.email_service import send_password_reset_email
+        send_password_reset_email(email, reset_token, user['name'])
+
+        logger.info(f"Password reset requested for: {email}")
+        return True
+
+    async def reset_password(self, token: str, new_password: str) -> bool:
+        """Reset password using token."""
+        self._validate_password(new_password)
+
+        user = await self.db.fetchone(
+            "SELECT id FROM users WHERE password_reset_token = ? AND password_reset_expires > ? AND is_active = 1",
+            (token, time.time())
+        )
+        if not user:
+            raise ValueError("Invalid or expired reset token")
+
+        password_hash = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+
+        await self.db.execute(
+            "UPDATE users SET password_hash = ?, password_reset_token = NULL, password_reset_expires = NULL WHERE id = ?",
+            (password_hash, user['id'])
+        )
+
+        # Revoke all refresh tokens
+        await self.db.execute(
+            "UPDATE refresh_tokens SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL",
+            (time.time(), user['id'])
+        )
+
+        logger.info(f"Password reset completed for user: {user['id']}")
+        return True
+
+    # ── Organization ──────────────────────────────────────────────
+
+    async def create_organization(self, name: str, admin_user_id: str) -> Dict[str, Any]:
+        """Create organization and set creator as admin."""
+        org_id = str(uuid.uuid4())
+        slug = name.lower().replace(' ', '-').replace('.', '')[:50]
+        now = time.time()
+
+        existing = await self.db.fetchone("SELECT id FROM organizations WHERE slug = ?", (slug,))
+        if existing:
+            slug = f"{slug}-{uuid.uuid4().hex[:6]}"
+
+        await self.db.execute(
+            "INSERT INTO organizations (id, name, slug, created_at) VALUES (?, ?, ?, ?)",
+            (org_id, name, slug, now)
+        )
+
+        membership_id = str(uuid.uuid4())
+        await self.db.execute(
+            "INSERT INTO org_memberships (id, user_id, org_id, role, status, accepted_at) "
+            "VALUES (?, ?, ?, 'admin', 'active', ?)",
+            (membership_id, admin_user_id, org_id, now)
+        )
+
+        logger.info(f"Organization created: {name} (id={org_id}) by user {admin_user_id}")
+        return {'id': org_id, 'name': name, 'slug': slug}
+
+    async def invite_member(self, org_id: str, email: str, role: str, invited_by: str) -> Dict[str, Any]:
+        """Create invitation for a member."""
+        email = email.strip().lower()
+
+        membership = await self.db.fetchone(
+            "SELECT role FROM org_memberships WHERE user_id = ? AND org_id = ? AND status = 'active'",
+            (invited_by, org_id)
+        )
+        if not membership or membership['role'] != 'admin':
+            raise ValueError("Only admins can invite members")
+
+        org = await self.db.fetchone("SELECT max_members FROM organizations WHERE id = ?", (org_id,))
+        if not org:
+            raise ValueError("Organization not found")
+
+        member_count_row = await self.db.fetchone(
+            "SELECT COUNT(*) as cnt FROM org_memberships WHERE org_id = ? AND status = 'active'",
+            (org_id,)
+        )
+        if member_count_row['cnt'] >= org['max_members']:
+            raise ValueError("Organization member limit reached")
+
+        invitation_id = str(uuid.uuid4())
+        token = secrets.token_urlsafe(32)
+        now = time.time()
+        expires_at = now + 7 * 24 * 3600
+
+        await self.db.execute(
+            "INSERT INTO invitations (id, org_id, email, role, invited_by, token, expires_at, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (invitation_id, org_id, email, role, invited_by, token, expires_at, now)
+        )
+
+        org_row = await self.db.fetchone("SELECT name FROM organizations WHERE id = ?", (org_id,))
+        inviter_row = await self.db.fetchone("SELECT name FROM users WHERE id = ?", (invited_by,))
+
+        from auth.email_service import send_invitation_email
+        send_invitation_email(
+            email,
+            org_row['name'] if org_row else 'Organization',
+            inviter_row['name'] if inviter_row else 'Someone',
+            token
+        )
+
+        logger.info(f"Invitation sent to {email} for org {org_id}")
+        return {'id': invitation_id, 'token': token, 'email': email}
+
+    async def accept_invitation(self, token: str, user_id: str) -> Dict[str, Any]:
+        """Accept an invitation and create membership."""
+        invitation = await self.db.fetchone(
+            "SELECT id, org_id, email, role FROM invitations "
+            "WHERE token = ? AND expires_at > ? AND accepted_at IS NULL",
+            (token, time.time())
+        )
+        if not invitation:
+            raise ValueError("Invalid or expired invitation")
+
+        user = await self.db.fetchone("SELECT email FROM users WHERE id = ?", (user_id,))
+        if not user or user['email'] != invitation['email']:
+            raise ValueError("This invitation is for a different email address")
+
+        now = time.time()
+
+        await self.db.execute(
+            "UPDATE invitations SET accepted_at = ? WHERE id = ?",
+            (now, invitation['id'])
+        )
+
+        membership_id = str(uuid.uuid4())
+        await self.db.execute(
+            "INSERT INTO org_memberships (id, user_id, org_id, role, status, accepted_at) "
+            "VALUES (?, ?, ?, ?, 'active', ?)",
+            (membership_id, user_id, invitation['org_id'], invitation['role'], now)
+        )
+
+        logger.info(f"Invitation accepted by user {user_id} for org {invitation['org_id']}")
+        return {'org_id': invitation['org_id'], 'role': invitation['role']}
+
+    async def list_user_orgs(self, user_id: str) -> list:
+        """List organizations a user belongs to."""
+        return await self.db.fetchall(
+            "SELECT o.id, o.name, o.slug, o.plan, m.role "
+            "FROM org_memberships m JOIN organizations o ON m.org_id = o.id "
+            "WHERE m.user_id = ? AND m.status = 'active' AND o.is_active = 1",
+            (user_id,)
+        )
+
+    async def list_org_members(self, org_id: str, requester_user_id: str) -> list:
+        """List members of an organization."""
+        membership = await self.db.fetchone(
+            "SELECT role FROM org_memberships WHERE user_id = ? AND org_id = ? AND status = 'active'",
+            (requester_user_id, org_id)
+        )
+        if not membership:
+            raise ValueError("Not a member of this organization")
+
+        return await self.db.fetchall(
+            "SELECT u.id, u.email, u.name, m.role, m.accepted_at "
+            "FROM org_memberships m JOIN users u ON m.user_id = u.id "
+            "WHERE m.org_id = ? AND m.status = 'active'",
+            (org_id,)
+        )
+
+    async def remove_member(self, org_id: str, target_user_id: str, requester_user_id: str) -> bool:
+        """Remove a member from organization. Only admins can remove."""
+        membership = await self.db.fetchone(
+            "SELECT role FROM org_memberships WHERE user_id = ? AND org_id = ? AND status = 'active'",
+            (requester_user_id, org_id)
+        )
+        if not membership or membership['role'] != 'admin':
+            raise ValueError("Only admins can remove members")
+
+        if target_user_id == requester_user_id:
+            raise ValueError("Cannot remove yourself from the organization")
+
+        await self.db.execute(
+            "UPDATE org_memberships SET status = 'removed' WHERE user_id = ? AND org_id = ? AND status = 'active'",
+            (target_user_id, org_id)
+        )
+
+        logger.info(f"Member {target_user_id} removed from org {org_id}")
+        return True
+
+    # ── User Queries ──────────────────────────────────────────────
+
+    async def get_user_by_id(self, user_id: str) -> Optional[Dict[str, Any]]:
+        """Get user by ID."""
+        user = await self.db.fetchone(
+            "SELECT id, email, name, email_verified, last_login, created_at FROM users WHERE id = ? AND is_active = 1",
+            (user_id,)
+        )
+        if user and self.db.db_type == 'sqlite':
+            user['email_verified'] = bool(user['email_verified'])
+        return user
+
+    # ── Private Helpers ───────────────────────────────────────────
+
+    def _validate_password(self, password: str):
+        """Validate password strength."""
+        if len(password) < 8:
+            raise ValueError("Password must be at least 8 characters")
+        if not any(c.isupper() for c in password):
+            raise ValueError("Password must contain at least one uppercase letter")
+        if not any(c.isdigit() for c in password):
+            raise ValueError("Password must contain at least one digit")
+
+    def _create_access_token(self, user_id: str, email: str, name: str,
+                              org_id: Optional[str], role: Optional[str]) -> str:
+        """Create JWT access token."""
+        secret = _get_jwt_secret()
+        if not secret:
+            raise RuntimeError("JWT_SECRET environment variable is not set")
+
+        now = time.time()
+        payload = {
+            'user_id': user_id,
+            'email': email,
+            'name': name,
+            'org_id': org_id,
+            'role': role,
+            'iat': int(now),
+            'exp': int(now + ACCESS_TOKEN_EXPIRE_SECONDS),
+        }
+        return jwt.encode(payload, secret, algorithm=JWT_ALGORITHM)
+
+    async def _create_refresh_token(self, user_id: str) -> str:
+        """Create refresh token, store hash in DB. Returns raw token."""
+        raw_token = secrets.token_urlsafe(64)
+        token_hash = hashlib.sha256(raw_token.encode('utf-8')).hexdigest()
+        token_id = str(uuid.uuid4())
+        now = time.time()
+        expires_at = now + REFRESH_TOKEN_EXPIRE_SECONDS
+
+        await self.db.execute(
+            "INSERT INTO refresh_tokens (id, user_id, token_hash, expires_at, created_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (token_id, user_id, token_hash, expires_at, now)
+        )
+        return raw_token
+
+    async def _check_brute_force(self, email: str, ip: str = None):
+        """Check for brute force attempts. Raises ValueError if locked."""
+        cutoff = time.time() - BRUTE_FORCE_WINDOW_SECONDS
+        row = await self.db.fetchone(
+            "SELECT COUNT(*) as cnt FROM login_attempts "
+            "WHERE email = ? AND success = 0 AND attempted_at > ?",
+            (email, cutoff)
+        )
+        if row and row['cnt'] >= BRUTE_FORCE_MAX_ATTEMPTS:
+            # Send lockout notification on the exact threshold hit (cnt == threshold)
+            if row['cnt'] == BRUTE_FORCE_MAX_ATTEMPTS:
+                import asyncio
+                from auth.email_service import send_lockout_notification
+                asyncio.create_task(
+                    asyncio.to_thread(send_lockout_notification, email, ip or 'unknown')
+                )
+            raise ValueError("Too many failed login attempts. Please try again in 15 minutes.")
+
+    async def _record_login_attempt(self, email: str, ip: str = None, success: bool = False):
+        """Record a login attempt."""
+        attempt_id = str(uuid.uuid4())
+        success_val = 1 if success else 0
+        if self.db.db_type == 'postgres':
+            success_val = success
+
+        await self.db.execute(
+            "INSERT INTO login_attempts (id, email, ip_address, success, attempted_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (attempt_id, email, ip, success_val, time.time())
+        )

@@ -1,3 +1,749 @@
+        // ==================== AUTH MANAGER ====================
+        class AuthManager {
+            constructor() {
+                this._accessToken = null;
+                this._user = null;
+                this._refreshPromise = null;
+                this._init();
+            }
+
+            _init() {
+                // Try to load user from localStorage
+                const stored = localStorage.getItem('authUser');
+                if (stored) {
+                    try {
+                        this._user = JSON.parse(stored);
+                    } catch (e) {
+                        localStorage.removeItem('authUser');
+                    }
+                }
+                const storedToken = localStorage.getItem('authAccessToken');
+                if (storedToken) {
+                    this._accessToken = storedToken;
+                }
+            }
+
+            isLoggedIn() {
+                return !!this._user && !!this._accessToken;
+            }
+
+            getCurrentUser() {
+                return this._user;
+            }
+
+            getAccessToken() {
+                return this._accessToken;
+            }
+
+            async login(email, password) {
+                const res = await fetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, password }),
+                    credentials: 'same-origin'
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || 'Login failed');
+                this._accessToken = data.access_token;
+                this._user = data.user;
+                localStorage.setItem('authUser', JSON.stringify(this._user));
+                localStorage.setItem('authAccessToken', this._accessToken);
+                return data;
+            }
+
+            async register(email, password, name) {
+                const res = await fetch('/api/auth/register', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, password, name })
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || 'Registration failed');
+                return data;
+            }
+
+            async refreshToken() {
+                // Deduplicate concurrent refresh calls
+                if (this._refreshPromise) return this._refreshPromise;
+                this._refreshPromise = (async () => {
+                    try {
+                        const res = await fetch('/api/auth/refresh', {
+                            method: 'POST',
+                            credentials: 'same-origin'
+                        });
+                        const data = await res.json();
+                        if (!res.ok) throw new Error(data.error || 'Refresh failed');
+                        this._accessToken = data.access_token;
+                        localStorage.setItem('authAccessToken', this._accessToken);
+                        return data;
+                    } catch (e) {
+                        this._handleAuthFailure();
+                        throw e;
+                    } finally {
+                        this._refreshPromise = null;
+                    }
+                })();
+                return this._refreshPromise;
+            }
+
+            async logout() {
+                try {
+                    await fetch('/api/auth/logout', {
+                        method: 'POST',
+                        credentials: 'same-origin'
+                    });
+                } catch (e) { /* ignore */ }
+                this._handleAuthFailure();
+            }
+
+            async authenticatedFetch(url, options = {}) {
+                if (!options.headers) options.headers = {};
+                if (this._accessToken) {
+                    options.headers['Authorization'] = `Bearer ${this._accessToken}`;
+                }
+                options.credentials = 'same-origin';
+
+                let res = await fetch(url, options);
+
+                // If 401, try refresh once
+                if (res.status === 401 && this._accessToken) {
+                    try {
+                        await this.refreshToken();
+                        options.headers['Authorization'] = `Bearer ${this._accessToken}`;
+                        res = await fetch(url, options);
+                    } catch (e) {
+                        // refresh failed, return original 401
+                    }
+                }
+                return res;
+            }
+
+            async forgotPassword(email) {
+                const res = await fetch('/api/auth/forgot-password', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email })
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || 'Request failed');
+                return data;
+            }
+
+            _handleAuthFailure() {
+                this._accessToken = null;
+                this._user = null;
+                localStorage.removeItem('authUser');
+                localStorage.removeItem('authAccessToken');
+                updateAuthUI();
+            }
+        }
+
+        const authManager = new AuthManager();
+
+        // ==================== SESSION MANAGER ====================
+        // Wraps API calls (logged in) or falls back to localStorage (not logged in).
+        // Handles auto-migration from localStorage to server on first login.
+        class SessionManager {
+            constructor(authMgr) {
+                this._auth = authMgr;
+                this._saveTimer = null;
+                this._savePending = false;
+            }
+
+            _isOnline() {
+                return this._auth.isLoggedIn() && this._auth.getCurrentUser()?.org_id;
+            }
+
+            // -- Sessions --
+
+            async loadSessions() {
+                if (this._isOnline()) {
+                    try {
+                        const res = await this._auth.authenticatedFetch('/api/sessions');
+                        const data = await res.json();
+                        if (res.ok && data.success) return data.sessions;
+                    } catch (e) {
+                        console.warn('[SessionManager] API load failed, falling back to localStorage', e);
+                    }
+                }
+                // Fallback to localStorage
+                try {
+                    const stored = localStorage.getItem('taiwanNewsSavedSessions');
+                    return stored ? JSON.parse(stored) : [];
+                } catch (e) {
+                    console.error('[SessionManager] Failed to load from localStorage:', e);
+                    return [];
+                }
+            }
+
+            async loadSharedSessions() {
+                if (!this._isOnline()) return [];
+                try {
+                    const res = await this._auth.authenticatedFetch('/api/sessions/shared');
+                    const data = await res.json();
+                    if (res.ok && data.success) return data.sessions;
+                    console.warn('[SessionManager] loadSharedSessions failed:', data);
+                    return [];
+                } catch (e) {
+                    console.warn('[SessionManager] loadSharedSessions error:', e);
+                    return [];
+                }
+            }
+
+            async setSessionVisibility(serverId, visibility) {
+                if (!serverId) throw new Error('Session not saved to server yet');
+                if (!this._isOnline()) throw new Error('Need to join an organization to share sessions');
+                const res = await this._auth.authenticatedFetch(`/api/sessions/${serverId}/visibility`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ visibility })
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || 'Failed to set visibility');
+                return data;
+            }
+
+            async saveSession(session) {
+                if (this._isOnline()) {
+                    try {
+                        if (session._serverId) {
+                            // Update existing
+                            await this._auth.authenticatedFetch(`/api/sessions/${session._serverId}`, {
+                                method: 'PUT',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                    title: session.title,
+                                    conversation_history: session.conversationHistory,
+                                    session_history: session.sessionHistory,
+                                    chat_history: session.chatHistory,
+                                    accumulated_articles: session.accumulatedArticles,
+                                    pinned_messages: session.pinnedMessages,
+                                    pinned_news_cards: session.pinnedNewsCards,
+                                    research_report: session.researchReport,
+                                })
+                            });
+                        } else {
+                            // Create new
+                            const res = await this._auth.authenticatedFetch('/api/sessions', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                    title: session.title,
+                                    conversation_history: session.conversationHistory,
+                                    session_history: session.sessionHistory,
+                                    chat_history: session.chatHistory,
+                                    accumulated_articles: session.accumulatedArticles,
+                                    research_report: session.researchReport,
+                                })
+                            });
+                            const data = await res.json();
+                            if (res.ok && data.success) {
+                                session._serverId = data.session.id;
+                                // Persist _serverId to localStorage so it survives page refresh
+                                this._saveToLocalStorage();
+                                // Re-render sidebar so sharing button appears immediately
+                                document.dispatchEvent(new CustomEvent('session-saved'));
+                            }
+                        }
+                        return;
+                    } catch (e) {
+                        console.warn('[SessionManager] API save failed, falling back to localStorage', e);
+                    }
+                }
+                // Fallback: save all sessions to localStorage
+                this._saveToLocalStorage();
+            }
+
+            async deleteSession(sessionId, serverId) {
+                if (this._isOnline() && serverId) {
+                    try {
+                        await this._auth.authenticatedFetch(`/api/sessions/${serverId}`, {
+                            method: 'DELETE'
+                        });
+                        return;
+                    } catch (e) {
+                        console.warn('[SessionManager] API delete failed, falling back to localStorage', e);
+                    }
+                }
+                this._saveToLocalStorage();
+            }
+
+            async renameSession(sessionId, serverId, newTitle) {
+                if (this._isOnline() && serverId) {
+                    try {
+                        await this._auth.authenticatedFetch(`/api/sessions/${serverId}`, {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ title: newTitle })
+                        });
+                        return;
+                    } catch (e) {
+                        console.warn('[SessionManager] API rename failed, falling back to localStorage', e);
+                    }
+                }
+                this._saveToLocalStorage();
+            }
+
+            // -- Folders --
+
+            async loadFolders() {
+                try {
+                    const stored = localStorage.getItem('taiwanNewsFolders');
+                    return stored ? JSON.parse(stored) : [];
+                } catch (e) {
+                    console.error('[SessionManager] Failed to load folders:', e);
+                    return [];
+                }
+            }
+
+            saveFoldersSync(foldersData) {
+                localStorage.setItem('taiwanNewsFolders', JSON.stringify(foldersData));
+            }
+
+            // -- Migration --
+
+            async migrateFromLocal() {
+                if (!this._isOnline()) return { migrated: false };
+
+                const localKey = 'taiwanNewsSavedSessions';
+                const migratedFlag = 'taiwanNewsSessionsMigrated';
+
+                if (localStorage.getItem(migratedFlag)) return { migrated: false, reason: 'already_migrated' };
+
+                const stored = localStorage.getItem(localKey);
+                if (!stored) return { migrated: false, reason: 'no_local_data' };
+
+                let sessions;
+                try {
+                    sessions = JSON.parse(stored);
+                } catch (e) {
+                    return { migrated: false, reason: 'parse_error' };
+                }
+
+                if (!sessions.length) return { migrated: false, reason: 'empty' };
+
+                try {
+                    const res = await this._auth.authenticatedFetch('/api/sessions/migrate', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ sessions })
+                    });
+                    const data = await res.json();
+                    if (res.ok && data.success) {
+                        localStorage.setItem(migratedFlag, Date.now().toString());
+                        localStorage.removeItem(localKey);
+                        localStorage.removeItem('taiwanNewsFolders');
+                        console.log(`[SessionManager] Migrated ${data.created} sessions to server, cleared localStorage`);
+                        return { migrated: true, created: data.created, errors: data.errors };
+                    }
+                } catch (e) {
+                    console.error('[SessionManager] Migration failed:', e);
+                }
+                return { migrated: false, reason: 'api_error' };
+            }
+
+            // -- Debounced Save --
+
+            scheduleSave(session) {
+                // Debounce: save after 2 seconds of inactivity
+                if (this._saveTimer) clearTimeout(this._saveTimer);
+                this._savePending = true;
+                this._saveTimer = setTimeout(() => {
+                    this._savePending = false;
+                    this.saveSession(session).catch(e =>
+                        console.error('[SessionManager] Debounced save failed:', e)
+                    );
+                }, 2000);
+            }
+
+            flushPendingSave(session) {
+                if (this._savePending && this._saveTimer) {
+                    clearTimeout(this._saveTimer);
+                    this._savePending = false;
+                    this.saveSession(session).catch(e =>
+                        console.error('[SessionManager] Flush save failed:', e)
+                    );
+                }
+            }
+
+            // -- Preferences --
+
+            async loadPreferences() {
+                if (this._isOnline()) {
+                    try {
+                        const res = await this._auth.authenticatedFetch('/api/preferences');
+                        const data = await res.json();
+                        if (res.ok && data.success) return data.preferences;
+                    } catch (e) {
+                        console.warn('[SessionManager] Failed to load preferences from API', e);
+                    }
+                }
+                return {};
+            }
+
+            async setPreference(key, value) {
+                if (this._isOnline()) {
+                    try {
+                        await this._auth.authenticatedFetch(`/api/preferences/${key}`, {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ value })
+                        });
+                    } catch (e) {
+                        console.warn('[SessionManager] Failed to set preference via API', e);
+                    }
+                }
+            }
+
+            // -- Internal helpers --
+
+            _saveToLocalStorage() {
+                // Called as fallback; savedSessions is a global variable
+                try {
+                    localStorage.setItem('taiwanNewsSavedSessions', JSON.stringify(savedSessions));
+                } catch (e) {
+                    console.error('[SessionManager] Failed to save to localStorage:', e);
+                }
+            }
+        }
+
+        const sessionManager = new SessionManager(authManager);
+
+        // Flush pending saves before page unload
+        window.addEventListener('beforeunload', () => {
+            if (currentLoadedSessionId !== null) {
+                const currentSession = savedSessions.find(s => s.id === currentLoadedSessionId);
+                if (currentSession) sessionManager.flushPendingSave(currentSession);
+            }
+        });
+
+        // ==================== AUTH UI LOGIC ====================
+        function updateAuthUI() {
+            const btnShowLogin = document.getElementById('btnShowLogin');
+            const userMenu = document.getElementById('userMenu');
+            const userDisplayName = document.getElementById('userDisplayName');
+            const btnOrgManage = document.getElementById('btnOrgManage');
+
+            if (authManager.isLoggedIn()) {
+                btnShowLogin.style.display = 'none';
+                userMenu.style.display = 'flex';
+                const user = authManager.getCurrentUser();
+                userDisplayName.textContent = user.name || user.email;
+                if (btnOrgManage) {
+                    btnOrgManage.style.display = user.role === 'admin' ? 'inline-block' : 'none';
+                }
+                // Show pending invite toast if any
+                const pendingToken = sessionStorage.getItem('pendingInviteToken');
+                if (pendingToken) showAcceptInviteToast(pendingToken);
+            } else {
+                btnShowLogin.style.display = 'inline-block';
+                userMenu.style.display = 'none';
+                userDisplayName.textContent = '';
+                if (btnOrgManage) btnOrgManage.style.display = 'none';
+            }
+        }
+
+        // ==================== ORG MANAGEMENT ====================
+
+        async function openOrgModal() {
+            const overlay = document.getElementById('orgModalOverlay');
+            overlay.style.display = 'flex';
+            document.getElementById('orgMembersList').innerHTML = '<div class="org-loading">Loading...</div>';
+            document.getElementById('orgInviteFeedback').style.display = 'none';
+            document.getElementById('orgInviteSection').style.display = 'none';
+
+            const user = authManager.getCurrentUser();
+            const org_id = user?.org_id;
+            if (!org_id) {
+                document.getElementById('orgMembersList').innerHTML = '<div class="org-empty">You are not part of any organization.</div>';
+                return;
+            }
+
+            try {
+                // Fetch org name
+                const orgsRes = await authManager.authenticatedFetch('/api/org');
+                const orgsData = await orgsRes.json();
+                const org = orgsData.organizations?.find(o => o.id === org_id);
+                if (org) {
+                    document.getElementById('orgModalTitle').textContent = `${org.name} - Member Management`;
+                }
+
+                // Fetch members
+                const membersRes = await authManager.authenticatedFetch(`/api/org/${org_id}/members`);
+                const membersData = await membersRes.json();
+                if (!membersRes.ok) throw new Error(membersData.error || 'Failed to load members');
+
+                renderOrgMembers(membersData.members, org_id, user);
+
+                if (user.role === 'admin') {
+                    document.getElementById('orgInviteSection').style.display = 'block';
+                }
+            } catch (e) {
+                document.getElementById('orgMembersList').innerHTML = `<div class="org-error">Load failed: ${e.message}</div>`;
+            }
+        }
+
+        function closeOrgModal() {
+            document.getElementById('orgModalOverlay').style.display = 'none';
+        }
+
+        function renderOrgMembers(members, orgId, currentUser) {
+            const list = document.getElementById('orgMembersList');
+            if (!members || members.length === 0) {
+                list.innerHTML = '<div class="org-empty">No members.</div>';
+                return;
+            }
+            const isAdmin = currentUser.role === 'admin';
+            list.innerHTML = members.map(m => {
+                const isSelf = m.id === currentUser.id;
+                const roleLabel = m.role === 'admin' ? 'Admin' : 'Member';
+                const joinDate = m.accepted_at ? new Date(m.accepted_at).toLocaleDateString('zh-TW') : '-';
+                const removeBtn = isAdmin && !isSelf
+                    ? `<button class="btn-remove-member" onclick="removeMember('${orgId}','${m.id}','${(m.name||m.email).replace(/'/g,"\\'")}')">Remove</button>`
+                    : '';
+                const selfTag = isSelf ? ' <span class="org-self-tag">(me)</span>' : '';
+                return `<div class="org-member-row">
+                    <div class="org-member-info">
+                        <span class="org-member-name">${m.name || ''}${selfTag}</span>
+                        <span class="org-member-email">${m.email}</span>
+                    </div>
+                    <div class="org-member-meta">
+                        <span class="org-role-badge org-role-${m.role}">${roleLabel}</span>
+                        <span class="org-join-date">${joinDate}</span>
+                        ${removeBtn}
+                    </div>
+                </div>`;
+            }).join('');
+        }
+
+        async function removeMember(orgId, userId, memberName) {
+            if (!confirm(`Are you sure you want to remove "${memberName}"?`)) return;
+            try {
+                const res = await authManager.authenticatedFetch(`/api/org/${orgId}/members/${userId}`, { method: 'DELETE' });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || 'Remove failed');
+                await openOrgModal();
+            } catch (e) {
+                alert(`Remove failed: ${e.message}`);
+            }
+        }
+
+        function handleInviteToken() {
+            const params = new URLSearchParams(window.location.search);
+            const token = params.get('invite');
+            if (!token) return;
+            // Clean URL
+            const url = new URL(window.location.href);
+            url.searchParams.delete('invite');
+            window.history.replaceState({}, '', url);
+            // Store for post-login if not yet authenticated
+            sessionStorage.setItem('pendingInviteToken', token);
+            if (authManager.isLoggedIn()) {
+                showAcceptInviteToast(token);
+            }
+        }
+
+        function showAcceptInviteToast(token) {
+            const toast = document.getElementById('acceptInviteToast');
+            toast.style.display = 'flex';
+            document.getElementById('btnAcceptInvite').onclick = () => acceptInvite(token);
+            document.getElementById('btnDeclineInvite').onclick = () => {
+                sessionStorage.removeItem('pendingInviteToken');
+                toast.style.display = 'none';
+            };
+        }
+
+        async function acceptInvite(token) {
+            try {
+                const res = await authManager.authenticatedFetch('/api/org/accept-invite', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ token })
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || 'Accept failed');
+                sessionStorage.removeItem('pendingInviteToken');
+                document.getElementById('acceptInviteToast').style.display = 'none';
+                alert('Successfully joined organization! Please refresh the page.');
+                window.location.reload();
+            } catch (e) {
+                alert(`Accept invite failed: ${e.message}`);
+            }
+        }
+
+        function showAuthModal(tab = 'login') {
+            const overlay = document.getElementById('authModalOverlay');
+            overlay.style.display = 'flex';
+            switchAuthTab(tab);
+        }
+
+        function hideAuthModal() {
+            document.getElementById('authModalOverlay').style.display = 'none';
+            // Clear errors/success
+            document.querySelectorAll('.auth-error, .auth-success').forEach(el => el.style.display = 'none');
+        }
+
+        function switchAuthTab(tab) {
+            document.getElementById('loginForm').style.display = tab === 'login' ? 'block' : 'none';
+            document.getElementById('registerForm').style.display = tab === 'register' ? 'block' : 'none';
+            document.getElementById('forgotPasswordForm').style.display = tab === 'forgot' ? 'block' : 'none';
+
+            document.getElementById('tabLogin').classList.toggle('active', tab === 'login');
+            document.getElementById('tabRegister').classList.toggle('active', tab === 'register');
+
+            // Clear messages
+            document.querySelectorAll('.auth-error, .auth-success').forEach(el => el.style.display = 'none');
+        }
+
+        // Helper: get current user id (falls back to TEMP_USER_ID for unauthenticated users)
+        function getCurrentUserId() {
+            if (authManager.isLoggedIn()) {
+                return authManager.getCurrentUser().id;
+            }
+            return TEMP_USER_ID;
+        }
+
+        // Auth event listeners (deferred to after DOM ready)
+        document.addEventListener('DOMContentLoaded', () => {
+            updateAuthUI();
+
+            // If already logged in on page load, sync sessions from server
+            if (authManager.isLoggedIn()) {
+                sessionManager.loadSessions().then(sessions => {
+                    if (sessions && sessions.length) {
+                        savedSessions = sessions;
+                        renderLeftSidebarSessions();
+                    }
+                }).catch(e => console.warn('[SessionManager] Page-load session sync failed:', e));
+            }
+
+            document.getElementById('btnShowLogin').addEventListener('click', () => showAuthModal('login'));
+            document.getElementById('btnCloseAuthModal').addEventListener('click', hideAuthModal);
+            document.getElementById('authModalOverlay').addEventListener('click', (e) => {
+                if (e.target === e.currentTarget) hideAuthModal();
+            });
+            document.getElementById('tabLogin').addEventListener('click', () => switchAuthTab('login'));
+            document.getElementById('tabRegister').addEventListener('click', () => switchAuthTab('register'));
+            document.getElementById('btnForgotPassword').addEventListener('click', (e) => { e.preventDefault(); switchAuthTab('forgot'); });
+            document.getElementById('btnBackToLogin').addEventListener('click', (e) => { e.preventDefault(); switchAuthTab('login'); });
+
+            document.getElementById('btnLogout').addEventListener('click', async () => {
+                await authManager.logout();
+                updateAuthUI();
+            });
+
+            // Org management button
+            document.getElementById('btnOrgManage').addEventListener('click', openOrgModal);
+            document.getElementById('btnCloseOrgModal').addEventListener('click', closeOrgModal);
+            document.getElementById('orgModalOverlay').addEventListener('click', (e) => {
+                if (e.target === e.currentTarget) closeOrgModal();
+            });
+
+            // Invite form
+            document.getElementById('orgInviteForm').addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const orgId = authManager.getCurrentUser()?.org_id;
+                const email = document.getElementById('inviteEmail').value.trim();
+                const role = document.getElementById('inviteRole').value;
+                const feedback = document.getElementById('orgInviteFeedback');
+                feedback.className = 'org-invite-feedback';
+                feedback.style.display = 'none';
+                if (!email || !orgId) return;
+                try {
+                    const res = await authManager.authenticatedFetch(`/api/org/${orgId}/invite`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ email, role })
+                    });
+                    const data = await res.json();
+                    if (!res.ok) throw new Error(data.error || 'Invite failed');
+                    feedback.textContent = `Invitation sent to ${email}`;
+                    feedback.className = 'org-invite-feedback success';
+                    feedback.style.display = 'block';
+                    document.getElementById('inviteEmail').value = '';
+                } catch (err) {
+                    feedback.textContent = err.message;
+                    feedback.className = 'org-invite-feedback error';
+                    feedback.style.display = 'block';
+                }
+            });
+
+            // Handle invite token in URL on page load
+            handleInviteToken();
+
+            // Login form
+            document.getElementById('loginForm').addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const errEl = document.getElementById('loginError');
+                errEl.style.display = 'none';
+                const email = document.getElementById('loginEmail').value;
+                const password = document.getElementById('loginPassword').value;
+                try {
+                    await authManager.login(email, password);
+                    hideAuthModal();
+                    updateAuthUI();
+                    // After login: check pending invite token
+                    const pendingToken = sessionStorage.getItem('pendingInviteToken');
+                    if (pendingToken) showAcceptInviteToast(pendingToken);
+                    // After login: migrate localStorage sessions to server, then refresh
+                    sessionManager.migrateFromLocal().then(result => {
+                        if (result.migrated) {
+                            console.log(`[SessionManager] Migrated ${result.created} sessions from localStorage`);
+                        }
+                        // Refresh sessions from API
+                        return sessionManager.loadSessions();
+                    }).then(sessions => {
+                        if (sessions && sessions.length) {
+                            savedSessions = sessions;
+                            renderLeftSidebarSessions();
+                            console.log(`[SessionManager] Loaded ${sessions.length} sessions from server`);
+                        }
+                    }).catch(e => console.warn('[SessionManager] Post-login sync failed:', e));
+                } catch (err) {
+                    errEl.textContent = err.message;
+                    errEl.style.display = 'block';
+                }
+            });
+
+            // Register form
+            document.getElementById('registerForm').addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const errEl = document.getElementById('registerError');
+                const successEl = document.getElementById('registerSuccess');
+                errEl.style.display = 'none';
+                successEl.style.display = 'none';
+                const name = document.getElementById('registerName').value;
+                const email = document.getElementById('registerEmail').value;
+                const password = document.getElementById('registerPassword').value;
+                try {
+                    await authManager.register(email, password, name);
+                    successEl.textContent = 'Registration successful! Please check your email to verify.';
+                    successEl.style.display = 'block';
+                } catch (err) {
+                    errEl.textContent = err.message;
+                    errEl.style.display = 'block';
+                }
+            });
+
+            // Forgot password form
+            document.getElementById('forgotPasswordForm').addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const errEl = document.getElementById('forgotError');
+                const successEl = document.getElementById('forgotSuccess');
+                errEl.style.display = 'none';
+                successEl.style.display = 'none';
+                const email = document.getElementById('forgotEmail').value;
+                try {
+                    await authManager.forgotPassword(email);
+                    successEl.textContent = 'If that email exists, a reset link has been sent.';
+                    successEl.style.display = 'block';
+                } catch (err) {
+                    errEl.textContent = err.message;
+                    errEl.style.display = 'block';
+                }
+            });
+        });
+
         const searchInput = document.getElementById('searchInput');
         const btnSearch = document.getElementById('btnSearch');
         const initialState = document.getElementById('initialState');
@@ -28,17 +774,17 @@
         // Store complete session data for each query (query, answer, articles)
         let sessionHistory = [];
 
-        // Store all saved sessions (when user clicks "新對話")
-        // Load from localStorage on startup
+        // Store all saved sessions (when user clicks "new conversation")
+        // Load from localStorage on startup, then refresh from API if logged in
         let savedSessions = [];
         try {
             const stored = localStorage.getItem('taiwanNewsSavedSessions');
             if (stored) {
                 savedSessions = JSON.parse(stored);
-                console.log(`Loaded ${savedSessions.length} saved sessions from localStorage`);
+                console.log(`[SessionManager] Loaded ${savedSessions.length} sessions from localStorage (initial)`);
             }
         } catch (e) {
-            console.error('Failed to load saved sessions from localStorage:', e);
+            console.error('[SessionManager] Failed to load sessions from localStorage:', e);
         }
 
         // Track the current loaded session ID to prevent duplicate saves
@@ -47,7 +793,7 @@
         // Mode tracking: 'search', 'deep_research', or 'chat'
         let currentMode = 'search';
 
-        // User Knowledge Base - temporary user_id (will be replaced with OAuth)
+        // User Knowledge Base - temporary user_id (fallback when not logged in)
         const TEMP_USER_ID = 'demo_user_001';
         let userFiles = [];
         let includePrivateSources = true; // Default to true
@@ -1955,8 +2701,8 @@
                 // Add private sources parameters if enabled
                 if (includePrivateSources) {
                     deepResearchUrl.searchParams.append('include_private_sources', 'true');
-                    deepResearchUrl.searchParams.append('user_id', TEMP_USER_ID);
-                    console.log('[Deep Research] Private sources enabled for user:', TEMP_USER_ID);
+                    deepResearchUrl.searchParams.append('user_id', getCurrentUserId());
+                    console.log('[Deep Research] Private sources enabled for user:', getCurrentUserId());
                 }
 
                 console.log('Deep Research URL:', deepResearchUrl.toString());
@@ -3352,7 +4098,7 @@
                 // Add private sources parameters if enabled
                 if (includePrivateSources) {
                     requestBody.include_private_sources = true;
-                    requestBody.user_id = TEMP_USER_ID;
+                    requestBody.user_id = getCurrentUserId();
                 }
 
                 console.log('[Free Conversation] Using POST request with body size:', JSON.stringify(requestBody).length, 'bytes');
@@ -5404,7 +6150,7 @@
                 // Create form data
                 const formData = new FormData();
                 formData.append('file', file);
-                formData.append('user_id', TEMP_USER_ID);
+                formData.append('user_id', getCurrentUserId());
 
                 // Upload file
                 progressText.textContent = '正在上傳文件...';
@@ -5425,7 +6171,7 @@
 
                 // Connect to SSE for progress updates
                 progressText.textContent = '正在處理文件...';
-                const eventSource = new EventSource(`/api/user/upload/${sourceId}/progress?user_id=${TEMP_USER_ID}`);
+                const eventSource = new EventSource(`/api/user/upload/${sourceId}/progress?user_id=${getCurrentUserId()}`);
 
                 eventSource.onmessage = (event) => {
                     const data = JSON.parse(event.data);
@@ -5540,7 +6286,7 @@
         async function loadUserFiles() {
             loadFileFolders();
             try {
-                const response = await fetch(`/api/user/sources?user_id=${TEMP_USER_ID}`);
+                const response = await fetch(`/api/user/sources?user_id=${getCurrentUserId()}`);
                 if (!response.ok) {
                     throw new Error('Failed to load files');
                 }
@@ -5957,7 +6703,7 @@
             }
 
             try {
-                const response = await fetch(`/api/user/sources/${sourceId}?user_id=${TEMP_USER_ID}`, {
+                const response = await fetch(`/api/user/sources/${sourceId}?user_id=${getCurrentUserId()}`, {
                     method: 'DELETE'
                 });
 

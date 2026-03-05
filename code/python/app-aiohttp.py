@@ -13,13 +13,16 @@ import os
 import io
 import sys
 from dotenv import load_dotenv
+
+# Load .env BEFORE any application imports so module-level os.environ.get() calls
+# (e.g. JWT_SECRET in auth_service.py) pick up the values.
+load_dotenv()
+
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
 
 
 async def main():
-    # Load environment variables from .env file
-    load_dotenv()
     
     # Suppress verbose HTTP client logging from OpenAI SDK
     import logging
