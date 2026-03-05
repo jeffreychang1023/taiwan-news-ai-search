@@ -75,7 +75,11 @@
         // Session ID for analytics and A/B testing (persists until browser tab closes)
         let currentSessionId = sessionStorage.getItem('nlweb_session_id');
         if (!currentSessionId) {
-            currentSessionId = 'sess_' + crypto.randomUUID().replace(/-/g, '').substring(0, 12);
+            const uuid = (typeof crypto.randomUUID === 'function')
+                ? crypto.randomUUID()
+                : ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, c =>
+                    (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16));
+            currentSessionId = 'sess_' + uuid.replace(/-/g, '').substring(0, 12);
             sessionStorage.setItem('nlweb_session_id', currentSessionId);
             console.log('[Session] Generated new session_id:', currentSessionId);
         } else {
