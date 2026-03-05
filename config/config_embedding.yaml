@@ -1,4 +1,4 @@
-preferred_provider: openai
+preferred_provider: openrouter
 providers:
   azure_openai:
     api_key_env: AZURE_OPENAI_API_KEY
@@ -39,3 +39,10 @@ providers:
   huggingface:
     api_key_env: HF_TOKEN
     model: BAAI/bge-m3
+
+  qwen3:
+    model: Qwen/Qwen3-Embedding-4B
+
+  openrouter:
+    api_key_env: OPENROUTER_API_KEY
+    model: qwen/qwen3-embedding-4b

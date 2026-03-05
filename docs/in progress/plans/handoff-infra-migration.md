@@ -255,7 +255,8 @@ Perplexity 開源的 embedding 模型，底層就是 Qwen3 再 fine-tune。
 
 ### Phase 2 再處理
 6. **遷移腳本**：從 Qdrant + SQLite 匯出 → 寫入 PostgreSQL
-7. **XGBoost re-training**：BM25 feature 來源改變後需要重新訓練嗎？
+7. ~~**XGBoost re-training**~~：XGBoost 從未訓練過（shadow mode），不需要重訓
+8. **Analytics schema 調整**：`queries` 表加 `system_version` 欄位（標記 v1/v2），`ranking_scores.bm25_score` 改存 tsvector score，`retrieved_documents.retrieval_method` 記 `'hybrid'`
 
 ### Phase 3 再處理
 8. **Hetzner VPS 開機與設定**：OS 選擇、PostgreSQL 版本、security hardening

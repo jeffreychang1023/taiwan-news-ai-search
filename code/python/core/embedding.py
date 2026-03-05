@@ -117,9 +117,26 @@ async def get_embedding(
             logger.debug(f"HuggingFace embeddings received, dimension: {len(result)}")
             return result
 
-        # Removed providers: azure_openai, ollama, snowflake, elasticsearch
-        # (unified on OpenAI / Gemini embeddings only)
-        
+        if provider == "qwen3":
+            logger.debug("Getting Qwen3 embeddings")
+            from embedding_providers.qwen3_embedding import get_qwen3_embedding
+            result = await asyncio.wait_for(
+                get_qwen3_embedding(text, model=model_id),
+                timeout=timeout
+            )
+            logger.debug(f"Qwen3 embeddings received, dimension: {len(result)}")
+            return result
+
+        if provider == "openrouter":
+            logger.debug("Getting OpenRouter embeddings")
+            from embedding_providers.openrouter_embedding import get_openrouter_embedding
+            result = await asyncio.wait_for(
+                get_openrouter_embedding(text, model=model_id),
+                timeout=timeout
+            )
+            logger.debug(f"OpenRouter embeddings received, dimension: {len(result)}")
+            return result
+
         error_msg = f"No embedding implementation for provider '{provider}'"
         logger.error(error_msg)
         raise ValueError(error_msg)
@@ -221,6 +238,26 @@ async def batch_get_embeddings(
                 timeout=timeout
             )
             logger.debug(f"HuggingFace batch embeddings received, count: {len(result)}")
+            return result
+
+        if provider == "qwen3":
+            logger.debug("Getting Qwen3 batch embeddings")
+            from embedding_providers.qwen3_embedding import get_qwen3_batch_embeddings
+            result = await asyncio.wait_for(
+                get_qwen3_batch_embeddings(texts, model=model_id),
+                timeout=timeout
+            )
+            logger.debug(f"Qwen3 batch embeddings received, count: {len(result)}")
+            return result
+
+        if provider == "openrouter":
+            logger.debug("Getting OpenRouter batch embeddings")
+            from embedding_providers.openrouter_embedding import get_openrouter_batch_embeddings
+            result = await asyncio.wait_for(
+                get_openrouter_batch_embeddings(texts, model=model_id),
+                timeout=timeout
+            )
+            logger.debug(f"OpenRouter batch embeddings received, count: {len(result)}")
             return result
 
         # Removed batch providers: ollama, elasticsearch (unified on OpenAI / Gemini)

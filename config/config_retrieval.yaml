@@ -1,4 +1,4 @@
-write_endpoint: qdrant_url
+write_endpoint: postgres
 
 # BM25 keyword scoring parameters
 bm25_params:
@@ -136,13 +136,13 @@ endpoints:
     use_knn: false
 
   postgres:
-    enabled: false
+    enabled: true
     # Database connection details (i.e. "postgresql://<HOST>:<PORT>/<DATABASE>?user=<USERNAME>&sslmode=require")
     api_endpoint_env: POSTGRES_CONNECTION_STRING
-    # Password for authentication 
+    # Password for authentication
     api_key_env: POSTGRES_PASSWORD
     # Index name to search in
-    index_name: documents
+    index_name: articles
     # Specify the database type
     db_type: postgres
 
