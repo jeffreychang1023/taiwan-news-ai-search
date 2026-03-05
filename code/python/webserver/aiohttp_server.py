@@ -176,6 +176,14 @@ class AioHTTPServer:
 
         if app['client_session']:
             await app['client_session'].close()
+
+        # Close auth DB connection pool
+        try:
+            from auth.auth_db import AuthDB
+            auth_db = AuthDB.get_instance()
+            await auth_db.close()
+        except Exception:
+            pass
     
     async def _on_shutdown(self, app: web.Application):
         """Graceful shutdown"""

@@ -3,7 +3,8 @@ Database abstraction layer for authentication and session management.
 
 Supports both SQLite (local development) and PostgreSQL (production).
 Uses async connections for PostgreSQL to avoid blocking the event loop.
-Shares ANALYTICS_DATABASE_URL with analytics_db.py.
+Reads DATABASE_URL (or ANALYTICS_DATABASE_URL fallback).
+Uses AsyncConnectionPool for PostgreSQL to avoid per-query connection overhead.
 """
 
 import os
@@ -20,6 +21,7 @@ logger = get_configured_logger("auth_db")
 try:
     import psycopg
     from psycopg.rows import dict_row
+    from psycopg_pool import AsyncConnectionPool
     POSTGRES_AVAILABLE = True
 except ImportError:
     POSTGRES_AVAILABLE = False
@@ -55,10 +57,12 @@ class AuthDB:
         if db_path is None:
             db_path = get_project_root_db_path()
 
-        self.database_url = os.environ.get('ANALYTICS_DATABASE_URL')
+        self.database_url = os.environ.get('DATABASE_URL') or os.environ.get('ANALYTICS_DATABASE_URL')
         self.db_path = Path(db_path)
         self.db_type = 'postgres' if self.database_url and POSTGRES_AVAILABLE else 'sqlite'
         self._initialized = False
+        self._pool = None
+        self._pool_lock = asyncio.Lock()
 
         logger.info(f"Auth database type: {self.db_type}")
 
@@ -109,6 +113,30 @@ class AuthDB:
         else:
             return await asyncio.to_thread(self._sqlite_execute, query, params)
 
+    # ── PostgreSQL connection pool ───────────────────────────────
+
+    async def _get_pool(self) -> 'AsyncConnectionPool':
+        """Get or create the async connection pool (lazy init, thread-safe)."""
+        if self._pool is None:
+            async with self._pool_lock:
+                if self._pool is None:
+                    self._pool = AsyncConnectionPool(
+                        conninfo=self.database_url,
+                        min_size=1,
+                        max_size=5,
+                        open=False,
+                    )
+                    await self._pool.open()
+                    logger.info("Auth DB connection pool initialized")
+        return self._pool
+
+    async def close(self):
+        """Close the connection pool. Call on shutdown."""
+        if self._pool:
+            await self._pool.close()
+            self._pool = None
+            logger.info("Auth DB connection pool closed")
+
     # ── PostgreSQL async methods ──────────────────────────────────
 
     def _adapt_query_pg(self, query: str) -> str:
@@ -117,29 +145,27 @@ class AuthDB:
 
     async def _pg_fetchone(self, query: str, params: Optional[Tuple] = None) -> Optional[Dict]:
         query = self._adapt_query_pg(query)
-        async with await psycopg.AsyncConnection.connect(
-            self.database_url, row_factory=dict_row
-        ) as conn:
-            async with conn.cursor() as cur:
+        pool = await self._get_pool()
+        async with pool.connection() as conn:
+            async with conn.cursor(row_factory=dict_row) as cur:
                 await cur.execute(query, params)
                 row = await cur.fetchone()
                 return dict(row) if row else None
 
     async def _pg_fetchall(self, query: str, params: Optional[Tuple] = None) -> List[Dict]:
         query = self._adapt_query_pg(query)
-        async with await psycopg.AsyncConnection.connect(
-            self.database_url, row_factory=dict_row
-        ) as conn:
-            async with conn.cursor() as cur:
+        pool = await self._get_pool()
+        async with pool.connection() as conn:
+            async with conn.cursor(row_factory=dict_row) as cur:
                 await cur.execute(query, params)
                 rows = await cur.fetchall()
                 return [dict(r) for r in rows]
 
     async def _pg_execute(self, query: str, params: Optional[Tuple] = None):
         query = self._adapt_query_pg(query)
-        async with await psycopg.AsyncConnection.connect(
-            self.database_url, autocommit=True
-        ) as conn:
+        pool = await self._get_pool()
+        async with pool.connection() as conn:
+            await conn.set_autocommit(True)
             async with conn.cursor() as cur:
                 await cur.execute(query, params)
 

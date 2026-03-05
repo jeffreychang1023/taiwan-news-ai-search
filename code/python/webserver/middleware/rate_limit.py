@@ -23,9 +23,9 @@ logger = logging.getLogger(__name__)
 # ── Rate limit rules ─────────────────────────────────────────────
 # (endpoint_path, method) → (max_requests, window_seconds)
 RATE_LIMIT_RULES: dict = {
-    ('/api/auth/register', 'POST'):       (50, 3600),   # 50/hr
-    ('/api/auth/forgot-password', 'POST'): (50, 3600),   # 50/hr
-    ('/api/auth/login', 'POST'):          (60,  60),     # 60/min
+    ('/api/auth/register', 'POST'):       (5, 3600),    # 5/hr
+    ('/api/auth/forgot-password', 'POST'): (3, 3600),    # 3/hr
+    ('/api/auth/login', 'POST'):          (10,  60),     # 10/min
 }
 
 # Sliding-window store: key → deque of timestamps
