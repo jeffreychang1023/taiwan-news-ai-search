@@ -28,7 +28,6 @@ PUBLIC_ENDPOINTS: Set[str] = {
     '/api/auth/forgot-password',
     '/api/auth/reset-password',
     '/api/auth/refresh',
-    '/api/org/accept-invite',
 }
 
 

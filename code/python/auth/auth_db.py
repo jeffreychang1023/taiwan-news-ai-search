@@ -140,7 +140,12 @@ class AuthDB:
     # ── PostgreSQL async methods ──────────────────────────────────
 
     def _adapt_query_pg(self, query: str) -> str:
-        """Convert ? placeholders to %s for psycopg."""
+        """Convert ? placeholders to %s for psycopg.
+
+        NOTE: This naive replace will break if queries ever use PostgreSQL's
+        JSONB ? operator. Current auth queries don't use JSONB, so this is safe.
+        If JSONB is added later, switch to a proper placeholder parser.
+        """
         return query.replace('?', '%s')
 
     async def _pg_fetchone(self, query: str, params: Optional[Tuple] = None) -> Optional[Dict]:
@@ -165,9 +170,9 @@ class AuthDB:
         query = self._adapt_query_pg(query)
         pool = await self._get_pool()
         async with pool.connection() as conn:
-            await conn.set_autocommit(True)
             async with conn.cursor() as cur:
                 await cur.execute(query, params)
+            await conn.commit()
 
     # ── SQLite sync methods (wrapped in to_thread) ────────────────
 

@@ -174,12 +174,14 @@ class SessionService:
                              message: Dict) -> bool:
         """Append a message to conversation_history using JSONB append mode."""
         if self.db.db_type == 'postgres':
+            new_json = json.dumps([message])
+            self._check_jsonb_size(session_id, 'conversation_history', new_json)
             await self.db.execute(
                 "UPDATE search_sessions "
                 "SET conversation_history = conversation_history || %s::jsonb, "
                 "    updated_at = %s "
                 "WHERE id = %s AND user_id = %s AND org_id = %s AND deleted_at IS NULL",
-                (json.dumps([message]), time.time(), session_id, user_id, org_id)
+                (new_json, time.time(), session_id, user_id, org_id)
             )
         else:
             # SQLite: read-modify-write
@@ -204,12 +206,14 @@ class SessionService:
                               articles: List[Dict]) -> bool:
         """Append articles to accumulated_articles."""
         if self.db.db_type == 'postgres':
+            new_json = json.dumps(articles)
+            self._check_jsonb_size(session_id, 'accumulated_articles', new_json)
             await self.db.execute(
                 "UPDATE search_sessions "
                 "SET accumulated_articles = accumulated_articles || %s::jsonb, "
                 "    updated_at = %s "
                 "WHERE id = %s AND user_id = %s AND org_id = %s AND deleted_at IS NULL",
-                (json.dumps(articles), time.time(), session_id, user_id, org_id)
+                (new_json, time.time(), session_id, user_id, org_id)
             )
         else:
             row = await self.db.fetchone(
@@ -341,17 +345,24 @@ class SessionService:
             citations.append(citation)
         return citations
 
+    @staticmethod
+    def _csv_safe(value: str) -> str:
+        """Sanitize a value for CSV to prevent formula injection."""
+        if value and value[0] in ('=', '+', '-', '@', '\t', '\r'):
+            value = "'" + value
+        return value.replace('"', "'")
+
     def _export_csv(self, session: Dict) -> str:
         """Export articles as CSV string."""
         lines = ["url,title,source,published_date,status,importance"]
         for article in session.get('accumulated_articles', []):
             a = self._normalize_article(article)
             row = ','.join([
-                f'"{a["url"]}"',
-                f'"{a["title"].replace(chr(34), chr(39))}"',
-                f'"{a["source"]}"',
-                f'"{a["published_date"]}"',
-                f'"{a["status"]}"',
+                f'"{self._csv_safe(a["url"])}"',
+                f'"{self._csv_safe(a["title"])}"',
+                f'"{self._csv_safe(a["source"])}"',
+                f'"{self._csv_safe(a["published_date"])}"',
+                f'"{self._csv_safe(a["status"])}"',
                 str(a["importance"]),
             ])
             lines.append(row)

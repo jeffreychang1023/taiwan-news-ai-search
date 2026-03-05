@@ -6,6 +6,7 @@ Production: sends via Resend API when RESEND_API_KEY is set.
 """
 
 import os
+from html import escape as _esc
 from misc.logger.logging_config_helper import get_configured_logger
 
 logger = get_configured_logger("email_service")
@@ -40,7 +41,7 @@ def send_verification_email(email: str, token: str, name: str):
         _send_via_resend(
             to=email,
             subject="Verify your email",
-            html=f"<p>Hi {name},</p>"
+            html=f"<p>Hi {_esc(name)},</p>"
                  f"<p>Please verify your email by clicking the link below:</p>"
                  f'<p><a href="{url}">{url}</a></p>'
         )
@@ -57,7 +58,7 @@ def send_password_reset_email(email: str, token: str, name: str):
         _send_via_resend(
             to=email,
             subject="Reset your password",
-            html=f"<p>Hi {name},</p>"
+            html=f"<p>Hi {_esc(name)},</p>"
                  f"<p>Click the link below to reset your password (valid for 1 hour):</p>"
                  f'<p><a href="{url}">{url}</a></p>'
         )
@@ -75,7 +76,7 @@ def send_invitation_email(email: str, org_name: str, inviter_name: str, token: s
             to=email,
             subject=f"You're invited to join {org_name}",
             html=f"<p>Hi,</p>"
-                 f"<p>{inviter_name} has invited you to join <strong>{org_name}</strong>.</p>"
+                 f"<p>{_esc(inviter_name)} has invited you to join <strong>{_esc(org_name)}</strong>.</p>"
                  f'<p><a href="{url}">Accept Invitation</a></p>'
         )
     else:

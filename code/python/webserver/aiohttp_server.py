@@ -159,6 +159,11 @@ class AioHTTPServer:
         # Initialize chat system components
         await self._initialize_chat_system(app)
 
+        # Warn if JWT_SECRET is weak
+        jwt_secret = os.environ.get('JWT_SECRET', '')
+        if jwt_secret and len(jwt_secret) < 32:
+            logger.warning("JWT_SECRET is shorter than 32 characters — consider using a stronger secret")
+
         logger.info(f"Server starting on {self.config['server']['host']}:{self.config['port']}")
         logger.info(f"Mode: {self.config['mode']}")
         logger.info(f"CORS enabled: {self.config['server']['enable_cors']}")

@@ -77,15 +77,15 @@ class AuthService:
     async def verify_email(self, token: str) -> Dict[str, Any]:
         """Verify user email with token. Returns user dict or raises ValueError."""
         user = await self.db.fetchone(
-            "SELECT id, email, name FROM users WHERE email_verification_token = ? AND is_active = 1",
-            (token,)
+            "SELECT id, email, name FROM users WHERE email_verification_token = ? AND is_active = ?",
+            (token, True)
         )
         if not user:
             raise ValueError("Invalid or expired verification token")
 
         await self.db.execute(
-            "UPDATE users SET email_verified = 1, email_verification_token = NULL WHERE id = ?",
-            (user['id'],)
+            "UPDATE users SET email_verified = ?, email_verification_token = NULL WHERE id = ?",
+            (True, user['id'])
         )
 
         logger.info(f"Email verified: {user['email']}")
@@ -108,16 +108,10 @@ class AuthService:
             await self._record_login_attempt(email, ip, success=False)
             raise ValueError("Invalid email or password")
 
-        is_active = user['is_active']
-        if self.db.db_type == 'sqlite':
-            is_active = bool(is_active)
-        if not is_active:
+        if not user['is_active']:
             raise ValueError("Account is deactivated")
 
-        email_verified = user['email_verified']
-        if self.db.db_type == 'sqlite':
-            email_verified = bool(email_verified)
-        if not email_verified:
+        if not user['email_verified']:
             raise ValueError("Email not verified. Please check your email for verification link.")
 
         await self._record_login_attempt(email, ip, success=True)
@@ -213,7 +207,7 @@ class AuthService:
         email = email.strip().lower()
 
         user = await self.db.fetchone(
-            "SELECT id, name FROM users WHERE email = ? AND is_active = 1", (email,)
+            "SELECT id, name FROM users WHERE email = ? AND is_active = ?", (email, True)
         )
         if not user:
             return True  # Don't reveal if email exists
@@ -237,8 +231,8 @@ class AuthService:
         self._validate_password(new_password)
 
         user = await self.db.fetchone(
-            "SELECT id FROM users WHERE password_reset_token = ? AND password_reset_expires > ? AND is_active = 1",
-            (token, time.time())
+            "SELECT id FROM users WHERE password_reset_token = ? AND password_reset_expires > ? AND is_active = ?",
+            (token, time.time(), True)
         )
         if not user:
             raise ValueError("Invalid or expired reset token")
@@ -369,8 +363,8 @@ class AuthService:
         return await self.db.fetchall(
             "SELECT o.id, o.name, o.slug, o.plan, m.role "
             "FROM org_memberships m JOIN organizations o ON m.org_id = o.id "
-            "WHERE m.user_id = ? AND m.status = 'active' AND o.is_active = 1",
-            (user_id,)
+            "WHERE m.user_id = ? AND m.status = 'active' AND o.is_active = ?",
+            (user_id, True)
         )
 
     async def list_org_members(self, org_id: str, requester_user_id: str) -> list:
@@ -414,11 +408,9 @@ class AuthService:
     async def get_user_by_id(self, user_id: str) -> Optional[Dict[str, Any]]:
         """Get user by ID."""
         user = await self.db.fetchone(
-            "SELECT id, email, name, email_verified, last_login, created_at FROM users WHERE id = ? AND is_active = 1",
-            (user_id,)
+            "SELECT id, email, name, email_verified, last_login, created_at FROM users WHERE id = ? AND is_active = ?",
+            (user_id, True)
         )
-        if user and self.db.db_type == 'sqlite':
-            user['email_verified'] = bool(user['email_verified'])
         return user
 
     # ── Private Helpers ───────────────────────────────────────────
@@ -471,8 +463,8 @@ class AuthService:
         cutoff = time.time() - BRUTE_FORCE_WINDOW_SECONDS
         row = await self.db.fetchone(
             "SELECT COUNT(*) as cnt FROM login_attempts "
-            "WHERE email = ? AND success = 0 AND attempted_at > ?",
-            (email, cutoff)
+            "WHERE email = ? AND success = ? AND attempted_at > ?",
+            (email, False, cutoff)
         )
         if row and row['cnt'] >= BRUTE_FORCE_MAX_ATTEMPTS:
             # Send lockout notification on the exact threshold hit (cnt == threshold)

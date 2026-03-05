@@ -35,8 +35,11 @@ async def audit_logs_handler(request: web.Request) -> web.Response:
     user_id = request.query.get('user_id')
     since = request.query.get('since')
     until = request.query.get('until')
-    limit = int(request.query.get('limit', '100'))
-    offset = int(request.query.get('offset', '0'))
+    try:
+        limit = int(request.query.get('limit', '100'))
+        offset = int(request.query.get('offset', '0'))
+    except ValueError:
+        return web.json_response({'error': 'limit/offset must be integers'}, status=400)
 
     # Clamp limit to prevent abuse
     limit = min(limit, 500)
@@ -72,7 +75,10 @@ async def research_trail_handler(request: web.Request) -> web.Response:
 
     since = request.query.get('since')
     until = request.query.get('until')
-    limit = int(request.query.get('limit', '200'))
+    try:
+        limit = int(request.query.get('limit', '200'))
+    except ValueError:
+        return web.json_response({'error': 'limit must be an integer'}, status=400)
     limit = min(limit, 500)
 
     try:

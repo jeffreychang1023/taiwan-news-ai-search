@@ -337,6 +337,35 @@ Infra migration 將 Qdrant 替換為 PostgreSQL pgvector。以下 login 修改**
 | 4 | ~~org_id 查詢 filter 缺失~~ | ~~Medium~~ | list/delete 已加 org_id filter（2026-03-05） |
 | 5 | ~~query_logger org_id~~ | ~~Medium~~ | queries schema + log_query_start 已加 org_id（2026-03-05） |
 
+### Completed (Code Review 2026-03-05)
+
+| # | 修復項目 | 類型 |
+|---|----------|------|
+| M1 | rate_limit_middleware 未註冊 → 加入 middleware __init__ | MUST FIX |
+| M2 | /api/org/accept-invite 不應為 public endpoint → 移除 | MUST FIX |
+| M3 | email HTML template injection → html.escape | MUST FIX |
+| M4 | _pg_execute autocommit=True 破壞 transaction → 改 conn.commit() | MUST FIX |
+| S5 | Boolean `= 1` 在 PG 不相容 → 全面參數化 `= ?` + True/False | SHOULD FIX |
+| S6 | JWT_SECRET 長度檢查 → startup warning if < 32 chars | SHOULD FIX |
+| S7 | _adapt_query_pg JSONB `?` 衝突 → 加 TODO 註解 | SHOULD FIX |
+| S8 | CSV formula injection → _csv_safe() sanitizer | SHOULD FIX |
+| S9 | parseInt 無 try/except → sessions.py + audit.py 加 400 回傳 | SHOULD FIX |
+| S10 | PG JSONB append 無 size check → append_message/articles 加檢查 | SHOULD FIX |
+
+### Deferred (Code Review 2026-03-05)
+
+> 以下為 code review 發現但目前不急、或需要較大重構才能解決的項目。
+
+| # | 問題 | 理由 | 優先度 |
+|---|------|------|--------|
+| D1 | 雙 DB pool（auth_db + analytics_db）連線浪費 | 需統一 DB layer 重構，Infra Migration 時一起處理 | Low |
+| D2 | 雙 schema 管理（Alembic + initialize() 手動 DDL） | 目前運作正常，統一需要設計遷移策略 | Low |
+| D3 | localStorage 存 JWT token（XSS 風險） | 需前端重構為 httpOnly cookie，影響整個前端 auth flow | Medium |
+| D4 | org_id 寫入 JWT，revoke 有延遲 | JWT 天生限制，需 token blacklist 機制，複雜度高 | Low |
+| D5 | login_attempts 表無 cleanup 機制 | 資料增長慢，可在 Infra Migration 時加 pg_cron | Low |
+| D6 | _windows dict 記憶體洩漏（rate_limit） | 需改用 TTL cache 或 Redis，Production 再處理 | Low |
+| D7 | email_service 每次 import time 讀 env var | 功能正確，hot reload 情境才有問題 | Very Low |
+
 ### Will Be Invalidated by Infra Migration
 
 | # | 問題 | 說明 |

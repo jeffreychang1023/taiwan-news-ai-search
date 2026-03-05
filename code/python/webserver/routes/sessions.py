@@ -39,8 +39,11 @@ async def list_sessions_handler(request: web.Request) -> web.Response:
     if not org_id:
         return web.json_response({'error': 'No organization context'}, status=400)
 
-    limit = int(request.query.get('limit', '50'))
-    offset = int(request.query.get('offset', '0'))
+    try:
+        limit = int(request.query.get('limit', '50'))
+        offset = int(request.query.get('offset', '0'))
+    except ValueError:
+        return web.json_response({'error': 'limit/offset must be integers'}, status=400)
     include_archived = request.query.get('include_archived', 'false').lower() == 'true'
 
     try:
@@ -338,8 +341,11 @@ async def shared_sessions_handler(request: web.Request) -> web.Response:
     if not org_id:
         return web.json_response({'error': 'No organization context'}, status=400)
 
-    limit = int(request.query.get('limit', '50'))
-    offset = int(request.query.get('offset', '0'))
+    try:
+        limit = int(request.query.get('limit', '50'))
+        offset = int(request.query.get('offset', '0'))
+    except ValueError:
+        return web.json_response({'error': 'limit/offset must be integers'}, status=400)
 
     try:
         sessions = await _get_service().get_shared_sessions(
