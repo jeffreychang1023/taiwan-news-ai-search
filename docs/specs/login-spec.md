@@ -120,6 +120,7 @@
 - `9df501ad9a13` — baseline: 6 auth tables
 - `c1c6deac2013` — session tables (5 tables)
 - `a3f8c2e51d07` — audit_logs
+- `b5e9d3f71a42` — infra tables (articles + chunks, 適配新 infra)
 
 ### 1B — Auth Service
 
@@ -199,7 +200,7 @@
 | 檔案 | 狀態 | 說明 |
 |------|------|------|
 | `webserver/routes/user_data.py` | Done | 從 `request['user']['id']` 取值 |
-| `core/baseHandler.py` | **TODO** | 仍用 `get_param(query_params, "user_id")`，需改為從 auth context 注入 |
+| `core/baseHandler.py` | Done | auth middleware soft-auth + api.py 注入至 query_params |
 | `storage_providers/qdrant_storage.py` | Done (將作廢) | user_id filter — Qdrant 在 infra migration 後移除 |
 
 ### 1F — 前端 Login UI
@@ -234,8 +235,8 @@ SessionManager class 取代 localStorage。首次登入觸發 `POST /api/session
 |------|------|------|
 | JWT org_id 注入 | Done | middleware 層 |
 | user_qdrant_provider.py | Done (將作廢) | Qdrant 移除後需重寫 |
-| user_data_manager.py | **部分** | create_source 存 org_id，但 list/delete 未 filter |
-| query_logger.py | **TODO** | 未加 org_id |
+| user_data_manager.py | Done | create/list/delete 全部支援 org_id |
+| query_logger.py | Done | queries schema + log_query_start 已加 org_id |
 
 ---
 
@@ -245,13 +246,13 @@ SessionManager class 取代 localStorage。首次登入觸發 `POST /api/session
 
 **檔案**: `webserver/middleware/rate_limit.py`
 
-| Endpoint | 目前實際值 | 建議 Production 值 |
-|----------|-----------|-------------------|
-| `/api/auth/register` | 50/hr | 5/hr |
-| `/api/auth/forgot-password` | 50/hr | 3/hr |
-| `/api/auth/login` | 60/min | 10/min |
+| Endpoint | 目前實際值 | 說明 |
+|----------|-----------|------|
+| `/api/auth/register` | 5/hr | ✅ 已調緊（原 50/hr） |
+| `/api/auth/forgot-password` | 3/hr | ✅ 已調緊（原 50/hr） |
+| `/api/auth/login` | 10/min | ✅ 已調緊（原 60/min） |
 
-目前值過於寬鬆，上線前需調整。
+Rate limit 已於 2026-03-05 infra adaptation 時調整至 production 值。
 
 ### 3B — Audit Logs
 
@@ -302,12 +303,12 @@ Infra migration 將 Qdrant 替換為 PostgreSQL pgvector。以下 login 修改**
 
 ### 中衝突：DB 統一
 
-| 項目 | Login 假設 | 新 Infra 實際 | 適配 |
-|------|-----------|--------------|------|
-| DB 連線 | `ANALYTICS_DATABASE_URL` (Neon) | `DATABASE_URL` (自建 PostgreSQL) | env var 名稱統一，加 fallback |
-| Connection pool | auth_db.py 自己的 pool | 全系統統一 pool | 抽出 shared pool (如 `core/db.py`) |
-| Schema 管理 | Alembic (auth + session + audit) | init.sql (articles + chunks) | 決定是否統一用 Alembic |
-| Table 共存 | 12 張 auth/session 表 | articles + chunks 表 | 確認無 naming conflict（目前沒有） |
+| 項目 | Login 假設 | 新 Infra 實際 | 適配 | 狀態 |
+|------|-----------|--------------|------|------|
+| DB 連線 | `ANALYTICS_DATABASE_URL` (Neon) | `DATABASE_URL` (自建 PostgreSQL) | env var 改為 `DATABASE_URL`，保留 fallback | ✅ Done |
+| Connection pool | 每次 query 新連線 | `psycopg_pool.AsyncConnectionPool` | auth_db.py 改用 pool (min=1, max=5) | ✅ Done |
+| Schema 管理 | Alembic (auth + session + audit) | init.sql (articles + chunks) | 新增 Alembic migration `b5e9d3f71a42` 統一管理 | ✅ Done |
+| Table 共存 | 12 張 auth/session 表 | articles + chunks 表 | 確認無 naming conflict | ✅ OK |
 
 ### 低衝突：部署環境
 
@@ -331,10 +332,10 @@ Infra migration 將 Qdrant 替換為 PostgreSQL pgvector。以下 login 修改**
 | # | 問題 | 嚴重度 | 說明 |
 |---|------|--------|------|
 | 1 | **Tests 不存在** | High | Spec 宣稱 69 tests，repo 裡 0 個 test 檔案。需重寫 |
-| 2 | **baseHandler.py 未改** | High | user_id 仍從 query param 取，auth chain 斷裂 |
-| 3 | **Rate limit 過寬** | Medium | 實際值比設計寬 5-17 倍，上線前需調緊 |
-| 4 | **org_id 查詢 filter 缺失** | Medium | user_data_manager 只存不查 |
-| 5 | **query_logger org_id** | Medium | 未加 org_id 記錄 |
+| 2 | ~~baseHandler.py 未改~~ | ~~High~~ | auth middleware soft-auth + api.py 注入 user_id/org_id（2026-03-05） |
+| 3 | ~~Rate limit 過寬~~ | ~~Medium~~ | ✅ 已調緊至 production 值（2026-03-05） |
+| 4 | ~~org_id 查詢 filter 缺失~~ | ~~Medium~~ | list/delete 已加 org_id filter（2026-03-05） |
+| 5 | ~~query_logger org_id~~ | ~~Medium~~ | queries schema + log_query_start 已加 org_id（2026-03-05） |
 
 ### Will Be Invalidated by Infra Migration
 
@@ -359,7 +360,7 @@ Infra migration 將 Qdrant 替換為 PostgreSQL pgvector。以下 login 修改**
 | `webserver/routes/auth.py` | Yes |
 | `webserver/routes/sessions.py` | Yes |
 | `webserver/routes/audit.py` | Yes |
-| `webserver/middleware/rate_limit.py` | Yes (值需調整) |
+| `webserver/middleware/rate_limit.py` | Yes (已調緊) |
 | `webserver/middleware/cors.py` | Yes |
 | `core/session_service.py` | Yes |
 | `core/audit_service.py` | Yes |

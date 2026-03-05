@@ -112,6 +112,9 @@ class QueryLogger:
             for table_name, create_sql in schema_dict.items():
                 cursor.execute(create_sql)
 
+            # Ensure org_id column exists (idempotent, for existing v2 DBs)
+            self._ensure_org_id_column(cursor)
+
             # Create indexes
             index_sqls = self._get_database_indexes()
             for index_sql in index_sqls:
@@ -245,6 +248,17 @@ class QueryLogger:
             logger.error(f"❌ Schema migration failed: {e}")
             raise
 
+    def _ensure_org_id_column(self, cursor):
+        """Add org_id column to queries table if missing (idempotent)."""
+        try:
+            if self.db.db_type == 'postgres':
+                cursor.execute("ALTER TABLE queries ADD COLUMN IF NOT EXISTS org_id VARCHAR(255)")
+            else:
+                cursor.execute("ALTER TABLE queries ADD COLUMN org_id TEXT")
+        except Exception as e:
+            if "duplicate column" not in str(e).lower() and "already exists" not in str(e).lower():
+                logger.warning(f"Failed to add org_id column: {e}")
+
     def _get_database_schema(self) -> Dict[str, str]:
         """Get database schema SQL for current database type."""
         if self.db.db_type == 'postgres':
@@ -260,6 +274,7 @@ class QueryLogger:
                     query_id TEXT PRIMARY KEY,
                     timestamp REAL NOT NULL,
                     user_id TEXT NOT NULL,
+                    org_id TEXT,
                     session_id TEXT,
                     conversation_id TEXT,
                     query_text TEXT NOT NULL,
@@ -417,6 +432,7 @@ class QueryLogger:
                     query_id VARCHAR(255) PRIMARY KEY,
                     timestamp DOUBLE PRECISION NOT NULL,
                     user_id VARCHAR(255) NOT NULL,
+                    org_id VARCHAR(255),
                     session_id VARCHAR(255),
                     conversation_id VARCHAR(255),
                     query_text TEXT NOT NULL,
@@ -640,7 +656,7 @@ class QueryLogger:
     # Whitelist of allowed column names for dynamic INSERT
     ALLOWED_COLUMNS = {
         # queries
-        'query_id', 'timestamp', 'user_id', 'session_id', 'conversation_id',
+        'query_id', 'timestamp', 'user_id', 'org_id', 'session_id', 'conversation_id',
         'query_text', 'decontextualized_query', 'site', 'mode', 'model',
         'parent_query_id', 'latency_total_ms', 'latency_retrieval_ms',
         'latency_ranking_ms', 'latency_generation_ms', 'num_results_retrieved',
@@ -749,7 +765,8 @@ class QueryLogger:
         session_id: str = "",
         conversation_id: str = "",
         model: str = "",
-        parent_query_id: str = None
+        parent_query_id: str = None,
+        org_id: str = None
     ) -> None:
         """
         Log the start of a query (SYNCHRONOUS - ensures queries table is written first).
@@ -765,11 +782,13 @@ class QueryLogger:
             conversation_id: Conversation identifier
             model: LLM model being used
             parent_query_id: Parent query ID (for generate requests that follow summarize)
+            org_id: Organization identifier (for B2B analytics)
         """
         data = {
             "query_id": query_id,
             "timestamp": time.time(),
             "user_id": user_id,
+            "org_id": org_id,
             "session_id": session_id,
             "conversation_id": conversation_id,
             "query_text": query_text,

@@ -51,6 +51,13 @@ async def ask_handler(request: web.Request) -> web.Response:
         except Exception as e:
             logger.warning(f"Failed to parse POST body: {e}")
     
+    # Inject auth user info into query_params (overrides query param spoofing)
+    user = request.get('user')
+    if user and user.get('authenticated'):
+        query_params['user_id'] = user['id']
+        if user.get('org_id'):
+            query_params['org_id'] = user['org_id']
+
     # Check if SSE streaming is requested
     is_sse = request.get('is_sse', False)
     streaming = get_param(query_params, "streaming", str, "True")

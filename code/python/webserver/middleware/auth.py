@@ -32,6 +32,36 @@ PUBLIC_ENDPOINTS: Set[str] = {
 }
 
 
+def _try_soft_auth(request: web.Request) -> None:
+    """Try to decode JWT on public endpoints. Sets request['user'] if valid, does nothing if not."""
+    auth_header = request.headers.get('Authorization', '')
+    token = auth_header[7:] if auth_header.startswith('Bearer ') else None
+    if not token:
+        token = request.cookies.get('auth_token')
+    if not token:
+        return
+
+    jwt_secret = os.environ.get('JWT_SECRET')
+    if not jwt_secret:
+        return
+
+    try:
+        payload = jwt.decode(token, jwt_secret, algorithms=['HS256'])
+        user_id = payload.get('user_id')
+        if user_id:
+            request['user'] = {
+                'id': user_id,
+                'name': payload.get('name', 'User'),
+                'email': payload.get('email'),
+                'org_id': payload.get('org_id'),
+                'role': payload.get('role'),
+                'authenticated': True,
+                'token': token,
+            }
+    except (jwt.ExpiredSignatureError, jwt.InvalidTokenError):
+        pass  # Soft auth — silently ignore invalid tokens on public endpoints
+
+
 @web.middleware
 async def auth_middleware(request: web.Request, handler):
     """Handle authentication for protected endpoints"""
@@ -54,7 +84,8 @@ async def auth_middleware(request: web.Request, handler):
         return await handler(request)
 
     if is_public:
-        # Public endpoint, no auth required
+        # Public endpoint — still try to extract user info if token present (soft auth)
+        _try_soft_auth(request)
         return await handler(request)
 
     # Check for authentication token

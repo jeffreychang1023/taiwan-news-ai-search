@@ -226,7 +226,8 @@ async def upload_progress_sse_handler(request: web.Request) -> web.StreamRespons
 
         # Check if already processed (status is ready or failed)
         manager = get_user_data_manager()
-        sources = manager.list_user_sources(user_id)
+        org_id = user_info.get('org_id')
+        sources = manager.list_user_sources(user_id, org_id=org_id)
         source = next((s for s in sources if s['source_id'] == source_id), None)
         if source and source['status'] in ['ready', 'failed']:
             logger.warning(f"Source already processed: source_id={source_id}, status={source['status']}")
@@ -317,8 +318,9 @@ async def list_sources_handler(request: web.Request) -> web.Response:
         # Get manager instance
         manager = get_user_data_manager()
 
-        # List user sources
-        sources = manager.list_user_sources(user_id)
+        # List user sources (org-isolated if org_id present)
+        org_id = user_info.get('org_id')
+        sources = manager.list_user_sources(user_id, org_id=org_id)
 
         return web.json_response({
             'success': True,
@@ -364,8 +366,9 @@ async def delete_source_handler(request: web.Request) -> web.Response:
         # Get manager instance
         manager = get_user_data_manager()
 
-        # Delete source
-        success = manager.delete_source(user_id, source_id)
+        # Delete source (org-isolated if org_id present)
+        org_id = user_info.get('org_id')
+        success = manager.delete_source(user_id, source_id, org_id=org_id)
 
         if success:
             # Cancel active task if exists
@@ -430,8 +433,9 @@ async def get_source_status_handler(request: web.Request) -> web.Response:
         # Get manager instance
         manager = get_user_data_manager()
 
-        # Get source info
-        sources = manager.list_user_sources(user_id)
+        # Get source info (org-isolated)
+        org_id = user_info.get('org_id')
+        sources = manager.list_user_sources(user_id, org_id=org_id)
         source = next((s for s in sources if s['source_id'] == source_id), None)
 
         if not source:

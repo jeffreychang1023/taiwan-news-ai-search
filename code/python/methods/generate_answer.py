@@ -193,7 +193,8 @@ class GenerateAnswer(NLWebHandler):
                 session_id=self.session_id,
                 conversation_id=self.conversation_id,
                 model=self.model,
-                parent_query_id=self.parent_query_id
+                parent_query_id=self.parent_query_id,
+                org_id=self.org_id
             )
             # Allow parent commit to propagate to avoid foreign key race conditions
             await asyncio.sleep(0.15)
