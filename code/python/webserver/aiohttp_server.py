@@ -139,22 +139,56 @@ class AioHTTPServer:
     async def _on_startup(self, app: web.Application):
         """Initialize resources on startup"""
         import aiohttp
-        
+
+        # Initialize auth database (idempotent — creates any missing tables)
+        try:
+            from auth.auth_db import AuthDB
+            await AuthDB.get_instance().initialize()
+        except Exception as e:
+            logger.error(f"Auth DB initialization failed: {e}", exc_info=True)
+
         # Create shared client session
         timeout = aiohttp.ClientTimeout(total=30)
         app['client_session'] = aiohttp.ClientSession(timeout=timeout)
-        
+
+        # Start session cleanup background task
+        app['session_cleanup_task'] = asyncio.create_task(
+            self._cleanup_expired_sessions(app)
+        )
+
         # Initialize chat system components
         await self._initialize_chat_system(app)
-        
+
+        # Warn if JWT_SECRET is weak
+        jwt_secret = os.environ.get('JWT_SECRET', '')
+        if jwt_secret and len(jwt_secret) < 32:
+            logger.warning("JWT_SECRET is shorter than 32 characters — consider using a stronger secret")
+
         logger.info(f"Server starting on {self.config['server']['host']}:{self.config['port']}")
         logger.info(f"Mode: {self.config['mode']}")
         logger.info(f"CORS enabled: {self.config['server']['enable_cors']}")
     
     async def _on_cleanup(self, app: web.Application):
         """Cleanup resources"""
+        # Cancel session cleanup task
+        cleanup_task = app.get('session_cleanup_task')
+        if cleanup_task and not cleanup_task.done():
+            cleanup_task.cancel()
+            try:
+                await cleanup_task
+            except asyncio.CancelledError:
+                pass
+
         if app['client_session']:
             await app['client_session'].close()
+
+        # Close auth DB connection pool
+        try:
+            from auth.auth_db import AuthDB
+            auth_db = AuthDB.get_instance()
+            await auth_db.close()
+        except Exception:
+            pass
     
     async def _on_shutdown(self, app: web.Application):
         """Graceful shutdown"""
@@ -164,6 +198,25 @@ class AioHTTPServer:
         if 'conversation_manager' in app:
             await app['conversation_manager'].shutdown()
     
+    async def _cleanup_expired_sessions(self, app: web.Application):
+        """Background task: purge soft-deleted sessions older than 30 days."""
+        # Wait 60s after startup before first run
+        await asyncio.sleep(60)
+        while True:
+            try:
+                from core.session_service import SessionService
+                service = SessionService()
+                expired = await service.get_expired_deleted_sessions(days=30)
+                if expired:
+                    for session in expired:
+                        await service.permanent_delete(session['id'])
+                    logger.info(f"Session cleanup: purged {len(expired)} expired sessions")
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.error(f"Session cleanup task failed: {e}", exc_info=True)
+            await asyncio.sleep(24 * 3600)  # Run daily
+
     async def _initialize_chat_system(self, app: web.Application):
         """Initialize chat system components"""
         try:

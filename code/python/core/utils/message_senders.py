@@ -66,7 +66,7 @@ class MessageSender:
             content=user_query,
             timestamp=datetime.utcnow().isoformat(),
             sender_info={
-                "id": self.handler.oauth_id or get_param(self.handler.query_params, "user_id", str, ""),
+                "id": self.handler.user_id or get_param(self.handler.query_params, "user_id", str, ""),
                 "name": get_param(self.handler.query_params, "user_name", str, "User")
             }
         )

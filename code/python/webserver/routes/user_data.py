@@ -8,6 +8,7 @@ API routes for user-uploaded files and private knowledge base.
 import json
 import asyncio
 import traceback
+from typing import Dict, Any
 from aiohttp import web
 from core.user_data_manager import get_user_data_manager
 from core.user_data_processor import get_user_data_processor
@@ -20,6 +21,57 @@ logger = get_configured_logger("user_data_routes")
 active_tasks = {}
 
 
+# -- Quota helpers ---------------------------------------------------------
+
+async def _check_storage_quota(org_id: str, new_file_bytes: int) -> Dict[str, Any]:
+    """Check whether an org has enough storage quota for a new upload.
+
+    Returns dict with keys: allowed (bool), reason (str), warn (bool).
+    Logs a warning when usage exceeds 80% of the limit.
+    Falls back to allowed=True on any DB error (fail-open for quota).
+    """
+    try:
+        from auth.auth_db import AuthDB
+        db = AuthDB.get_instance()
+
+        org = await db.fetchone(
+            "SELECT storage_quota_gb FROM organizations WHERE id = ?",
+            (org_id,)
+        )
+        if not org or org['storage_quota_gb'] is None:
+            return {'allowed': True, 'warn': False, 'reason': ''}
+
+        quota_bytes = org['storage_quota_gb'] * 1024 ** 3
+
+        # Sum current storage for this org
+        rows = await db.fetchall(
+            "SELECT COALESCE(SUM(s.size_bytes), 0) AS used "
+            "FROM user_sources s "
+            "WHERE s.org_id = ? AND s.status != 'failed'",
+            (org_id,)
+        )
+        used_bytes = rows[0]['used'] if rows else 0
+
+        projected = used_bytes + new_file_bytes
+        if projected > quota_bytes:
+            return {
+                'allowed': False,
+                'warn': False,
+                'reason': f'Storage quota exceeded ({org["storage_quota_gb"]} GB limit)',
+            }
+
+        usage_pct = projected / quota_bytes * 100
+        if usage_pct >= 80:
+            logger.warning(f"Org {org_id} storage at {usage_pct:.1f}% of quota")
+            return {'allowed': True, 'warn': True, 'reason': ''}
+
+        return {'allowed': True, 'warn': False, 'reason': ''}
+
+    except Exception as e:
+        logger.warning(f"Storage quota check failed (fail-open): {e}")
+        return {'allowed': True, 'warn': False, 'reason': ''}
+
+
 async def upload_file_handler(request: web.Request) -> web.Response:
     """
     Handle file upload requests.
@@ -29,32 +81,30 @@ async def upload_file_handler(request: web.Request) -> web.Response:
 
     Form fields:
         - file: The file to upload
-        - user_id: User identifier (temporary, until OAuth is implemented)
 
     Returns:
         JSON response with source_id and status
     """
     try:
-        # Get user_id from form data (temporary until OAuth)
+        # Get user_id from authenticated session
+        user_info = request.get('user', {})
+        user_id = user_info.get('id')
+        if not user_id:
+            return web.json_response(
+                {'error': 'Authentication required'},
+                status=401
+            )
+
         reader = await request.multipart()
 
-        user_id = None
         file_data = None
         filename = None
 
         # Read multipart fields - must read data immediately as fields are consumed during iteration
         async for field in reader:
-            if field.name == 'user_id':
-                user_id = await field.text()
-            elif field.name == 'file':
+            if field.name == 'file':
                 filename = field.filename
                 file_data = await field.read()  # Read immediately, field is consumed after iteration
-
-        if not user_id:
-            return web.json_response(
-                {'error': 'user_id is required'},
-                status=400
-            )
 
         if not file_data or not filename:
             return web.json_response(
@@ -63,8 +113,9 @@ async def upload_file_handler(request: web.Request) -> web.Response:
             )
 
         file_size = len(file_data)
+        org_id = user_info.get('org_id')
 
-        logger.info(f"Received file upload: {filename} ({file_size} bytes) from user: {user_id}")
+        logger.info(f"Received file upload: {filename} ({file_size} bytes) from user: {user_id}, org: {org_id}")
 
         # Get manager instance
         manager = get_user_data_manager()
@@ -77,8 +128,17 @@ async def upload_file_handler(request: web.Request) -> web.Response:
                 status=400
             )
 
+        # Quota check: org storage limit
+        if org_id:
+            quota_result = await _check_storage_quota(org_id, file_size)
+            if not quota_result['allowed']:
+                return web.json_response(
+                    {'error': quota_result['reason'], 'type': 'quota_exceeded'},
+                    status=413
+                )
+
         # Create source record
-        source_id = manager.create_source(user_id, filename, file_size)
+        source_id = manager.create_source(user_id, filename, file_size, org_id=org_id)
 
         # Save file to storage
         import io
@@ -120,18 +180,20 @@ async def upload_progress_sse_handler(request: web.Request) -> web.StreamRespons
     """
     SSE endpoint for tracking upload processing progress.
 
-    GET /api/user/upload/{source_id}/progress?user_id=xxx
+    GET /api/user/upload/{source_id}/progress
 
     Returns:
         Server-Sent Events stream with progress updates
     """
     try:
         source_id = request.match_info.get('source_id')
-        user_id = request.query.get('user_id')
+        user_info = request.get('user', {})
+        user_id = user_info.get('id')
+        org_id = user_info.get('org_id')
 
         if not user_id or not source_id:
             return web.json_response(
-                {'error': 'user_id and source_id are required'},
+                {'error': 'Authentication and source_id are required'},
                 status=400
             )
 
@@ -164,7 +226,8 @@ async def upload_progress_sse_handler(request: web.Request) -> web.StreamRespons
 
         # Check if already processed (status is ready or failed)
         manager = get_user_data_manager()
-        sources = manager.list_user_sources(user_id)
+        org_id = user_info.get('org_id')
+        sources = manager.list_user_sources(user_id, org_id=org_id)
         source = next((s for s in sources if s['source_id'] == source_id), None)
         if source and source['status'] in ['ready', 'failed']:
             logger.warning(f"Source already processed: source_id={source_id}, status={source['status']}")
@@ -186,7 +249,7 @@ async def upload_progress_sse_handler(request: web.Request) -> web.StreamRespons
 
         # Start processing
         processing_task = asyncio.create_task(
-            processor.process_file(user_id, source_id, progress_callback)
+            processor.process_file(user_id, source_id, progress_callback, org_id=org_id)
         )
         active_tasks[source_id] = processing_task
 
@@ -237,26 +300,27 @@ async def list_sources_handler(request: web.Request) -> web.Response:
     """
     List all sources for a user.
 
-    GET /api/user/sources?user_id=xxx
+    GET /api/user/sources
 
     Returns:
         JSON array of source objects
     """
     try:
-        # Get user_id from query parameters (temporary until OAuth)
-        user_id = request.query.get('user_id')
+        user_info = request.get('user', {})
+        user_id = user_info.get('id')
 
         if not user_id:
             return web.json_response(
-                {'error': 'user_id is required'},
-                status=400
+                {'error': 'Authentication required'},
+                status=401
             )
 
         # Get manager instance
         manager = get_user_data_manager()
 
-        # List user sources
-        sources = manager.list_user_sources(user_id)
+        # List user sources (org-isolated if org_id present)
+        org_id = user_info.get('org_id')
+        sources = manager.list_user_sources(user_id, org_id=org_id)
 
         return web.json_response({
             'success': True,
@@ -275,7 +339,7 @@ async def delete_source_handler(request: web.Request) -> web.Response:
     """
     Delete a source and all its associated data.
 
-    DELETE /api/user/sources/{source_id}?user_id=xxx
+    DELETE /api/user/sources/{source_id}
 
     Returns:
         JSON response with success status
@@ -284,13 +348,13 @@ async def delete_source_handler(request: web.Request) -> web.Response:
         # Get source_id from path
         source_id = request.match_info.get('source_id')
 
-        # Get user_id from query parameters (temporary until OAuth)
-        user_id = request.query.get('user_id')
+        user_info = request.get('user', {})
+        user_id = user_info.get('id')
 
         if not user_id:
             return web.json_response(
-                {'error': 'user_id is required'},
-                status=400
+                {'error': 'Authentication required'},
+                status=401
             )
 
         if not source_id:
@@ -302,8 +366,9 @@ async def delete_source_handler(request: web.Request) -> web.Response:
         # Get manager instance
         manager = get_user_data_manager()
 
-        # Delete source
-        success = manager.delete_source(user_id, source_id)
+        # Delete source (org-isolated if org_id present)
+        org_id = user_info.get('org_id')
+        success = manager.delete_source(user_id, source_id, org_id=org_id)
 
         if success:
             # Cancel active task if exists
@@ -341,7 +406,7 @@ async def get_source_status_handler(request: web.Request) -> web.Response:
     """
     Get the processing status of a source.
 
-    GET /api/user/sources/{source_id}/status?user_id=xxx
+    GET /api/user/sources/{source_id}/status
 
     Returns:
         JSON response with source status
@@ -350,13 +415,13 @@ async def get_source_status_handler(request: web.Request) -> web.Response:
         # Get source_id from path
         source_id = request.match_info.get('source_id')
 
-        # Get user_id from query parameters (temporary until OAuth)
-        user_id = request.query.get('user_id')
+        user_info = request.get('user', {})
+        user_id = user_info.get('id')
 
         if not user_id:
             return web.json_response(
-                {'error': 'user_id is required'},
-                status=400
+                {'error': 'Authentication required'},
+                status=401
             )
 
         if not source_id:
@@ -368,8 +433,9 @@ async def get_source_status_handler(request: web.Request) -> web.Response:
         # Get manager instance
         manager = get_user_data_manager()
 
-        # Get source info
-        sources = manager.list_user_sources(user_id)
+        # Get source info (org-isolated)
+        org_id = user_info.get('org_id')
+        sources = manager.list_user_sources(user_id, org_id=org_id)
         source = next((s for s in sources if s['source_id'] == source_id), None)
 
         if not source:

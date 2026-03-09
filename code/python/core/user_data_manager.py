@@ -169,7 +169,7 @@ class UserDataManager:
         finally:
             conn.close()
 
-    def create_source(self, user_id: str, filename: str, file_size: int) -> str:
+    def create_source(self, user_id: str, filename: str, file_size: int, org_id: str = None) -> str:
         """
         Create a new source record in the database.
 
@@ -177,6 +177,7 @@ class UserDataManager:
             user_id: User identifier
             filename: Original filename
             file_size: File size in bytes
+            org_id: Organization identifier (optional, for B2B isolation)
 
         Returns:
             source_id (UUID)
@@ -191,13 +192,13 @@ class UserDataManager:
                 conn,
                 """
                 INSERT INTO user_sources
-                (source_id, user_id, name, file_type, status, size_bytes, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                (source_id, user_id, org_id, name, file_type, status, size_bytes, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (source_id, user_id, filename, file_type, 'uploading', file_size, current_time, current_time)
+                (source_id, user_id, org_id, filename, file_type, 'uploading', file_size, current_time, current_time)
             )
             conn.commit()
-            logger.info(f"Created source record: {source_id} for user: {user_id}")
+            logger.info(f"Created source record: {source_id} for user: {user_id}, org: {org_id}")
             return source_id
         except Exception as e:
             conn.rollback()
@@ -324,29 +325,43 @@ class UserDataManager:
         finally:
             conn.close()
 
-    def list_user_sources(self, user_id: str) -> List[Dict[str, Any]]:
+    def list_user_sources(self, user_id: str, org_id: str = None) -> List[Dict[str, Any]]:
         """
-        List all sources for a user.
+        List all sources for a user, optionally filtered by organization.
 
         Args:
             user_id: User identifier
+            org_id: Organization identifier (for B2B isolation)
 
         Returns:
             List of source dictionaries
         """
         conn = self.db.connect()
         try:
-            cursor = self.db.execute(
-                conn,
-                """
-                SELECT source_id, name, file_type, status, size_bytes,
-                       created_at, updated_at, error_message
-                FROM user_sources
-                WHERE user_id = ?
-                ORDER BY created_at DESC
-                """,
-                (user_id,)
-            )
+            if org_id:
+                cursor = self.db.execute(
+                    conn,
+                    """
+                    SELECT source_id, name, file_type, status, size_bytes,
+                           created_at, updated_at, error_message
+                    FROM user_sources
+                    WHERE user_id = ? AND org_id = ?
+                    ORDER BY created_at DESC
+                    """,
+                    (user_id, org_id)
+                )
+            else:
+                cursor = self.db.execute(
+                    conn,
+                    """
+                    SELECT source_id, name, file_type, status, size_bytes,
+                           created_at, updated_at, error_message
+                    FROM user_sources
+                    WHERE user_id = ?
+                    ORDER BY created_at DESC
+                    """,
+                    (user_id,)
+                )
 
             sources = []
             for row in cursor.fetchall():
@@ -365,25 +380,33 @@ class UserDataManager:
         finally:
             conn.close()
 
-    def delete_source(self, user_id: str, source_id: str) -> bool:
+    def delete_source(self, user_id: str, source_id: str, org_id: str = None) -> bool:
         """
         Delete a source and all its associated data.
 
         Args:
             user_id: User identifier (for authorization check)
             source_id: Source identifier
+            org_id: Organization identifier (for B2B isolation)
 
         Returns:
             True if deletion successful, False otherwise
         """
         conn = self.db.connect()
         try:
-            # Verify ownership
-            cursor = self.db.execute(
-                conn,
-                "SELECT user_id FROM user_sources WHERE source_id = ?",
-                (source_id,)
-            )
+            # Verify ownership (+ org isolation if org_id provided)
+            if org_id:
+                cursor = self.db.execute(
+                    conn,
+                    "SELECT user_id FROM user_sources WHERE source_id = ? AND org_id = ?",
+                    (source_id, org_id)
+                )
+            else:
+                cursor = self.db.execute(
+                    conn,
+                    "SELECT user_id FROM user_sources WHERE source_id = ?",
+                    (source_id,)
+                )
             result = cursor.fetchone()
 
             if not result or result[0] != user_id:

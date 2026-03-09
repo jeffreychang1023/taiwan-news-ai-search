@@ -8,7 +8,7 @@
 
 ## 目前重點
 
-**UX 修復完成 + Zoe Plan Phase 2 進行中**
+**Login 系統合併完成 + Infra 適配進行中**
 
 ### 最近完成
 
@@ -21,9 +21,13 @@
   - zh-TW 錯誤訊息 + cp950 UnicodeEncodeError 修復
   - Feedback buttons event delegation
   - datePublished 注入 Analyst formatted_context
-- **Zoe Plan Phase 2（部分完成）**
-  - `/delegate` skill 建立
-  - `/update-docs` skill 擴充（decisions/patterns 參數 + 路徑修正）
+- **Login 系統合併 + Infra 適配**（branch: `feat/login-system-merge`）
+  - 從 RG repo surgical merge：13 新檔、12 修改檔、2 刪除檔
+  - Infra 適配完成：env var 統一（`DATABASE_URL`）、AsyncConnectionPool、Rate limit 調緊、Alembic infra migration
+  - 詳見 `docs/specs/login-spec.md`
+- **Zoe Plan Phase 2-3 完成**
+  - `/delegate` + `/update-docs` + `/zoe` skills
+  - LINE MCP 通知 + Task 追蹤
 - **SEC-6 Phase 1：Agent Isolation**（先前完成）
 - **全專案 Code Review 修復**（21 檔案、47 項）
 
@@ -66,13 +70,17 @@
 
 ## 待處理
 
+### Login 系統後續
+- SEC-1/9/18/19：JWT 認證串接（Login 系統已合併，需完成 baseHandler user_id 注入）
+- Tests 重寫（auth_service / auth_middleware / session_service）
+- org_id 查詢 filter（user_data_manager list/delete 缺 org_id）
+- query_logger 加 org_id
+- Qdrant 移除後重寫 user_qdrant_provider → PostgreSQL
+
 ### Zoe Plan 後續
-- `/decide` skill 實作
-- `/briefing` skill 實作
-- Phase 3-4：待 Phase 2 驗證後
+- Phase 4：自動化排程（待定）
 
 ### Code Review 後續
-- SEC-1/9/18/19：JWT 認證（等登入系統設定完成）
 - RNK-7：BM25 corpus stats 重建（title weighting 改變）
 - RSN-4 前端：讀取 verification_status 顯示未驗證提示
 

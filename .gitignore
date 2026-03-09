@@ -468,6 +468,7 @@ testing/
 *_backup
 *.backup
 test_*.py
+!code/python/tests/test_*.py
 check_*.py
 analyze_*.py
 retry_*.py

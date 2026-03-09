@@ -18,7 +18,8 @@ async def search_user_documents(
     query: str,
     user_id: str,
     top_k: int = 10,
-    query_params: Optional[Dict] = None
+    query_params: Optional[Dict] = None,
+    org_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
     Search user's private documents.
@@ -28,6 +29,7 @@ async def search_user_documents(
         user_id: User identifier
         top_k: Number of results to return
         query_params: Optional query parameters
+        org_id: Organization identifier for org-level isolation (optional)
 
     Returns:
         List of search results from user's private files
@@ -42,7 +44,8 @@ async def search_user_documents(
             query=query,
             user_id=user_id,
             top_k=top_k,
-            query_params=query_params
+            query_params=query_params,
+            org_id=org_id,
         )
 
         logger.info(f"Retrieved {len(results)} results from user's private documents")

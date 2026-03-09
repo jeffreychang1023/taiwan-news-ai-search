@@ -1,6 +1,6 @@
 # NLWeb 決策日誌
 
-> 從 Notion 決策日誌 DB 導出（2026-03-03）+ 持續更新。共 36 筆。
+> 從 Notion 決策日誌 DB 導出（2026-03-03）+ 持續更新。共 38 筆。
 > 欄位：Decision / Category / Modules / Date / Status / Reason / Tradeoff
 
 ---
@@ -214,3 +214,38 @@
 - **Category**: technical | **Modules**: 全模組 | **Date**: 2026-03-04 | **Status**: active
 - **Reason**: CEO 指令透過 `/delegate` skill 分析上下文（status/decisions/patterns/lessons），動態發現相關 spec，選擇正確的 skill 執行（systematic-debugging/brainstorming/writing-plans 等），而非手寫 prompt template。確保每次派工都有完整上下文且不遺漏已知陷阱。
 - **Tradeoff**: 依賴 skill 生態系統品質，但比手動組裝 prompt 更一致且可學習
+
+### LLM 推論：現階段用外部 API，self-host 時導入 LMCache（KV cache 共享）
+- **Category**: technical | **Modules**: M4-Reasoning, M6-Infra | **Date**: 2026-03-04 | **Status**: future
+- **Reason**: LMCache（github.com/LMCache/LMCache）是 vLLM/SGLang 的 KV cache 管理層，跨請求共享已計算的 prefix cache，宣稱 RAG + 多輪對話 3-10x 延遲降低。對我們的架構特別有價值：(1) Reasoning 三 agent 共用 system prompt → prefix caching 省 3 倍 prefill (2) RAG 熱門 chunks 跨查詢共享 (3) 多輪對話 history caching (4) Query Decomposition 子查詢共享 context。但現階段全用外部 API（OpenAI/Anthropic/Azure），LMCache 無法介入。觸發條件：日請求量 >5K 或 API 月費 >$500 時評估 self-host ROI。路線：Phase 1 vLLM self-host 輕量 model（ranking/query analysis）→ Phase 2 LMCache 介入 → Phase 3 全面 self-host + multi-tier cache。
+- **Tradeoff**: Self-host 需要 GPU 資源（A100/H100）和運維成本，但長期可大幅降低延遲和成本。現階段 API 是正確選擇（開發期成本最低）
+
+### Indexing 本機 GPU，Serving 雲端 PostgreSQL（GPU/DB 分離）
+- **Category**: technical | **Modules**: M0-Indexing, M6-Infra | **Date**: 2026-03-04 | **Status**: active
+- **Reason**: Embedding 需要 GPU（Qwen3-4B INT8），但搜尋只需要 PostgreSQL（pgvector + pg_bigm）。桌機 RTX 3060 負責 indexing，Hetzner VPS 負責 serving。新文章日常量小（每天幾百篇），桌機幾分鐘 embed 完直接 INSERT 到遠端 DB。資料搬遷用 pg_dump/pg_restore。
+- **Tradeoff**: 桌機需常開做 indexing（或改用 VPS CPU embedding，但速度慢很多）。未來量大時考慮 VPS 加 GPU 或用方案 B（CPU embedding on VPS）
+
+### Hybrid Search 合併策略：聯集法（非加權分數）
+- **Category**: technical | **Modules**: M2-Retrieval | **Date**: 2026-03-05 | **Status**: active
+- **Reason**: Vector 和 Text 兩路搜尋各自取 top-N，取聯集去重後全部交給下游 LLM → XGBoost → MMR 排序。不在 retrieval 階段做加權合併（如 0.7 vec + 0.3 text），因為加權法會壓低純文字命中的結果（例：作者搜尋，正確文章 text=1.0 但 vec=0，加權後只有 0.3，反而排在不相關但語意沾邊的文章後面）。Retrieval 只負責「不漏掉好文章」，排序完全交給已驗證的三層 ranker。
+- **Tradeoff**: 候選數量較多（最多 2N 篇），下游 ranker 負擔稍增，但 LLM reasoning 本來就要看每篇文章，多幾十篇影響不大
+
+### Login 系統接手：Surgical Merge + Infra 適配
+- **Category**: technical | **Modules**: M6-Infra, Auth | **Date**: 2026-03-05 | **Status**: active
+- **Reason**: 外部 dev (RG) 在舊架構上實作了 Email/Password 登入系統。程式碼品質經審計後確認可用，但基於舊 infra（Qdrant + Neon + Render）。採用 surgical merge 策略：只提取 login 相關 delta，主 repo 為 source of truth。同時做 infra 適配：env var 統一至 `DATABASE_URL`、auth_db.py 改用 `AsyncConnectionPool`、rate limit 調緊至 production 值、新增 Alembic migration 統一管理 articles/chunks tables。
+- **Tradeoff**: Qdrant 相關修改（user_qdrant_provider、qdrant_storage）暫不動，等 Phase 3 Qdrant 移除時統一重寫。baseHandler user_id 注入、tests 重寫、org_id query filter 列為後續 TODO。
+
+### pgvector Index：IVF 取代 HNSW（記憶體優先）
+- **Category**: technical | **Modules**: M2-Retrieval, M6-Infra | **Date**: 2026-03-04 | **Status**: active
+- **Reason**: 外部顧問建議。HNSW 需要整個 index 常駐 RAM（6M vectors × 1024D = 16-32GB），IVF 只載入被查詢的 cluster（8-16GB）。IVF recall@10 較低（85-95% vs HNSW 95-99%），但我們有三層補償：(1) hybrid search 的 tsvector 文字搜尋路線補回語意搜尋漏掉的 (2) LLM + XGBoost + MMR reranker 確保最終排序品質 (3) nprobe 參數可調整 recall-latency 平衡。額外好處：IVF 建 index 分鐘級（HNSW 數小時），VPS 可降規至 CCX23（€15/月）。
+- **Tradeoff**: 語意搜尋 recall 略降，但 hybrid search + reranker 補回。Phase 1 S4 需驗證不同 nprobe 值的品質
+
+### IVFFlat probes=50（benchmark 驗證）
+- **Category**: technical | **Modules**: M2-Retrieval | **Date**: 2026-03-05 | **Status**: active
+- **Reason**: Benchmark 118K chunks, lists=1000。probes=50 → R@10=98.7%, R@50=97.1%, avg 29ms。probes=20（原設定）R@10=97.0% 但 R@50 只有 91.2%。probes=100 只多 1% recall 不值得。另發現 DB 中有未知來源的 HNSW index（同大小 ~930MB），已刪除。
+- **Tradeoff**: 29ms vs 21ms（probes=20），多 8ms 換 6% R@50 提升
+
+### Query-time Embedding：OpenRouter API（非本地模型）
+- **Category**: technical | **Modules**: M2-Retrieval, M6-Infra | **Date**: 2026-03-05 | **Status**: active
+- **Reason**: Qwen3-Embedding-4B 在 OpenRouter 有（DeepInfra 託管），$0.02/M tokens。Indexing 仍用桌機 GPU（INT8）。Benchmark 8 query 驗證：加 query prompt template 後 API vs 本地 cosine similarity avg=0.982, min=0.960 → PASS。VPS 不需裝模型，RAM 需求從 32GB 降至 8-16GB。
+- **Tradeoff**: 依賴外部 API（但 query-time 量極小，月費 <$1），API 回傳 2560D 需截至 1024D
