@@ -303,6 +303,7 @@ async def invite_member_handler(request: web.Request) -> web.Response:
 
     try:
         result = await _get_service().invite_member(org_id, email, role, user_info['id'])
+        fire_and_forget(log_action('member.invite', user_id=user_info['id'], org_id=org_id, target_type='org', target_id=org_id, details={'email': email, 'role': role}))
         return web.json_response({'success': True, 'invitation': result})
     except ValueError as e:
         return web.json_response({'error': str(e)}, status=400)
@@ -340,6 +341,7 @@ async def remove_member_handler(request: web.Request) -> web.Response:
 
     try:
         await _get_service().remove_member(org_id, target_user_id, user_info['id'])
+        fire_and_forget(log_action('member.remove', user_id=user_info['id'], org_id=org_id, target_type='org', target_id=org_id, details={'removed_user_id': target_user_id}))
         return web.json_response({'success': True, 'message': 'Member removed'})
     except ValueError as e:
         return web.json_response({'error': str(e)}, status=403)

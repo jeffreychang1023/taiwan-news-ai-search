@@ -9,7 +9,10 @@ import uuid
 import time
 import hashlib
 import secrets
+import asyncio
 from typing import Optional, Dict, Any
+
+import re
 
 import bcrypt
 import jwt
@@ -31,6 +34,9 @@ REFRESH_TOKEN_EXPIRE_SECONDS = 7 * 24 * 3600  # 7 days
 BRUTE_FORCE_WINDOW_SECONDS = 15 * 60  # 15 minutes
 BRUTE_FORCE_MAX_ATTEMPTS = 5
 
+# Pre-computed dummy hash for constant-time login comparison (prevents user enumeration via timing)
+_DUMMY_BCRYPT_HASH = bcrypt.hashpw(b"dummy", bcrypt.gensalt()).decode('utf-8')
+
 
 class AuthService:
     """Core authentication service (async)."""
@@ -43,6 +49,8 @@ class AuthService:
     async def register_user(self, email: str, password: str, name: str) -> Dict[str, Any]:
         """Register a new user. Returns user dict or raises ValueError."""
         email = email.strip().lower()
+        if not re.match(r'^[^@\s]+@[^@\s]+\.[^@\s]+$', email):
+            raise ValueError("Invalid email format")
         self._validate_password(password)
 
         existing = await self.db.fetchone("SELECT id FROM users WHERE email = ?", (email,))
@@ -59,6 +67,9 @@ class AuthService:
             "VALUES (?, ?, ?, ?, ?, ?)",
             (user_id, email, password_hash, name, verification_token, now)
         )
+
+        # Auto-create personal organization
+        await self.create_organization(f"{name}'s workspace", user_id)
 
         # Send verification email
         from auth.email_service import send_verification_email
@@ -104,7 +115,10 @@ class AuthService:
             (email,)
         )
 
-        if not user or not bcrypt.checkpw(password.encode('utf-8'), user['password_hash'].encode('utf-8')):
+        # Constant-time comparison: always run bcrypt even if user not found
+        hash_to_check = user['password_hash'] if user else _DUMMY_BCRYPT_HASH
+        valid_password = bcrypt.checkpw(password.encode('utf-8'), hash_to_check.encode('utf-8'))
+        if not user or not valid_password:
             await self._record_login_attempt(email, ip, success=False)
             raise ValueError("Invalid email or password")
 
@@ -467,17 +481,10 @@ class AuthService:
             (email, False, cutoff)
         )
         if row and row['cnt'] >= BRUTE_FORCE_MAX_ATTEMPTS:
-            # Send lockout notification on the exact threshold hit (cnt == threshold)
-            if row['cnt'] == BRUTE_FORCE_MAX_ATTEMPTS:
-                import asyncio
-                from auth.email_service import send_lockout_notification
-                asyncio.create_task(
-                    asyncio.to_thread(send_lockout_notification, email, ip or 'unknown')
-                )
             raise ValueError("Too many failed login attempts. Please try again in 15 minutes.")
 
     async def _record_login_attempt(self, email: str, ip: str = None, success: bool = False):
-        """Record a login attempt."""
+        """Record a login attempt. Sends lockout notification when threshold is first hit."""
         attempt_id = str(uuid.uuid4())
         success_val = 1 if success else 0
         if self.db.db_type == 'postgres':
@@ -488,3 +495,19 @@ class AuthService:
             "VALUES (?, ?, ?, ?, ?)",
             (attempt_id, email, ip, success_val, time.time())
         )
+
+        # Send lockout notification exactly once — when failed attempts hit the threshold
+        if not success:
+            cutoff = time.time() - BRUTE_FORCE_WINDOW_SECONDS
+            count_row = await self.db.fetchone(
+                "SELECT COUNT(*) as cnt FROM login_attempts "
+                "WHERE email = ? AND attempted_at > ? AND success = 0",
+                (email, cutoff)
+            )
+            if count_row and count_row['cnt'] == BRUTE_FORCE_MAX_ATTEMPTS:
+                import asyncio
+                from auth.email_service import send_lockout_notification
+                asyncio.create_task(
+                    asyncio.to_thread(send_lockout_notification, email, ip or 'unknown')
+                )
+                logger.warning(f"Account locked: {email} ({BRUTE_FORCE_MAX_ATTEMPTS} failed attempts)")

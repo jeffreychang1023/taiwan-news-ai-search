@@ -83,6 +83,7 @@ async def create_session_handler(request: web.Request) -> web.Response:
             accumulated_articles=body.get('accumulated_articles'),
             research_report=body.get('research_report'),
         )
+        fire_and_forget(log_action('session.create', user_id=user_info['id'], org_id=org_id, target_type='session', target_id=session['id']))
         return web.json_response({'success': True, 'session': session}, status=201)
     except Exception as e:
         logger.error(f"Create session error: {e}", exc_info=True)
@@ -181,6 +182,7 @@ async def restore_session_handler(request: web.Request) -> web.Response:
 
     try:
         await _get_service().restore_session(session_id, user_info['id'], org_id)
+        fire_and_forget(log_action('session.restore', user_id=user_info['id'], org_id=org_id, target_type='session', target_id=session_id))
         return web.json_response({'success': True, 'message': 'Session restored'})
     except ValueError as e:
         return web.json_response({'error': str(e)}, status=400)
@@ -216,6 +218,7 @@ async def feedback_handler(request: web.Request) -> web.Response:
         await _get_service().update_session(
             session_id, user_info['id'], org_id, {'user_feedback': feedback}
         )
+        fire_and_forget(log_action('session.feedback', user_id=user_info['id'], org_id=org_id, target_type='session', target_id=session_id, details={'feedback': feedback}))
         return web.json_response({'success': True})
     except Exception as e:
         logger.error(f"Feedback error: {e}", exc_info=True)

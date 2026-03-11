@@ -28,6 +28,7 @@ PUBLIC_ENDPOINTS: Set[str] = {
     '/api/auth/forgot-password',
     '/api/auth/reset-password',
     '/api/auth/refresh',
+    '/api/auth/logout',
 }
 
 
@@ -75,12 +76,6 @@ async def auth_middleware(request: web.Request, handler):
         path.startswith('/html/') or
         path == '/favicon.ico'
     )
-
-    # Special handling for WebSocket paths - they need auth but handle it differently
-    if path.startswith('/chat/ws/'):
-        # For WebSocket upgrade requests, we'll let them through to the handler
-        # which will check auth separately since WebSocket can't use standard HTTP auth
-        return await handler(request)
 
     if is_public:
         # Public endpoint — still try to extract user info if token present (soft auth)

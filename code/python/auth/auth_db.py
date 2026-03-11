@@ -226,12 +226,13 @@ class AuthDB:
                             logger.debug(f"Auth table ensured: {table_name}")
                         except Exception as e:
                             logger.error(f"Failed to create auth table {table_name}: {e}")
+                            raise
 
                     for index_sql in self._get_index_sql():
                         try:
                             await cur.execute(index_sql)
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.warning(f"Index creation skipped: {e}")
 
             logger.info("Auth database initialized (PostgreSQL async)")
         except Exception as e:
@@ -249,12 +250,13 @@ class AuthDB:
                     logger.debug(f"Auth table ensured: {table_name}")
                 except Exception as e:
                     logger.error(f"Failed to create auth table {table_name}: {e}")
+                    raise
 
             for index_sql in self._get_index_sql():
                 try:
                     cursor.execute(index_sql)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning(f"Index creation skipped: {e}")
 
             conn.commit()
             conn.close()

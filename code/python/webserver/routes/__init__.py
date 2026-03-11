@@ -6,7 +6,6 @@ from .health import setup_health_routes
 from .mcp import setup_mcp_routes
 from .a2a import setup_a2a_routes
 from .conversation import setup_conversation_routes
-from .chat import setup_chat_routes
 from .user_data import setup_user_data_routes
 from .auth import setup_auth_routes
 from .sessions import setup_session_routes
@@ -27,7 +26,6 @@ def setup_routes(app):
     setup_mcp_routes(app)
     setup_a2a_routes(app)
     setup_conversation_routes(app)
-    setup_chat_routes(app)
     setup_user_data_routes(app)
     setup_auth_routes(app)
     setup_session_routes(app)
