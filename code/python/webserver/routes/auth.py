@@ -4,11 +4,18 @@ Auth API routes: register, login, token refresh, password reset, org management.
 All handlers directly await async AuthService methods (no asyncio.to_thread).
 """
 
+import os
+
 from aiohttp import web
 from misc.logger.logging_config_helper import get_configured_logger
 from core.audit_service import log_action, fire_and_forget
 
 logger = get_configured_logger("auth_routes")
+
+# BP-5: Only trust X-Forwarded-For from known proxies
+_TRUSTED_PROXIES = set(
+    p.strip() for p in os.environ.get('TRUSTED_PROXIES', '127.0.0.1').split(',') if p.strip()
+)
 
 
 def _get_service():
@@ -20,18 +27,22 @@ def _get_service():
 
 
 def _get_client_ip(request: web.Request) -> str:
-    """Extract client IP from request."""
-    forwarded = request.headers.get('X-Forwarded-For', '')
-    if forwarded:
-        return forwarded.split(',')[0].strip()
+    """Extract client IP, only trusting XFF from known proxies (BP-5)."""
     peername = request.transport.get_extra_info('peername')
-    return peername[0] if peername else '0.0.0.0'
+    direct_ip = peername[0] if peername else '0.0.0.0'
+
+    if direct_ip in _TRUSTED_PROXIES:
+        forwarded = request.headers.get('X-Forwarded-For', '')
+        if forwarded:
+            return forwarded.split(',')[0].strip()
+
+    return direct_ip
 
 
 # ── Auth Routes ───────────────────────────────────────────────────
 
 async def register_handler(request: web.Request) -> web.Response:
-    """POST /api/auth/register"""
+    """POST /api/auth/register — Bootstrap first admin only (B2B)."""
     try:
         body = await request.json()
     except Exception:
@@ -40,17 +51,18 @@ async def register_handler(request: web.Request) -> web.Response:
     email = body.get('email', '')
     password = body.get('password', '')
     name = body.get('name', '')
+    org_name = body.get('org_name', '')
 
     if not email or not password or not name:
         return web.json_response({'error': 'email, password, and name are required'}, status=400)
 
     try:
-        user = await _get_service().register_user(email, password, name)
+        user = await _get_service().register_user(email, password, name, org_name)
         fire_and_forget(log_action(
-            'auth.register',
+            'auth.bootstrap',
             user_id=user.get('id'),
             ip=_get_client_ip(request),
-            details={'email': email, 'name': name},
+            details={'email': email, 'name': name, 'org_name': org_name},
         ))
         return web.json_response({'success': True, 'user': user})
     except ValueError as e:
@@ -102,9 +114,18 @@ async def login_handler(request: web.Request) -> web.Response:
             details={'email': email},
         ))
 
-        # Set refresh token as HttpOnly cookie
+        # BP-1: Set access token as httpOnly cookie (replaces localStorage)
+        access_token = result.pop('access_token')
         refresh_token = result.pop('refresh_token')
         response = web.json_response({'success': True, **result})
+        response.set_cookie(
+            'access_token', access_token,
+            httponly=True,
+            secure=request.secure,
+            samesite='Lax',
+            max_age=15 * 60,  # 15 minutes (match JWT expiry)
+            path='/'
+        )
         response.set_cookie(
             'refresh_token', refresh_token,
             httponly=True,
@@ -145,7 +166,30 @@ async def refresh_handler(request: web.Request) -> web.Response:
 
     try:
         result = await _get_service().refresh_token(refresh_token_value)
-        return web.json_response({'success': True, **result})
+
+        # BP-1: Set new access token cookie
+        access_token = result.pop('access_token')
+        # BP-2: Set rotated refresh token cookie
+        new_refresh_token = result.pop('refresh_token')
+
+        response = web.json_response({'success': True, **result})
+        response.set_cookie(
+            'access_token', access_token,
+            httponly=True,
+            secure=request.secure,
+            samesite='Lax',
+            max_age=15 * 60,
+            path='/'
+        )
+        response.set_cookie(
+            'refresh_token', new_refresh_token,
+            httponly=True,
+            secure=request.secure,
+            samesite='Lax',
+            max_age=7 * 24 * 3600,
+            path='/api/auth'
+        )
+        return response
     except ValueError as e:
         return web.json_response({'error': str(e)}, status=401)
     except Exception as e:
@@ -171,6 +215,7 @@ async def logout_handler(request: web.Request) -> web.Response:
             logger.warning(f"Logout error: {e}")
 
     response = web.json_response({'success': True, 'message': 'Logged out'})
+    response.del_cookie('access_token', path='/')
     response.del_cookie('refresh_token', path='/api/auth')
     return response
 
@@ -238,6 +283,109 @@ async def reset_password_handler(request: web.Request) -> web.Response:
         return web.json_response({'error': str(e)}, status=400)
     except Exception as e:
         logger.error(f"Reset password error: {e}", exc_info=True)
+        return web.json_response({'error': 'Internal server error'}, status=500)
+
+
+# ── Admin Routes (B2B) ────────────────────────────────────────────
+
+async def admin_create_user_handler(request: web.Request) -> web.Response:
+    """POST /api/admin/create-user — Admin creates employee account."""
+    user_info = request.get('user')
+    if not user_info or not user_info.get('authenticated'):
+        return web.json_response({'error': 'Not authenticated'}, status=401)
+
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({'error': 'Invalid JSON'}, status=400)
+
+    email = body.get('email', '')
+    name = body.get('name', '')
+    role = body.get('role', 'member')
+
+    if not email or not name:
+        return web.json_response({'error': 'email and name are required'}, status=400)
+
+    org_id = user_info.get('org_id')
+    if not org_id:
+        return web.json_response({'error': 'No organization context'}, status=400)
+
+    try:
+        result = await _get_service().admin_create_user(email, name, role, org_id, user_info['id'])
+        fire_and_forget(log_action(
+            'admin.create_user',
+            user_id=user_info['id'],
+            org_id=org_id,
+            ip=_get_client_ip(request),
+            details={'email': email, 'name': name, 'role': role},
+        ))
+        return web.json_response({'success': True, 'user': result}, status=201)
+    except ValueError as e:
+        return web.json_response({'error': str(e)}, status=400)
+    except Exception as e:
+        logger.error(f"Admin create user error: {e}", exc_info=True)
+        return web.json_response({'error': 'Internal server error'}, status=500)
+
+
+async def activate_page_handler(request: web.Request) -> web.Response:
+    """GET /api/auth/activate?token=xxx — Show password setup form."""
+    token = request.query.get('token', '')
+    if not token:
+        return web.Response(text='Missing activation token.', content_type='text/html', status=400)
+
+    html = f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Activate Account</title></head>
+<body style="max-width:400px;margin:60px auto;font-family:sans-serif">
+<h2>Set Your Password</h2>
+<form id="f" onsubmit="return go()">
+<input type="hidden" name="token" value="{token}">
+<p><label>Password<br><input type="password" id="pw" required minlength="8" style="width:100%;padding:8px"></label></p>
+<p><label>Confirm<br><input type="password" id="pw2" required style="width:100%;padding:8px"></label></p>
+<p id="err" style="color:red"></p>
+<button type="submit" style="padding:8px 24px">Activate</button>
+</form>
+<script>
+async function go(){{
+  event.preventDefault();
+  const pw=document.getElementById('pw').value, pw2=document.getElementById('pw2').value;
+  if(pw!==pw2){{document.getElementById('err').textContent='Passwords do not match';return}}
+  const r=await fetch('/api/auth/activate',{{method:'POST',headers:{{'Content-Type':'application/json'}},
+    body:JSON.stringify({{token:'{token}',password:pw}})}});
+  const d=await r.json();
+  if(d.success){{document.body.innerHTML='<h2>Account activated!</h2><p><a href="/">Go to login</a></p>'}}
+  else{{document.getElementById('err').textContent=d.error||'Activation failed'}}
+}}
+</script>
+</body></html>"""
+    return web.Response(text=html, content_type='text/html')
+
+
+async def activate_account_handler(request: web.Request) -> web.Response:
+    """POST /api/auth/activate — Employee sets password to activate account."""
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({'error': 'Invalid JSON'}, status=400)
+
+    token = body.get('token', '')
+    password = body.get('password', '')
+
+    if not token or not password:
+        return web.json_response({'error': 'token and password are required'}, status=400)
+
+    try:
+        result = await _get_service().activate_account(token, password)
+        fire_and_forget(log_action(
+            'auth.activate',
+            user_id=result.get('id'),
+            ip=_get_client_ip(request),
+            details={'email': result.get('email')},
+        ))
+        return web.json_response({'success': True, 'user': result})
+    except ValueError as e:
+        return web.json_response({'error': str(e)}, status=400)
+    except Exception as e:
+        logger.error(f"Activate account error: {e}", exc_info=True)
         return web.json_response({'error': 'Internal server error'}, status=500)
 
 
@@ -388,6 +536,11 @@ def setup_auth_routes(app: web.Application):
     app.router.add_get('/api/auth/me', me_handler)
     app.router.add_post('/api/auth/forgot-password', forgot_password_handler)
     app.router.add_post('/api/auth/reset-password', reset_password_handler)
+    app.router.add_get('/api/auth/activate', activate_page_handler)
+    app.router.add_post('/api/auth/activate', activate_account_handler)
+
+    # Admin routes (B2B)
+    app.router.add_post('/api/admin/create-user', admin_create_user_handler)
 
     # Organization routes
     app.router.add_post('/api/org', create_org_handler)
