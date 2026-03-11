@@ -71,23 +71,23 @@ class AuthService:
 
         await self.db.execute(
             "INSERT INTO users (id, email, password_hash, name, email_verification_token, "
-            "email_verification_expires, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (user_id, email, password_hash, name, verification_token, verification_expires, now)
+            "email_verification_expires, email_verified, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (user_id, email, password_hash, name, verification_token, verification_expires, True, now)
         )
 
         # Create organization with admin as owner
         await self.create_organization(org_name or f"{name}'s organization", user_id)
 
-        # BP-4: Non-blocking email
+        # BP-4: Non-blocking email (still send for record, but admin is auto-verified)
         from auth.email_service import send_verification_email
         await asyncio.to_thread(send_verification_email, email, verification_token, name)
 
-        logger.info(f"Bootstrap admin registered: {email} (id={user_id})")
+        logger.info(f"Bootstrap admin registered (auto-verified): {email} (id={user_id})")
         return {
             'id': user_id,
             'email': email,
             'name': name,
-            'email_verified': False,
+            'email_verified': True,
         }
 
     # ── Admin User Creation (B2B) ─────────────────────────────────

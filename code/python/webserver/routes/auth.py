@@ -64,7 +64,7 @@ async def register_handler(request: web.Request) -> web.Response:
             ip=_get_client_ip(request),
             details={'email': email, 'name': name, 'org_name': org_name},
         ))
-        return web.json_response({'success': True, 'user': user})
+        return web.json_response({'success': True, 'user': user}, status=201)
     except ValueError as e:
         return web.json_response({'error': str(e)}, status=400)
     except Exception as e:
@@ -162,7 +162,7 @@ async def refresh_handler(request: web.Request) -> web.Response:
             pass
 
     if not refresh_token_value:
-        return web.json_response({'error': 'Refresh token is required'}, status=400)
+        return web.json_response({'error': 'Refresh token is required'}, status=401)
 
     try:
         result = await _get_service().refresh_token(refresh_token_value)
