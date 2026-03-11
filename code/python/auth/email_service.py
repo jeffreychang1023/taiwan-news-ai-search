@@ -84,6 +84,24 @@ def send_invitation_email(email: str, org_name: str, inviter_name: str, token: s
         print(f"[DEV EMAIL] Invitation URL: {url}", flush=True)
 
 
+def send_activation_email(email: str, token: str, name: str, org_name: str):
+    """Send account activation link (employee sets password)."""
+    url = f"{BASE_URL}/api/auth/activate?token={token}"
+
+    if RESEND_API_KEY:
+        _send_via_resend(
+            to=email,
+            subject=f"Set up your {org_name} account",
+            html=f"<p>Hi {_esc(name)},</p>"
+                 f"<p>Your administrator has created an account for you at <strong>{_esc(org_name)}</strong>.</p>"
+                 f"<p>Please click the link below to set your password and activate your account (valid for 48 hours):</p>"
+                 f'<p><a href="{url}">Activate Account</a></p>'
+        )
+    else:
+        print(f"[DEV EMAIL] Activation email for {email} (org: {org_name})")
+        print(f"[DEV EMAIL] Activation URL: {url}", flush=True)
+
+
 def send_lockout_notification(email: str, ip: str):
     """Notify user that their account has been temporarily locked due to failed login attempts."""
     masked_ip = ip[:ip.rfind('.')] + '.***' if '.' in ip else ip[:len(ip)//2] + '***'

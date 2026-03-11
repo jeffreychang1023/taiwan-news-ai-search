@@ -44,10 +44,16 @@ class AuthService:
     def __init__(self):
         self.db = AuthDB.get_instance()
 
-    # ── Registration ──────────────────────────────────────────────
+    # ── Registration (Bootstrap — First Admin Only) ─────────────
 
-    async def register_user(self, email: str, password: str, name: str) -> Dict[str, Any]:
-        """Register a new user. Returns user dict or raises ValueError."""
+    async def register_user(self, email: str, password: str, name: str,
+                            org_name: str = '') -> Dict[str, Any]:
+        """Register first admin + org. Only works when no organizations exist."""
+        # B2B guard: only allow if no orgs exist (bootstrap)
+        existing_org = await self.db.fetchone("SELECT id FROM organizations LIMIT 1")
+        if existing_org:
+            raise ValueError("System already initialized. Contact your administrator.")
+
         email = email.strip().lower()
         if not re.match(r'^[^@\s]+@[^@\s]+\.[^@\s]+$', email):
             raise ValueError("Invalid email format")
@@ -60,22 +66,23 @@ class AuthService:
         user_id = str(uuid.uuid4())
         password_hash = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
         verification_token = secrets.token_urlsafe(32)
+        verification_expires = time.time() + 48 * 3600  # BP-3: 48h expiry
         now = time.time()
 
         await self.db.execute(
-            "INSERT INTO users (id, email, password_hash, name, email_verification_token, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (user_id, email, password_hash, name, verification_token, now)
+            "INSERT INTO users (id, email, password_hash, name, email_verification_token, "
+            "email_verification_expires, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (user_id, email, password_hash, name, verification_token, verification_expires, now)
         )
 
-        # Auto-create personal organization
-        await self.create_organization(f"{name}'s workspace", user_id)
+        # Create organization with admin as owner
+        await self.create_organization(org_name or f"{name}'s organization", user_id)
 
-        # Send verification email
+        # BP-4: Non-blocking email
         from auth.email_service import send_verification_email
-        send_verification_email(email, verification_token, name)
+        await asyncio.to_thread(send_verification_email, email, verification_token, name)
 
-        logger.info(f"User registered: {email} (id={user_id})")
+        logger.info(f"Bootstrap admin registered: {email} (id={user_id})")
         return {
             'id': user_id,
             'email': email,
@@ -83,19 +90,122 @@ class AuthService:
             'email_verified': False,
         }
 
-    # ── Email Verification ────────────────────────────────────────
+    # ── Admin User Creation (B2B) ─────────────────────────────────
+
+    async def admin_create_user(self, email: str, name: str, role: str,
+                                org_id: str, admin_user_id: str) -> Dict[str, Any]:
+        """Admin creates a user in their org. Employee gets activation email."""
+        email = email.strip().lower()
+        if not re.match(r'^[^@\s]+@[^@\s]+\.[^@\s]+$', email):
+            raise ValueError("Invalid email format")
+
+        # Verify admin has permission
+        membership = await self.db.fetchone(
+            "SELECT role FROM org_memberships WHERE user_id = ? AND org_id = ? AND status = 'active'",
+            (admin_user_id, org_id)
+        )
+        if not membership or membership['role'] != 'admin':
+            raise ValueError("Only admins can create users")
+
+        # Check org member limit
+        org = await self.db.fetchone("SELECT max_members, name FROM organizations WHERE id = ?", (org_id,))
+        if not org:
+            raise ValueError("Organization not found")
+
+        member_count = await self.db.fetchone(
+            "SELECT COUNT(*) as cnt FROM org_memberships WHERE org_id = ? AND status = 'active'",
+            (org_id,)
+        )
+        if member_count['cnt'] >= org['max_members']:
+            raise ValueError("Organization member limit reached")
+
+        existing = await self.db.fetchone("SELECT id FROM users WHERE email = ?", (email,))
+        if existing:
+            raise ValueError("Email already registered")
+
+        user_id = str(uuid.uuid4())
+        activation_token = secrets.token_urlsafe(32)
+        activation_expires = time.time() + 48 * 3600  # 48h to activate
+        now = time.time()
+
+        # Create user without password (activation pending)
+        await self.db.execute(
+            "INSERT INTO users (id, email, password_hash, name, email_verification_token, "
+            "email_verification_expires, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (user_id, email, None, name, activation_token, activation_expires, now)
+        )
+
+        # Create org membership
+        membership_id = str(uuid.uuid4())
+        if role not in ('admin', 'member'):
+            role = 'member'
+        await self.db.execute(
+            "INSERT INTO org_memberships (id, user_id, org_id, role, invited_by, status, accepted_at) "
+            "VALUES (?, ?, ?, ?, ?, 'active', ?)",
+            (membership_id, user_id, org_id, role, admin_user_id, now)
+        )
+
+        # BP-4: Non-blocking activation email
+        from auth.email_service import send_activation_email
+        await asyncio.to_thread(send_activation_email, email, activation_token, name, org['name'])
+
+        logger.info(f"Admin created user: {email} (id={user_id}) in org {org_id}")
+        return {
+            'id': user_id,
+            'email': email,
+            'name': name,
+            'role': role,
+            'activated': False,
+        }
+
+    # ── Account Activation (Employee sets password) ───────────────
+
+    async def activate_account(self, token: str, password: str) -> Dict[str, Any]:
+        """Employee activates account by setting password via activation token."""
+        self._validate_password(password)
+
+        user = await self.db.fetchone(
+            "SELECT id, email, name, email_verification_expires FROM users "
+            "WHERE email_verification_token = ? AND is_active = ? AND password_hash IS NULL",
+            (token, True)
+        )
+        if not user:
+            raise ValueError("Invalid activation token")
+
+        # BP-3: Check token expiry
+        if user.get('email_verification_expires') and user['email_verification_expires'] < time.time():
+            raise ValueError("Activation token expired. Please contact your administrator.")
+
+        password_hash = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+
+        await self.db.execute(
+            "UPDATE users SET password_hash = ?, email_verified = ?, "
+            "email_verification_token = NULL, email_verification_expires = NULL WHERE id = ?",
+            (password_hash, True, user['id'])
+        )
+
+        logger.info(f"Account activated: {user['email']}")
+        return {'id': user['id'], 'email': user['email'], 'name': user['name'], 'activated': True}
+
+    # ── Email Verification (Bootstrap Admin) ──────────────────────
 
     async def verify_email(self, token: str) -> Dict[str, Any]:
-        """Verify user email with token. Returns user dict or raises ValueError."""
+        """Verify admin email with token. Returns user dict or raises ValueError."""
         user = await self.db.fetchone(
-            "SELECT id, email, name FROM users WHERE email_verification_token = ? AND is_active = ?",
+            "SELECT id, email, name, email_verification_expires FROM users "
+            "WHERE email_verification_token = ? AND is_active = ? AND password_hash IS NOT NULL",
             (token, True)
         )
         if not user:
             raise ValueError("Invalid or expired verification token")
 
+        # BP-3: Check token expiry (NULL expires = legacy token, still valid)
+        if user.get('email_verification_expires') and user['email_verification_expires'] < time.time():
+            raise ValueError("Verification token expired. Please request a new one.")
+
         await self.db.execute(
-            "UPDATE users SET email_verified = ?, email_verification_token = NULL WHERE id = ?",
+            "UPDATE users SET email_verified = ?, email_verification_token = NULL, "
+            "email_verification_expires = NULL WHERE id = ?",
             (True, user['id'])
         )
 
@@ -115,8 +225,8 @@ class AuthService:
             (email,)
         )
 
-        # Constant-time comparison: always run bcrypt even if user not found
-        hash_to_check = user['password_hash'] if user else _DUMMY_BCRYPT_HASH
+        # Constant-time comparison: always run bcrypt even if user not found (or not yet activated)
+        hash_to_check = user['password_hash'] if user and user.get('password_hash') else _DUMMY_BCRYPT_HASH
         valid_password = bcrypt.checkpw(password.encode('utf-8'), hash_to_check.encode('utf-8'))
         if not user or not valid_password:
             await self._record_login_attempt(email, ip, success=False)
@@ -162,7 +272,7 @@ class AuthService:
     # ── Token Refresh ─────────────────────────────────────────────
 
     async def refresh_token(self, token: str) -> Dict[str, Any]:
-        """Refresh access token using refresh token."""
+        """Refresh access token using refresh token. BP-2: rotates refresh token."""
         token_hash = hashlib.sha256(token.encode('utf-8')).hexdigest()
 
         row = await self.db.fetchone(
@@ -186,6 +296,12 @@ class AuthService:
         if not is_active:
             raise ValueError("Account is deactivated")
 
+        # BP-2: Revoke old refresh token
+        await self.db.execute(
+            "UPDATE refresh_tokens SET revoked_at = ? WHERE id = ?",
+            (time.time(), row['id'])
+        )
+
         membership = await self.db.fetchone(
             "SELECT org_id, role FROM org_memberships WHERE user_id = ? AND status = 'active' LIMIT 1",
             (row['user_id'],)
@@ -195,9 +311,13 @@ class AuthService:
 
         access_token = self._create_access_token(row['user_id'], row['email'], row['name'], org_id, role)
 
+        # BP-2: Issue new refresh token
+        new_refresh_token = await self._create_refresh_token(row['user_id'])
+
         logger.info(f"Token refreshed for user: {row['email']}")
         return {
             'access_token': access_token,
+            'refresh_token': new_refresh_token,
             'token_type': 'Bearer',
             'expires_in': ACCESS_TOKEN_EXPIRE_SECONDS,
         }
@@ -234,8 +354,9 @@ class AuthService:
             (reset_token, expires, user['id'])
         )
 
+        # BP-4: Non-blocking email
         from auth.email_service import send_password_reset_email
-        send_password_reset_email(email, reset_token, user['name'])
+        await asyncio.to_thread(send_password_reset_email, email, reset_token, user['name'])
 
         logger.info(f"Password reset requested for: {email}")
         return True
@@ -330,8 +451,10 @@ class AuthService:
         org_row = await self.db.fetchone("SELECT name FROM organizations WHERE id = ?", (org_id,))
         inviter_row = await self.db.fetchone("SELECT name FROM users WHERE id = ?", (invited_by,))
 
+        # BP-4: Non-blocking email
         from auth.email_service import send_invitation_email
-        send_invitation_email(
+        await asyncio.to_thread(
+            send_invitation_email,
             email,
             org_row['name'] if org_row else 'Organization',
             inviter_row['name'] if inviter_row else 'Someone',

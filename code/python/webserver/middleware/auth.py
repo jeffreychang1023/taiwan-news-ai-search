@@ -29,6 +29,7 @@ PUBLIC_ENDPOINTS: Set[str] = {
     '/api/auth/reset-password',
     '/api/auth/refresh',
     '/api/auth/logout',
+    '/api/auth/activate',
 }
 
 
@@ -37,7 +38,7 @@ def _try_soft_auth(request: web.Request) -> None:
     auth_header = request.headers.get('Authorization', '')
     token = auth_header[7:] if auth_header.startswith('Bearer ') else None
     if not token:
-        token = request.cookies.get('auth_token')
+        token = request.cookies.get('access_token')
     if not token:
         return
 
@@ -90,13 +91,13 @@ async def auth_middleware(request: web.Request, handler):
     if auth_header.startswith('Bearer '):
         auth_token = auth_header[7:]
 
-    # Check cookie (for web UI)
+    # BP-1: Check httpOnly cookie (primary auth for web UI)
     if not auth_token:
-        auth_cookie = request.cookies.get('auth_token')
+        auth_cookie = request.cookies.get('access_token')
         if auth_cookie:
             auth_token = auth_cookie
 
-    # Check query parameter (for SSE connections that can't set headers)
+    # Check query parameter (for SSE connections that can't set cookies/headers)
     if not auth_token and request.method == 'GET':
         auth_token = request.query.get('auth_token')
 
