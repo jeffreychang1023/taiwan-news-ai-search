@@ -50,32 +50,40 @@ jobs:
 
       - name: LINE Notify - Success
         if: success()
+        env:
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+          COMMIT_SHA: ${{ github.sha }}
+          LINE_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+          LINE_USER: ${{ secrets.LINE_DESTINATION_USER_ID }}
         run: |
-          COMMIT_MSG=$(echo '${{ github.event.head_commit.message }}' | head -1)
-          COMMIT_SHA="${{ github.sha }}"
+          SHORT_SHA="${COMMIT_SHA:0:7}"
+          FIRST_LINE=$(echo "$COMMIT_MSG" | head -1)
+          jq -n --arg to "$LINE_USER" \
+            --arg text "[Deploy OK] twdubao.com
+${SHORT_SHA}: ${FIRST_LINE}" \
+            '{to: $to, messages: [{type: "text", text: $text}]}' | \
           curl -s -X POST https://api.line.me/v2/bot/message/push \
             -H "Content-Type: application/json" \
-            -H "Authorization: Bearer ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}" \
-            -d "{
-              \"to\": \"${{ secrets.LINE_DESTINATION_USER_ID }}\",
-              \"messages\": [{
-                \"type\": \"text\",
-                \"text\": \"[Deploy OK] twdubao.com\n${COMMIT_SHA:0:7}: ${COMMIT_MSG}\"
-              }]
-            }"
+            -H "Authorization: Bearer ${LINE_TOKEN}" \
+            -d @-
 
       - name: LINE Notify - Failure
         if: failure()
+        env:
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+          COMMIT_SHA: ${{ github.sha }}
+          LINE_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+          LINE_USER: ${{ secrets.LINE_DESTINATION_USER_ID }}
+          RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          COMMIT_MSG=$(echo '${{ github.event.head_commit.message }}' | head -1)
-          COMMIT_SHA="${{ github.sha }}"
+          SHORT_SHA="${COMMIT_SHA:0:7}"
+          FIRST_LINE=$(echo "$COMMIT_MSG" | head -1)
+          jq -n --arg to "$LINE_USER" \
+            --arg text "[Deploy FAILED] twdubao.com
+${SHORT_SHA}: ${FIRST_LINE}
+Check: ${RUN_URL}" \
+            '{to: $to, messages: [{type: "text", text: $text}]}' | \
           curl -s -X POST https://api.line.me/v2/bot/message/push \
             -H "Content-Type: application/json" \
-            -H "Authorization: Bearer ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}" \
-            -d "{
-              \"to\": \"${{ secrets.LINE_DESTINATION_USER_ID }}\",
-              \"messages\": [{
-                \"type\": \"text\",
-                \"text\": \"[Deploy FAILED] twdubao.com\n${COMMIT_SHA:0:7}: ${COMMIT_MSG}\nCheck: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\"
-              }]
-            }"
+            -H "Authorization: Bearer ${LINE_TOKEN}" \
+            -d @-
