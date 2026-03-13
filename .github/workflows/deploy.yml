@@ -38,7 +38,7 @@ jobs:
             echo "=== Health Check ==="
             for i in 1 2 3 4 5 6; do
               sleep 10
-              if curl -sf http://localhost:8000/health > /dev/null 2>&1; then
+              if curl -sf http://localhost/health > /dev/null 2>&1; then
                 echo "Health check passed on attempt $i"
                 exit 0
               fi
