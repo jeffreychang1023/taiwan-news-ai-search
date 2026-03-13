@@ -1,0 +1,73 @@
+name: Deploy to VPS
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'code/**'
+      - 'static/**'
+      - 'config/**'
+      - 'Dockerfile'
+      - 'docker-compose.production.yml'
+      - 'nginx.conf'
+      - 'infra/**'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1
+        id: deploy
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USERNAME }}
+          key: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+          port: ${{ secrets.VPS_SSH_PORT }}
+          script_stop: true
+          script: |
+            cd /root/nlweb
+            echo "=== Git Pull ==="
+            git fetch origin main
+            git reset --hard origin/main
+            echo "=== Docker Rebuild ==="
+            docker compose -f docker-compose.production.yml up -d --build
+            echo "=== Health Check ==="
+            sleep 10
+            curl -f --retry 3 --retry-delay 5 http://localhost:8000/health
+            echo ""
+            echo "=== Deploy Complete ==="
+
+      - name: LINE Notify - Success
+        if: success()
+        run: |
+          COMMIT_MSG=$(echo '${{ github.event.head_commit.message }}' | head -1)
+          COMMIT_SHA="${{ github.sha }}"
+          curl -s -X POST https://api.line.me/v2/bot/message/push \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}" \
+            -d "{
+              \"to\": \"${{ secrets.LINE_DESTINATION_USER_ID }}\",
+              \"messages\": [{
+                \"type\": \"text\",
+                \"text\": \"[Deploy OK] twdubao.com\n${COMMIT_SHA:0:7}: ${COMMIT_MSG}\"
+              }]
+            }"
+
+      - name: LINE Notify - Failure
+        if: failure()
+        run: |
+          COMMIT_MSG=$(echo '${{ github.event.head_commit.message }}' | head -1)
+          COMMIT_SHA="${{ github.sha }}"
+          curl -s -X POST https://api.line.me/v2/bot/message/push \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}" \
+            -d "{
+              \"to\": \"${{ secrets.LINE_DESTINATION_USER_ID }}\",
+              \"messages\": [{
+                \"type\": \"text\",
+                \"text\": \"[Deploy FAILED] twdubao.com\n${COMMIT_SHA:0:7}: ${COMMIT_MSG}\nCheck: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\"
+              }]
+            }"
