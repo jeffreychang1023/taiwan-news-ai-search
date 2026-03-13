@@ -26,8 +26,8 @@ jobs:
           username: ${{ secrets.VPS_USERNAME }}
           key: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
           port: ${{ secrets.VPS_SSH_PORT }}
-          script_stop: true
           script: |
+            set -e
             cd /root/nlweb
             echo "=== Git Pull ==="
             git fetch origin main
