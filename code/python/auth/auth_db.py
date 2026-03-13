@@ -57,7 +57,10 @@ class AuthDB:
         if db_path is None:
             db_path = get_project_root_db_path()
 
-        self.database_url = os.environ.get('DATABASE_URL') or os.environ.get('ANALYTICS_DATABASE_URL')
+        # Unified: prefer POSTGRES_CONNECTION_STRING, fall back to DATABASE_URL / ANALYTICS_DATABASE_URL (legacy)
+        self.database_url = (os.environ.get('POSTGRES_CONNECTION_STRING')
+                             or os.environ.get('DATABASE_URL')
+                             or os.environ.get('ANALYTICS_DATABASE_URL'))
         self.db_path = Path(db_path)
         self.db_type = 'postgres' if self.database_url and POSTGRES_AVAILABLE else 'sqlite'
         self._initialized = False

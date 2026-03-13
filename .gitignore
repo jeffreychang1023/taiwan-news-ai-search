@@ -3,6 +3,11 @@
 ##
 ## Get latest from https://github.com/github/gitignore/blob/main/VisualStudio.gitignore
 
+# Secrets / Certificates — NEVER commit
+docs/cloudflare.txt
+*.pem
+*.key
+
 # User-specific files
 *.rsuser
 *.suo
@@ -530,6 +535,11 @@ tests/architecture_dev/*~
 # Project indexer database
 tools/project_index.db
 project_index.db
+
+# Analytics SQLite (local development only)
+data/analytics/*.db
+data/analytics/*.db-journal
+data/analytics/*.db-wal
 
 # Legacy NLWeb original files (not used in news search project)
 legacy/

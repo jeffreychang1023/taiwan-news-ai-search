@@ -16,6 +16,10 @@ from aiohttp import web
 import yaml
 from typing import Optional, Dict, Any
 
+# Fix psycopg async on Windows: ProactorEventLoop is incompatible with psycopg AsyncConnection
+if sys.platform == 'win32':
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -147,6 +151,13 @@ class AioHTTPServer:
         except Exception as e:
             logger.error(f"Auth DB initialization failed: {e}", exc_info=True)
 
+        # Initialize analytics database (idempotent — creates any missing tables)
+        try:
+            from core.analytics_db import AnalyticsDB
+            await AnalyticsDB.get_instance().initialize()
+        except Exception as e:
+            logger.error(f"Analytics DB initialization failed: {e}", exc_info=True)
+
         # Create shared client session
         timeout = aiohttp.ClientTimeout(total=30)
         app['client_session'] = aiohttp.ClientSession(timeout=timeout)
@@ -187,6 +198,14 @@ class AioHTTPServer:
             from auth.auth_db import AuthDB
             auth_db = AuthDB.get_instance()
             await auth_db.close()
+        except Exception:
+            pass
+
+        # Close analytics DB connection pool
+        try:
+            from core.analytics_db import AnalyticsDB
+            analytics_db = AnalyticsDB.get_instance()
+            await analytics_db.close()
         except Exception:
             pass
     
