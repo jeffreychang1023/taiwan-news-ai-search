@@ -58,9 +58,8 @@ jobs:
         run: |
           SHORT_SHA="${COMMIT_SHA:0:7}"
           FIRST_LINE=$(echo "$COMMIT_MSG" | head -1)
-          jq -n --arg to "$LINE_USER" \
-            --arg text "[Deploy OK] twdubao.com
-${SHORT_SHA}: ${FIRST_LINE}" \
+          TEXT=$(printf '[Deploy OK] twdubao.com\n%s: %s' "$SHORT_SHA" "$FIRST_LINE")
+          jq -n --arg to "$LINE_USER" --arg text "$TEXT" \
             '{to: $to, messages: [{type: "text", text: $text}]}' | \
           curl -s -X POST https://api.line.me/v2/bot/message/push \
             -H "Content-Type: application/json" \
@@ -78,10 +77,8 @@ ${SHORT_SHA}: ${FIRST_LINE}" \
         run: |
           SHORT_SHA="${COMMIT_SHA:0:7}"
           FIRST_LINE=$(echo "$COMMIT_MSG" | head -1)
-          jq -n --arg to "$LINE_USER" \
-            --arg text "[Deploy FAILED] twdubao.com
-${SHORT_SHA}: ${FIRST_LINE}
-Check: ${RUN_URL}" \
+          TEXT=$(printf '[Deploy FAILED] twdubao.com\n%s: %s\nCheck: %s' "$SHORT_SHA" "$FIRST_LINE" "$RUN_URL")
+          jq -n --arg to "$LINE_USER" --arg text "$TEXT" \
             '{to: $to, messages: [{type: "text", text: $text}]}' | \
           curl -s -X POST https://api.line.me/v2/bot/message/push \
             -H "Content-Type: application/json" \
