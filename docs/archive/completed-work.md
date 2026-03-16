@@ -806,6 +806,47 @@ Push to main → GitHub Actions → SSH to VPS → git pull + docker compose reb
 
 ---
 
+## ✅ Track AC：Login 系統 B2B Production Ready（2026-03-16）
+
+**目標**：補齊 Login 系統 B2B production 所需的 API、測試、前端功能，達到可上線狀態。
+
+### Commits
+
+| Commit | 內容 |
+|--------|------|
+| `49997e2` | Bug fixes：SQLite boolean compat、datetime fix、PUBLIC_ENDPOINTS 加 `/ask`/`/api/deep_research`/`/api/feedback`、route ordering |
+| `6f00022` | 113/113 tests pass，適配 B2B bootstrap model |
+| `17726b5` + `0960bdc` | 5 個新後端 API |
+
+### 新增 API
+
+| Endpoint | 說明 |
+|----------|------|
+| `POST /api/auth/change-password` | 已登入改密碼 |
+| `POST /api/auth/logout-all` | 登出全部裝置 |
+| `POST /api/admin/logout-user/{user_id}` | Admin 強制登出 |
+| `PATCH /api/admin/user/{user_id}/active` | 停用/啟用帳號 |
+| `DELETE /api/admin/user/{user_id}` | 刪除帳號 |
+| `PATCH /api/admin/user/{user_id}/role` | 修改角色 |
+
+### 前端實作
+
+- Auth guard：未登入只顯示 login modal，不渲染主介面
+- 改密碼 modal
+- 登出 hover dropdown（登出 + 登出全部裝置）
+- Admin org modal 擴充：角色切換、停用/啟用、強制登出、刪除
+
+### 確認項目
+
+- Multi-org session 隔離：已有（org_id filter 早已實作於 session_service）
+- 強制登入：`/ask`、`/api/deep_research`、`/api/feedback` 從 PUBLIC_ENDPOINTS 移除
+
+### 決策
+
+- decisions.md #42：Transactional email 採 Resend + Cloudflare Email Routing
+
+---
+
 ## ✅ Track AA：Zoe Plan Phase 2 — /delegate + /update-docs 擴充（2026-03-04）
 
 **目標**：建立 Zoe 智慧派工 skill 與文件更新 skill 擴充。

@@ -5,6 +5,8 @@ All handlers directly await async AuthService methods (no asyncio.to_thread).
 """
 
 import os
+import json
+from html import escape as _html_escape
 
 from aiohttp import web
 from misc.logger.logging_config_helper import get_configured_logger
@@ -459,6 +461,8 @@ async def admin_set_user_active_handler(request: web.Request) -> web.Response:
         ))
         action = 'activated' if is_active else 'deactivated'
         return web.json_response({'success': True, 'message': f'User {action}'})
+    except PermissionError as e:
+        return web.json_response({'error': str(e)}, status=403)
     except ValueError as e:
         return web.json_response({'error': str(e)}, status=400)
     except Exception as e:
@@ -487,6 +491,8 @@ async def admin_delete_user_handler(request: web.Request) -> web.Response:
             details={'target_user_id': target_user_id},
         ))
         return web.json_response({'success': True, 'message': 'User deleted'})
+    except PermissionError as e:
+        return web.json_response({'error': str(e)}, status=403)
     except ValueError as e:
         return web.json_response({'error': str(e)}, status=400)
     except Exception as e:
@@ -524,6 +530,8 @@ async def admin_change_role_handler(request: web.Request) -> web.Response:
             details={'target_user_id': target_user_id, 'new_role': role},
         ))
         return web.json_response({'success': True, 'message': f'Role updated to {role}'})
+    except PermissionError as e:
+        return web.json_response({'error': str(e)}, status=403)
     except ValueError as e:
         return web.json_response({'error': str(e)}, status=400)
     except Exception as e:
@@ -537,12 +545,17 @@ async def activate_page_handler(request: web.Request) -> web.Response:
     if not token:
         return web.Response(text='Missing activation token.', content_type='text/html', status=400)
 
+    # C-1: Escape token for safe use in HTML attribute (html context)
+    # and produce a JS string literal via json.dumps (js context) — no f-string interpolation
+    safe_token_attr = _html_escape(token, quote=True)
+    safe_token_js = json.dumps(token)  # produces "\"...\""  with all special chars escaped
+
     html = f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>Activate Account</title></head>
 <body style="max-width:400px;margin:60px auto;font-family:sans-serif">
 <h2>Set Your Password</h2>
 <form id="f" onsubmit="return go()">
-<input type="hidden" name="token" value="{token}">
+<input type="hidden" id="tokenField" name="token" value="{safe_token_attr}">
 <p><label>Password<br><input type="password" id="pw" required minlength="8" style="width:100%;padding:8px"></label></p>
 <p><label>Confirm<br><input type="password" id="pw2" required style="width:100%;padding:8px"></label></p>
 <p id="err" style="color:red"></p>
@@ -553,8 +566,9 @@ async function go(){{
   event.preventDefault();
   const pw=document.getElementById('pw').value, pw2=document.getElementById('pw2').value;
   if(pw!==pw2){{document.getElementById('err').textContent='Passwords do not match';return}}
+  const token=document.getElementById('tokenField').value;
   const r=await fetch('/api/auth/activate',{{method:'POST',headers:{{'Content-Type':'application/json'}},
-    body:JSON.stringify({{token:'{token}',password:pw}})}});
+    body:JSON.stringify({{token:token,password:pw}})}});
   const d=await r.json();
   if(d.success){{document.body.innerHTML='<h2>Account activated!</h2><p><a href="/">Go to login</a></p>'}}
   else{{document.getElementById('err').textContent=d.error||'Activation failed'}}

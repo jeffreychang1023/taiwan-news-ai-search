@@ -1,7 +1,7 @@
 # Login System Specification
 
 > **Owner**: NLWeb Team (接手自外部 dev)
-> **Last Updated**: 2026-03-05
+> **Last Updated**: 2026-03-16
 > **Source repo**: `c0925028920-cpu/taiwan-news-ai-search-RG`
 
 ---
@@ -182,6 +182,22 @@
 | DELETE | `/api/org/{id}/members/{user_id}` | 移除成員 |
 | POST | `/api/org/accept-invite` | 接受邀請 |
 
+**新增 Auth（2026-03-16）**:
+
+| Method | Endpoint | 說明 |
+|--------|----------|------|
+| POST | `/api/auth/change-password` | 已登入改密碼 |
+| POST | `/api/auth/logout-all` | 登出全部裝置（撤銷所有 refresh token） |
+
+**新增 Admin（2026-03-16）**:
+
+| Method | Endpoint | 說明 |
+|--------|----------|------|
+| POST | `/api/admin/logout-user/{user_id}` | Admin 強制登出指定用戶 |
+| PATCH | `/api/admin/user/{user_id}/active` | 停用/啟用帳號 |
+| DELETE | `/api/admin/user/{user_id}` | 刪除帳號 |
+| PATCH | `/api/admin/user/{user_id}/role` | 修改角色 |
+
 **Cookie 設定**: `Set-Cookie: refresh_token` (HttpOnly, Secure=request.secure, SameSite=Lax, path=/api/auth)
 
 ### 1D — Auth Middleware
@@ -331,7 +347,7 @@ Infra migration 將 Qdrant 替換為 PostgreSQL pgvector。以下 login 修改**
 
 | # | 問題 | 嚴重度 | 說明 |
 |---|------|--------|------|
-| 1 | **Tests 不存在** | High | Spec 宣稱 69 tests，repo 裡 0 個 test 檔案。需重寫 |
+| ~~1~~ | ~~**Tests 不存在**~~ | ~~High~~ | ✅ 已完成（2026-03-16）：113/113 tests pass，適配 B2B bootstrap model |
 | 2 | ~~baseHandler.py 未改~~ | ~~High~~ | auth middleware soft-auth + api.py 注入 user_id/org_id（2026-03-05） |
 | 3 | ~~Rate limit 過寬~~ | ~~Medium~~ | ✅ 已調緊至 production 值（2026-03-05） |
 | 4 | ~~org_id 查詢 filter 缺失~~ | ~~Medium~~ | list/delete 已加 org_id filter（2026-03-05） |
@@ -409,13 +425,13 @@ Infra migration 將 Qdrant 替換為 PostgreSQL pgvector。以下 login 修改**
 | `static/news-search.js` | Yes | AuthManager + SessionManager |
 | `static/news-search.css` | Yes | Modal styles |
 
-### 需要但不存在的檔案
+### 測試檔案（2026-03-16 新增）
 
 | 檔案 | 說明 |
 |------|------|
-| `tests/test_auth_service.py` | 需重寫 |
-| `tests/test_auth_middleware.py` | 需重寫 |
-| `tests/test_session_service.py` | 需重寫 |
+| `tests/test_auth_service.py` | 已建立，含 B2B bootstrap model |
+| `tests/test_auth_middleware.py` | 已建立 |
+| `tests/test_session_service.py` | 已建立 |
 
 ### 刪除的檔案（已確認）
 

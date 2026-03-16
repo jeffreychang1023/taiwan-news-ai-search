@@ -517,13 +517,13 @@ class TestSetUserActive:
     @pytest.mark.asyncio
     async def test_cannot_deactivate_self(self, service, _no_email):
         admin_id, org_id, _ = await self._setup_admin_and_member(service)
-        with pytest.raises(ValueError, match="Cannot deactivate your own account"):
+        with pytest.raises(PermissionError, match="Cannot deactivate your own account"):
             await service.set_user_active(admin_id, False, admin_id, org_id)
 
     @pytest.mark.asyncio
     async def test_non_admin_cannot_deactivate(self, service, _no_email):
         admin_id, org_id, member_id = await self._setup_admin_and_member(service)
-        with pytest.raises(ValueError, match="Only admins"):
+        with pytest.raises(PermissionError, match="Only admins"):
             await service.set_user_active(admin_id, False, member_id, org_id)
 
 
@@ -576,13 +576,13 @@ class TestDeleteUser:
     @pytest.mark.asyncio
     async def test_cannot_delete_self(self, service, _no_email):
         admin_id, org_id, _ = await self._setup_admin_and_member(service)
-        with pytest.raises(ValueError, match="Cannot delete your own account"):
+        with pytest.raises(PermissionError, match="Cannot delete your own account"):
             await service.delete_user(admin_id, admin_id, org_id)
 
     @pytest.mark.asyncio
     async def test_non_admin_cannot_delete(self, service, _no_email):
         admin_id, org_id, member_id = await self._setup_admin_and_member(service)
-        with pytest.raises(ValueError, match="Only admins"):
+        with pytest.raises(PermissionError, match="Only admins"):
             await service.delete_user(admin_id, member_id, org_id)
 
 
@@ -629,13 +629,13 @@ class TestChangeMemberRole:
     @pytest.mark.asyncio
     async def test_cannot_change_own_role(self, service, _no_email):
         admin_id, org_id, _ = await self._setup_admin_and_member(service)
-        with pytest.raises(ValueError, match="Cannot change your own role"):
+        with pytest.raises(PermissionError, match="Cannot change your own role"):
             await service.change_member_role(org_id, admin_id, "member", admin_id)
 
     @pytest.mark.asyncio
     async def test_non_admin_cannot_change_role(self, service, _no_email):
         admin_id, org_id, member_id = await self._setup_admin_and_member(service)
-        with pytest.raises(ValueError, match="Only admins"):
+        with pytest.raises(PermissionError, match="Only admins"):
             await service.change_member_role(org_id, admin_id, "member", member_id)
 
 

@@ -19,10 +19,6 @@ PUBLIC_ENDPOINTS: Set[str] = {
     # Static files
     '/static',
     '/html',
-    # Allow public access to search endpoints for now (can be changed)
-    '/ask',
-    '/api/deep_research',
-    '/api/feedback',
     # Auth endpoints (must be public for login/register flow)
     '/api/auth/register',
     '/api/auth/login',

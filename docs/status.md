@@ -2,7 +2,7 @@
 
 > 合併自 CONTEXT.md + NEXT_STEPS.md。單一狀態檔案。
 
-**最後更新**：2026-03-13
+**最後更新**：2026-03-16
 
 ---
 
@@ -34,6 +34,14 @@
   - LINE Bot push message 通知 success/failure
   - 6 次迭代修復：SSH key 格式、health check port/retry、commit message shell escaping、YAML newline
 - **GCP Daily Cron**（2026-03-11）：每天 05:00 台灣時間自動 newest scan
+- **Login 系統 B2B Production Ready**（2026-03-16）：
+  - Bug fixes（SQLite boolean compat、datetime fix、PUBLIC_ENDPOINTS、route ordering）
+  - 113/113 tests pass（適配 B2B bootstrap model）
+  - 6 個新後端 API：`change-password`、`logout-all`、admin `logout-user`、`user/active`、`user` DELETE、`user/role`
+  - 強制登入：`/ask`、`/api/deep_research`、`/api/feedback` 從 PUBLIC_ENDPOINTS 移除
+  - Multi-org session 隔離確認（org_id filter 已有）
+  - 前端：auth guard、改密碼 modal、登出 dropdown、admin org modal 擴充（角色切換、停用/啟用、強制登出、刪除）
+  - 決策記錄：Transactional email 用 Resend + Cloudflare Email Routing（decisions.md #42）
 - **Login B2B + Best Practice**（2026-03-11）：B2B bootstrap + httpOnly cookie + token rotation + async email + XFF validation
 - **Login 系統合併**（2026-03-09）：Email/Password + JWT + Session + Audit
 - **Infra Migration Phase 2**：PostgreSQL hybrid search + BM25 清理 + Reranking 4-stage pipeline
@@ -61,11 +69,10 @@
 ## 待處理
 
 ### Login 系統後續
-- SEC-1/9/18/19：JWT 認證串接（Login 系統已合併，需完成 baseHandler user_id 注入）
-- Tests 重寫（auth_service / auth_middleware / session_service）
-- org_id 查詢 filter（user_data_manager list/delete 缺 org_id）
-- query_logger 加 org_id
-- Qdrant 移除後重寫 user_qdrant_provider → PostgreSQL
+- Email 服務上線：CEO 註冊 Resend + Cloudflare DNS 設定（decisions.md #42）
+- E2E 測試（login 系統）
+- Code review（login 系統新 API）
+- 前端改動 commit（feature/ui-redesign branch 含 auth guard + admin modal）
 
 ### Code Review 後續
 - RNK-7：BM25 corpus stats 重建（title weighting 改變）

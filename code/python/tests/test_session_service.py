@@ -451,6 +451,54 @@ class TestVisibility:
             await svc.set_visibility("nonexistent", USER_ID, ORG_ID, 'team')
 
 
+# ── Org ID Isolation Tests ───────────────────────────────────────
+
+
+OTHER_ORG_ID = str(uuid.uuid4())
+
+
+class TestOrgIsolation:
+    """Verify that session operations enforce org_id boundaries (multi-org data isolation)."""
+
+    @pytest.mark.asyncio
+    async def test_get_session_wrong_org_returns_none(self, svc):
+        """A session created in ORG_ID must not be accessible with a different org_id."""
+        created = await svc.create_session(USER_ID, ORG_ID, title="Org A Secret")
+        # Attempt access with a different org_id
+        result = await svc.get_session(created['id'], USER_ID, OTHER_ORG_ID)
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_list_sessions_excludes_other_org(self, svc):
+        """list_sessions with a different org_id must not return sessions from ORG_ID."""
+        await svc.create_session(USER_ID, ORG_ID, title="Org A Session")
+        # Same user_id but different org
+        sessions = await svc.list_sessions(USER_ID, OTHER_ORG_ID)
+        assert len(sessions) == 0
+
+    @pytest.mark.asyncio
+    async def test_update_session_wrong_org_no_effect(self, svc):
+        """update_session with wrong org_id must not modify the session."""
+        created = await svc.create_session(USER_ID, ORG_ID, title="Original Title")
+        # Try to update using a different org_id
+        await svc.update_session(created['id'], USER_ID, OTHER_ORG_ID, {'title': 'Hacked Title'})
+        # Original session must be unchanged
+        session = await svc.get_session(created['id'], USER_ID, ORG_ID)
+        assert session is not None
+        assert session['title'] == "Original Title"
+
+    @pytest.mark.asyncio
+    async def test_delete_session_wrong_org_no_effect(self, svc):
+        """delete_session with wrong org_id must not soft-delete the session."""
+        created = await svc.create_session(USER_ID, ORG_ID, title="Keep Me")
+        # Attempt delete with wrong org
+        await svc.delete_session(created['id'], USER_ID, OTHER_ORG_ID)
+        # Session must still be accessible under the correct org
+        session = await svc.get_session(created['id'], USER_ID, ORG_ID)
+        assert session is not None
+        assert session['title'] == "Keep Me"
+
+
 # ── Export Tests ────────────────────────────────────────────────
 
 

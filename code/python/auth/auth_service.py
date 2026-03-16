@@ -457,14 +457,14 @@ class AuthService:
                                admin_user_id: str, org_id: str) -> bool:
         """Admin activates or deactivates a user. Deactivation also revokes all tokens."""
         if target_user_id == admin_user_id:
-            raise ValueError("Cannot deactivate your own account")
+            raise PermissionError("Cannot deactivate your own account")
 
         membership = await self.db.fetchone(
             "SELECT role FROM org_memberships WHERE user_id = ? AND org_id = ? AND status = 'active'",
             (admin_user_id, org_id)
         )
         if not membership or membership['role'] != 'admin':
-            raise ValueError("Only admins can change user status")
+            raise PermissionError("Only admins can change user status")
 
         # Verify target is in same org
         target_membership = await self.db.fetchone(
@@ -494,14 +494,14 @@ class AuthService:
     async def delete_user(self, target_user_id: str, admin_user_id: str, org_id: str) -> bool:
         """Soft-delete a user: revoke tokens, remove from org, deactivate, mangle email."""
         if target_user_id == admin_user_id:
-            raise ValueError("Cannot delete your own account")
+            raise PermissionError("Cannot delete your own account")
 
         membership = await self.db.fetchone(
             "SELECT role FROM org_memberships WHERE user_id = ? AND org_id = ? AND status = 'active'",
             (admin_user_id, org_id)
         )
         if not membership or membership['role'] != 'admin':
-            raise ValueError("Only admins can delete users")
+            raise PermissionError("Only admins can delete users")
 
         target_membership = await self.db.fetchone(
             "SELECT id FROM org_memberships WHERE user_id = ? AND org_id = ? AND status = 'active'",
@@ -537,7 +537,7 @@ class AuthService:
                                   new_role: str, admin_user_id: str) -> bool:
         """Change a member's role in an organization."""
         if target_user_id == admin_user_id:
-            raise ValueError("Cannot change your own role")
+            raise PermissionError("Cannot change your own role")
 
         if new_role not in ('admin', 'member'):
             raise ValueError("role must be 'admin' or 'member'")
@@ -547,7 +547,7 @@ class AuthService:
             (admin_user_id, org_id)
         )
         if not membership or membership['role'] != 'admin':
-            raise ValueError("Only admins can change member roles")
+            raise PermissionError("Only admins can change member roles")
 
         target_membership = await self.db.fetchone(
             "SELECT id FROM org_memberships WHERE user_id = ? AND org_id = ? AND status = 'active'",

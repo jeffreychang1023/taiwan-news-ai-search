@@ -94,13 +94,6 @@ class TestPublicEndpoints:
             assert data['user'] is None
 
     @pytest.mark.asyncio
-    async def test_ask_no_auth(self, monkeypatch):
-        monkeypatch.setenv('JWT_SECRET', JWT_SECRET)
-        async with TestClient(TestServer(_build_app())) as client:
-            resp = await client.get('/ask')
-            assert resp.status == 200
-
-    @pytest.mark.asyncio
     async def test_sites_no_auth(self, monkeypatch):
         monkeypatch.setenv('JWT_SECRET', JWT_SECRET)
         async with TestClient(TestServer(_build_app())) as client:
@@ -149,6 +142,24 @@ class TestSoftAuth:
 
 
 class TestProtectedEndpoints:
+
+    @pytest.mark.asyncio
+    async def test_ask_no_auth_returns_401(self, monkeypatch):
+        """/ask is no longer public — unauthenticated requests must get 401."""
+        monkeypatch.setenv('JWT_SECRET', JWT_SECRET)
+        monkeypatch.delenv('NLWEB_DEV_AUTH_BYPASS', raising=False)
+        async with TestClient(TestServer(_build_app())) as client:
+            resp = await client.get('/ask')
+            assert resp.status == 401
+            data = await resp.json()
+            assert data['type'] == 'auth_required'
+
+    @pytest.mark.asyncio
+    async def test_ask_not_in_public_endpoints(self, monkeypatch):
+        """/ask must not appear in PUBLIC_ENDPOINTS."""
+        assert '/ask' not in PUBLIC_ENDPOINTS
+        assert '/api/deep_research' not in PUBLIC_ENDPOINTS
+        assert '/api/feedback' not in PUBLIC_ENDPOINTS
 
     @pytest.mark.asyncio
     async def test_no_token_returns_401(self, monkeypatch):
