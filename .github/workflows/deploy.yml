@@ -1,0 +1,86 @@
+name: Deploy to VPS
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'code/**'
+      - 'static/**'
+      - 'config/**'
+      - 'Dockerfile'
+      - 'docker-compose.production.yml'
+      - 'nginx.conf'
+      - 'infra/**'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1
+        id: deploy
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USERNAME }}
+          key: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+          port: ${{ secrets.VPS_SSH_PORT }}
+          command_timeout: 10m
+          script: |
+            set -e
+            cd /root/nlweb
+            echo "=== Git Pull ==="
+            git fetch origin main
+            git reset --hard origin/main
+            echo "=== Docker Rebuild ==="
+            docker compose -f docker-compose.production.yml up -d --build
+            echo "=== Health Check ==="
+            for i in 1 2 3 4 5 6; do
+              sleep 10
+              if curl -sf http://localhost/health > /dev/null 2>&1; then
+                echo "Health check passed on attempt $i"
+                exit 0
+              fi
+              echo "Attempt $i failed, retrying..."
+            done
+            echo "Health check failed after 6 attempts"
+            docker compose -f docker-compose.production.yml logs --tail=30 app
+            exit 1
+
+      - name: LINE Notify - Success
+        if: success()
+        env:
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+          COMMIT_SHA: ${{ github.sha }}
+          LINE_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+          LINE_USER: ${{ secrets.LINE_DESTINATION_USER_ID }}
+        run: |
+          SHORT_SHA="${COMMIT_SHA:0:7}"
+          FIRST_LINE=$(echo "$COMMIT_MSG" | head -1)
+          TEXT=$(printf '[Deploy OK] twdubao.com\n%s: %s' "$SHORT_SHA" "$FIRST_LINE")
+          jq -n --arg to "$LINE_USER" --arg text "$TEXT" \
+            '{to: $to, messages: [{type: "text", text: $text}]}' | \
+          curl -s -X POST https://api.line.me/v2/bot/message/push \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${LINE_TOKEN}" \
+            -d @-
+
+      - name: LINE Notify - Failure
+        if: failure()
+        env:
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+          COMMIT_SHA: ${{ github.sha }}
+          LINE_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+          LINE_USER: ${{ secrets.LINE_DESTINATION_USER_ID }}
+          RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          SHORT_SHA="${COMMIT_SHA:0:7}"
+          FIRST_LINE=$(echo "$COMMIT_MSG" | head -1)
+          TEXT=$(printf '[Deploy FAILED] twdubao.com\n%s: %s\nCheck: %s' "$SHORT_SHA" "$FIRST_LINE" "$RUN_URL")
+          jq -n --arg to "$LINE_USER" --arg text "$TEXT" \
+            '{to: $to, messages: [{type: "text", text: $text}]}' | \
+          curl -s -X POST https://api.line.me/v2/bot/message/push \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${LINE_TOKEN}" \
+            -d @-
