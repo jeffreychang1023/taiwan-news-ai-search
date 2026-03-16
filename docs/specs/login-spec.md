@@ -360,11 +360,11 @@ Infra migration 將 Qdrant 替換為 PostgreSQL pgvector。以下 login 修改**
 |---|------|------|--------|
 | D1 | 雙 DB pool（auth_db + analytics_db）連線浪費 | 需統一 DB layer 重構，Infra Migration 時一起處理 | Low |
 | D2 | 雙 schema 管理（Alembic + initialize() 手動 DDL） | 目前運作正常，統一需要設計遷移策略 | Low |
-| D3 | localStorage 存 JWT token（XSS 風險） | 需前端重構為 httpOnly cookie，影響整個前端 auth flow | Medium |
-| D4 | org_id 寫入 JWT，revoke 有延遲 | JWT 天生限制，需 token blacklist 機制，複雜度高 | Low |
-| D5 | login_attempts 表無 cleanup 機制 | 資料增長慢，可在 Infra Migration 時加 pg_cron | Low |
-| D6 | _windows dict 記憶體洩漏（rate_limit） | 需改用 TTL cache 或 Redis，Production 再處理 | Low |
-| D7 | email_service 每次 import time 讀 env var | 功能正確，hot reload 情境才有問題 | Very Low |
+| ~~D3~~ | ~~localStorage 存 JWT token（XSS 風險）~~ | ✅ 已完成（2026-03-11 BP-1）：後端 `set_cookie(httponly=True)`，前端 `authenticatedFetch()` 用 `credentials: 'same-origin'` | ~~Medium~~ |
+| D4 | org_id 寫入 JWT，revoke 有延遲 | JWT 天生限制，需 token blacklist 機制（PostgreSQL table），複雜度高 | Low |
+| D5 | login_attempts 表無 cleanup 機制 | 資料增長慢，可加 scheduled SQL DELETE | Low |
+| ~~D6~~ | ~~_windows dict 記憶體洩漏（rate_limit）~~ | ✅ 非問題：已有 sliding window eviction，key 數量有限（3 條規則 × IP），restart 清空。Single-instance 部署無需 Redis | ~~Low~~ |
+| ~~D7~~ | ~~email_service 每次 import time 讀 env var~~ | ✅ 已確認非問題 | ~~Very Low~~ |
 
 ### Will Be Invalidated by Infra Migration
 

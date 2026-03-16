@@ -542,12 +542,12 @@ def setup_auth_routes(app: web.Application):
     # Admin routes (B2B)
     app.router.add_post('/api/admin/create-user', admin_create_user_handler)
 
-    # Organization routes
+    # Organization routes — literal routes before {id} wildcard
     app.router.add_post('/api/org', create_org_handler)
     app.router.add_get('/api/org', list_orgs_handler)
+    app.router.add_post('/api/org/accept-invite', accept_invite_handler)  # before {id}
     app.router.add_post('/api/org/{id}/invite', invite_member_handler)
     app.router.add_get('/api/org/{id}/members', list_members_handler)
     app.router.add_delete('/api/org/{id}/members/{user_id}', remove_member_handler)
-    app.router.add_post('/api/org/accept-invite', accept_invite_handler)
 
     logger.info("Auth routes registered")

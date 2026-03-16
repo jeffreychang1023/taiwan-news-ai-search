@@ -459,7 +459,8 @@ class SessionService:
 
     async def get_expired_deleted_sessions(self, days: int = 30) -> List[Dict]:
         """Get sessions soft-deleted more than N days ago."""
-        cutoff = time.time() - days * 24 * 3600
+        from datetime import datetime, timedelta, timezone
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
         return await self.db.fetchall(
             "SELECT id, user_id, org_id FROM search_sessions "
             "WHERE deleted_at IS NOT NULL AND deleted_at < ?",

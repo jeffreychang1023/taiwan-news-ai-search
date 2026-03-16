@@ -164,13 +164,26 @@ class AuthService:
         """Employee activates account by setting password via activation token."""
         self._validate_password(password)
 
-        user = await self.db.fetchone(
-            "SELECT id, email, name, email_verification_expires FROM users "
-            "WHERE email_verification_token = ? AND is_active = ? AND password_hash IS NULL",
-            (token, True)
+        # First check if token exists at all (including already-activated accounts)
+        token_row = await self.db.fetchone(
+            "SELECT id, email, name, email_verification_token, email_verification_expires, "
+            "password_hash, is_active FROM users WHERE email_verification_token = ?",
+            (token,)
         )
-        if not user:
+        if not token_row:
             raise ValueError("Invalid activation token")
+
+        is_active = token_row['is_active']
+        if self.db.db_type == 'sqlite':
+            is_active = bool(is_active)
+        if not is_active:
+            raise ValueError("Account is deactivated. Please contact your administrator.")
+
+        if token_row['password_hash'] is not None:
+            logger.warning(f"Activation attempted on already-activated account: {token_row['email']}")
+            raise ValueError("Account is already activated. Please log in.")
+
+        user = token_row
 
         # BP-3: Check token expiry
         if user.get('email_verification_expires') and user['email_verification_expires'] < time.time():
@@ -232,11 +245,18 @@ class AuthService:
             await self._record_login_attempt(email, ip, success=False)
             raise ValueError("Invalid email or password")
 
-        if not user['is_active']:
-            raise ValueError("Account is deactivated")
+        is_active = user['is_active']
+        if self.db.db_type == 'sqlite':
+            is_active = bool(is_active)
+        if not is_active:
+            await self._record_login_attempt(email, ip, success=False)
+            raise ValueError("Invalid email or password")
 
-        if not user['email_verified']:
-            raise ValueError("Email not verified. Please check your email for verification link.")
+        email_verified = user['email_verified']
+        if self.db.db_type == 'sqlite':
+            email_verified = bool(email_verified)
+        if not email_verified:
+            raise ValueError("Email not verified. Please check your email for a verification link.")
 
         await self._record_login_attempt(email, ip, success=True)
 

@@ -494,6 +494,7 @@ def setup_session_routes(app: web.Application):
     app.router.add_get('/api/sessions', list_sessions_handler)
     app.router.add_post('/api/sessions', create_session_handler)
     app.router.add_get('/api/sessions/shared', shared_sessions_handler)  # before {id}
+    app.router.add_post('/api/sessions/migrate', migrate_sessions_handler)  # before {id}
     app.router.add_get('/api/sessions/{id}', get_session_handler)
     app.router.add_put('/api/sessions/{id}', update_session_handler)
     app.router.add_delete('/api/sessions/{id}', delete_session_handler)
@@ -505,9 +506,6 @@ def setup_session_routes(app: web.Application):
     app.router.add_patch('/api/sessions/{id}/visibility', set_visibility_handler)
     app.router.add_patch('/api/sessions/{id}/articles/annotate', annotate_article_handler)
     app.router.add_get('/api/sessions/{id}/export', export_session_handler)
-
-    # Migration
-    app.router.add_post('/api/sessions/migrate', migrate_sessions_handler)
 
     # Preferences
     app.router.add_get('/api/preferences', get_preferences_handler)
