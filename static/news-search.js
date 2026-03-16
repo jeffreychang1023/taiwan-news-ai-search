@@ -81,8 +81,11 @@
                         });
                         const data = await res.json();
                         if (!res.ok) throw new Error(data.error || 'Refresh failed');
-                        this._accessToken = data.access_token;
-                        localStorage.setItem('authAccessToken', this._accessToken);
+                        // BP-1: access_token may be in httpOnly cookie, not in response
+                        if (data.access_token) {
+                            this._accessToken = data.access_token;
+                            localStorage.setItem('authAccessToken', this._accessToken);
+                        }
                         return data;
                     } catch (e) {
                         this._handleAuthFailure();
