@@ -18,8 +18,10 @@
                     }
                 }
                 const storedToken = localStorage.getItem('authAccessToken');
-                if (storedToken) {
+                if (storedToken && storedToken !== 'undefined') {
                     this._accessToken = storedToken;
+                } else {
+                    localStorage.removeItem('authAccessToken');
                 }
             }
 
@@ -45,10 +47,15 @@
                 });
                 const data = await res.json();
                 if (!res.ok) throw new Error(data.error || 'Login failed');
-                this._accessToken = data.access_token;
+                // BP-1: access_token is in httpOnly cookie, not in response body
+                this._accessToken = data.access_token || null;
                 this._user = data.user;
                 localStorage.setItem('authUser', JSON.stringify(this._user));
-                localStorage.setItem('authAccessToken', this._accessToken);
+                if (this._accessToken) {
+                    localStorage.setItem('authAccessToken', this._accessToken);
+                } else {
+                    localStorage.removeItem('authAccessToken');
+                }
                 return data;
             }
 
@@ -106,8 +113,8 @@
 
                 let res = await fetch(url, options);
 
-                // If 401, try refresh once
-                if (res.status === 401 && this._accessToken) {
+                // If 401, try refresh once (BP-1: always try, cookie may have expired)
+                if (res.status === 401) {
                     try {
                         await this.refreshToken();
                         options.headers['Authorization'] = `Bearer ${this._accessToken}`;
