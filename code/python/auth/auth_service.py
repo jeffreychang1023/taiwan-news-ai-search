@@ -198,7 +198,7 @@ class AuthService:
         )
 
         logger.info(f"Account activated: {user['email']}")
-        return {'id': user['id'], 'email': user['email'], 'name': user['name'], 'activated': True}
+        return {'id': str(user['id']), 'email': user['email'], 'name': user['name'], 'activated': True}
 
     # ── Email Verification (Bootstrap Admin) ──────────────────────
 
@@ -223,7 +223,7 @@ class AuthService:
         )
 
         logger.info(f"Email verified: {user['email']}")
-        return {'id': user['id'], 'email': user['email'], 'name': user['name'], 'email_verified': True}
+        return {'id': str(user['id']), 'email': user['email'], 'name': user['name'], 'email_verified': True}
 
     # ── Login ─────────────────────────────────────────────────────
 
@@ -281,10 +281,10 @@ class AuthService:
             'token_type': 'Bearer',
             'expires_in': ACCESS_TOKEN_EXPIRE_SECONDS,
             'user': {
-                'id': user['id'],
+                'id': str(user['id']),
                 'email': user['email'],
                 'name': user['name'],
-                'org_id': org_id,
+                'org_id': str(org_id) if org_id else None,
                 'role': role,
             }
         }
