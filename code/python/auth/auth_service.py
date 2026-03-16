@@ -728,6 +728,9 @@ class AuthService:
             "SELECT id, email, name, email_verified, last_login, created_at FROM users WHERE id = ? AND is_active = ?",
             (user_id, True)
         )
+        if user:
+            # Ensure all values are JSON-serializable (PostgreSQL returns UUID objects)
+            user = {k: str(v) if hasattr(v, 'hex') else v for k, v in user.items()}
         return user
 
     # ── Private Helpers ───────────────────────────────────────────
