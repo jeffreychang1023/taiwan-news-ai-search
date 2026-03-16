@@ -271,8 +271,10 @@ class AuthService:
         org_id = membership['org_id'] if membership else None
         role = membership['role'] if membership else None
 
-        access_token = self._create_access_token(user['id'], user['email'], user['name'], org_id, role)
-        refresh_token = await self._create_refresh_token(user['id'])
+        user_id_str = str(user['id'])
+        org_id_str = str(org_id) if org_id else None
+        access_token = self._create_access_token(user_id_str, user['email'], user['name'], org_id_str, role)
+        refresh_token = await self._create_refresh_token(user_id_str)
 
         logger.info(f"User logged in: {email}")
         return {
@@ -329,10 +331,12 @@ class AuthService:
         org_id = membership['org_id'] if membership else None
         role = membership['role'] if membership else None
 
-        access_token = self._create_access_token(row['user_id'], row['email'], row['name'], org_id, role)
+        user_id_str = str(row['user_id'])
+        org_id_str = str(org_id) if org_id else None
+        access_token = self._create_access_token(user_id_str, row['email'], row['name'], org_id_str, role)
 
         # BP-2: Issue new refresh token
-        new_refresh_token = await self._create_refresh_token(row['user_id'])
+        new_refresh_token = await self._create_refresh_token(user_id_str)
 
         logger.info(f"Token refreshed for user: {row['email']}")
         return {
