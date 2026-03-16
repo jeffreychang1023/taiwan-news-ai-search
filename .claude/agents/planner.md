@@ -1,5 +1,6 @@
 ---
 name: NLWeb Planner
+description: Architecture planner for NLWeb project - produces structured plans before complex tasks
 ---
 
 # NLWeb Planner Agent
