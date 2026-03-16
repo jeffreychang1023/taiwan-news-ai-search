@@ -758,6 +758,54 @@ python -m indexing.pipeline data.tsv --site udn --resume
 | Author search strict filter | `retrieval_providers/qdrant.py` — 精確 author 過濾 |
 | Frontend polish | `static/news-search.js` — session history、feedback buttons、state cleanup |
 
+## ✅ Track AB：GitHub Actions CI/CD Pipeline（2026-03-13）
+
+**目標**：Push to `main` 自動部署至 Hetzner VPS + LINE Bot 通知
+
+### 架構
+
+```
+Push to main → GitHub Actions → SSH to VPS → git pull + docker compose rebuild → Health check → LINE notify
+```
+
+### 修改檔案
+
+| 檔案 | 改動 |
+|------|------|
+| `.github/workflows/deploy.yml` | 完整 CI/CD workflow（new） |
+| `nginx.conf` | 註解微調（觸發 path filter） |
+
+### 關鍵設計
+
+1. **Path Filter**：只有 `code/**`, `static/**`, `config/**`, `Dockerfile`, `docker-compose.production.yml`, `nginx.conf`, `infra/**` 變更才觸發
+2. **SSH Deploy**：`appleboy/ssh-action@v1`，Deploy-only ed25519 key
+3. **VPS 操作**：`git fetch + reset --hard` → `docker compose up -d --build` → Health check（6 attempts × 10s via nginx port 80）
+4. **LINE 通知**：Success/Failure 都發 push message，用 `printf` + `jq` 構造 JSON（避免 commit message 中的特殊字元和換行破壞 shell/YAML）
+5. **GitHub Secrets**：`VPS_HOST`, `VPS_USERNAME`, `VPS_SSH_PRIVATE_KEY`, `VPS_SSH_PORT`, `LINE_CHANNEL_ACCESS_TOKEN`, `LINE_DESTINATION_USER_ID`
+
+### VPS 準備
+
+- 原為 SCP 部署，改為 `git init` + `git remote add` + `git fetch` + `git reset --hard`
+- Deploy key 加入 `~/.ssh/authorized_keys`（`chattr +i` 保護）
+
+### 迭代修復歷程（6 次）
+
+| 問題 | 修復 |
+|------|------|
+| `script_stop` 不支援 | 改用 `set -e` |
+| SSH key 缺少 header/footer | 完整 PEM 格式 |
+| Health check port 8000 不通 | 改 port 80（通過 nginx） |
+| Health check 10s 太短 | 6 attempts × 10s retry loop |
+| Commit message 括號破壞 shell | `env:` block + `jq` 構造 JSON |
+| YAML literal newline 語法錯 | `printf` 取代 literal `\n` |
+
+### 注意事項
+
+- 本地 main 有 32 個未推送 commits（包含進行中的工作），CI/CD 測試用 temp branch cherry-pick 方式推送
+- 待本地工作穩定後，需 rebase 或 merge 本地 main 與 origin/main 的 CI/CD commits
+
+---
+
 ## ✅ Track AA：Zoe Plan Phase 2 — /delegate + /update-docs 擴充（2026-03-04）
 
 **目標**：建立 Zoe 智慧派工 skill 與文件更新 skill 擴充。

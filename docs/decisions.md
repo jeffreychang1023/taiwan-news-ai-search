@@ -1,6 +1,6 @@
 # NLWeb 決策日誌
 
-> 從 Notion 決策日誌 DB 導出（2026-03-03）+ 持續更新。共 38 筆。
+> 從 Notion 決策日誌 DB 導出（2026-03-03）+ 持續更新。共 42 筆。
 > 欄位：Decision / Category / Modules / Date / Status / Reason / Tradeoff
 
 ---
@@ -210,6 +210,12 @@
 - **Reason**: 大神建議 + 內部研究確認。核心問題：(1) 偽 Hybrid Search（BM25 只是 re-ranker，vector 沒命中的文章永遠找不到）(2) 3 個 DB 過度複雜 (3) PaaS 溢價。解法：PostgreSQL + pgvector + tsvector 一個 SQL query 同時走向量 + 全文 + 結構化過濾。Embedding 改 Qwen3-Embedding-4B（開源，繁中 benchmark #6，本地推論）。部署在 Hetzner CAX41 ARM VPS（32GB RAM, 320GB SSD, €22/月）。三階段：Phase 1 本機驗證 → Phase 2 改程式碼 → Phase 3 上線。
 - **Tradeoff**: 需大量改寫程式碼 + 全量 re-index 200 萬篇，但根本解決 hybrid search 問題且大幅簡化架構和降低成本
 
+### CI/CD：GitHub Actions + SSH deploy（非 Docker registry push）
+- **Category**: infrastructure | **Modules**: M6-Infra | **Date**: 2026-03-13 | **Status**: active
+- **Decision**: Push to `main` 觸發 GitHub Actions，SSH 到 VPS 執行 `git pull` + `docker compose up --build`。不用 Docker registry。
+- **Reason**: 單一 VPS 部署，不需要 container registry 的複雜度。`appleboy/ssh-action` 簡單直接。LINE Bot push message 通知 success/failure 讓 CEO 即時知道部署狀態。
+- **Tradeoff**: 依賴 VPS 上有 git repo 和 Docker build 能力（build 較慢），但省去 registry 費用和設定。未來多台部署時需改用 registry-based 方案。
+
 ### Zoe 派工系統：Skill-based delegation 而非 prompt template
 - **Category**: technical | **Modules**: 全模組 | **Date**: 2026-03-04 | **Status**: active
 - **Reason**: CEO 指令透過 `/delegate` skill 分析上下文（status/decisions/patterns/lessons），動態發現相關 spec，選擇正確的 skill 執行（systematic-debugging/brainstorming/writing-plans 等），而非手寫 prompt template。確保每次派工都有完整上下文且不遺漏已知陷阱。
@@ -249,3 +255,19 @@
 - **Category**: technical | **Modules**: M2-Retrieval, M6-Infra | **Date**: 2026-03-05 | **Status**: active
 - **Reason**: Qwen3-Embedding-4B 在 OpenRouter 有（DeepInfra 託管），$0.02/M tokens。Indexing 仍用桌機 GPU（INT8）。Benchmark 8 query 驗證：加 query prompt template 後 API vs 本地 cosine similarity avg=0.982, min=0.960 → PASS。VPS 不需裝模型，RAM 需求從 32GB 降至 8-16GB。
 - **Tradeoff**: 依賴外部 API（但 query-time 量極小，月費 <$1），API 回傳 2560D 需截至 1024D
+
+### Session 切換：Cancel + Retry Button（非背景 Stream）
+- **Category**: technical | **Modules**: M5-Output | **Date**: 2026-03-13 | **Status**: active
+- **Reason**: 搜尋中切換 session 會中斷 SSE stream，導致搜尋結果遺失（session 空白）。曾嘗試「背景 stream 繼續」方案但失敗（stale reference、跨 session 資料污染、多條 stream 狀態管理過複雜）。最終採用最簡方案：切 session 時直接 cancel stream，在舊 session 標記 `interruptedSearch`，切回時顯示「搜尋被中斷，點此重新搜尋」按鈕。
+- **Tradeoff**: 搜尋結果會遺失（需重新搜尋），但狀態管理極簡，不會有瘋狂打 API 或跨 session 污染的問題
+
+### 前端 Session 資料架構：localStorage 為主，Server Session 為輔
+- **Category**: technical | **Modules**: M5-Output, Auth | **Date**: 2026-03-13 | **Status**: active
+- **Reason**: 搜尋結果（sessionHistory）、對話紀錄（chatHistory）存於 localStorage，server session 只存 metadata。這是因為搜尋結果量大、即時性要求高，server round-trip 不划算。Login 後 server session 用於跨裝置恢復 metadata。
+- **Tradeoff**: 換瀏覽器/清 cache 會遺失本地搜尋結果，但 MVP 階段可接受
+
+### Transactional Email：Resend SaaS + Cloudflare Email Routing（非自架 SMTP）
+- **Category**: technical | **Modules**: Auth, M6-Infra | **Date**: 2026-03-16 | **Status**: active
+- **Reason**: 系統需發送 transactional email（帳號啟用、密碼重設、鎖定通知、邀請信）。`email_service.py` 已整合 Resend SDK，零改動可上線。自架 SMTP（Postfix）到達率差（無 IP reputation，企業信箱會進垃圾郵件），維護成本高。Resend 免費額度 3000 封/月，B2B 初期綽綽有餘。官方收信 email 用 Cloudflare Email Routing 免費轉寄到 Gmail。
+- **需要設定**：(1) Resend 帳號 + API key → VPS env var `RESEND_API_KEY` (2) Cloudflare DNS 加 SPF/DKIM/DMARC records（Resend 提供）(3) `RESEND_FROM_EMAIL=noreply@twdubao.com` (4) Cloudflare Email Routing 設 `support@twdubao.com` 轉寄
+- **Tradeoff**: 依賴第三方 SaaS（但 transactional email 量極小，免費額度足夠；到達率遠優於自架）

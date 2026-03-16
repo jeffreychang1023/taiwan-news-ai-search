@@ -10,13 +10,13 @@
 
 新聞網站自然語言搜尋系統。目標：可信、準確、邏輯嚴謹的搜尋與推論。
 
-**目前狀態**（2026-03）：核心系統完成（Indexing + Reasoning + Ranking）。重點：UX 修復、Zoe 智慧派工系統。
+**目前狀態**（2026-03）：核心系統 + Login 系統完成。重點：全量 Indexing（上線 blocker）、VPS 部署驗證。
 
 ---
 
 ## 架構概述
 
-**核心流程**：Query → Pre-retrieval 分析 → Tool 選擇 → Retrieval (BM25 + Vector) → Ranking (LLM → XGBoost → MMR) → Response
+**核心流程**：Query → Pre-retrieval 分析 → Tool 選擇 → Retrieval (pg_bigm + Vector) → Ranking (LLM → XGBoost → MMR) → Response
 
 ### 關鍵檔案對應
 
@@ -25,14 +25,15 @@
 | **Crawler**        | `crawler/core/engine.py`, `crawler/subprocess_runner.py`, `crawler/parsers/*.py` |
 | **Indexing**       | `indexing/pipeline.py`, `indexing/chunking_engine.py`      |
 | Server Startup     | `webserver/aiohttp_server.py`                              |
-| Connection Layer   | `webserver/middleware/`, `chat/websocket.py`               |
+| Connection Layer   | `webserver/middleware/`                                     |
+| **Auth**           | `auth/auth_db.py`, `auth/auth_service.py`, `webserver/routes/auth.py` |
 | Request Processing | `core/baseHandler.py`, `core/state.py`                     |
 | Pre-Retrieval      | `core/query_analysis/*.py`                                 |
-| Retrieval          | `core/retriever.py`, `core/bm25.py`                        |
+| Retrieval          | `core/retriever.py`, `retrieval_providers/postgres_client.py`  |
+| Session Management | `core/session_service.py`, `webserver/routes/sessions.py`  |
 | Ranking            | `core/ranking.py`, `core/xgboost_ranker.py`, `core/mmr.py` |
 | Reasoning          | `reasoning/orchestrator.py`, `reasoning/agents/*.py`       |
 | Post-Ranking       | `core/post_ranking.py`                                     |
-| Chat               | `chat/conversation.py`, `chat/websocket.py`                |
 | SSE Streaming      | `core/utils/message_senders.py`, `core/schemas.py`         |
 
 ### 關鍵設計模式
@@ -71,13 +72,13 @@
 | 系統狀態機、運作流程 | `docs/reference/architecture/state-machine-diagram.md`       |
 | 狀態機詳細說明    | `docs/reference/architecture/state-machine-diagram-explained.md` |
 | 系統總覽與 API  | `docs/reference/systemmap.md`                                |
-| Chat 架構設計  | `docs/reference/chat-architecture.md`                        |
 | 程式碼規範      | `docs/reference/codingrules.md`                              |
 | UX 流程      | `docs/reference/userworkflow.md`                             |
 | 專案狀態       | `docs/status.md`                                             |
 | 已完成工作      | `docs/archive/completed-work.md`                             |
 | 決策日誌       | `docs/decisions.md`                                          |
 | 演算法規格      | `docs/specs/*-spec.md` (bm25, mmr, xgboost 等)               |
+| Login 系統   | `docs/specs/login-spec.md`                                   |
 | Docker 部署  | `docs/reference/docker-deployment.md`                        |
 
 ---
@@ -89,10 +90,11 @@
 | **M0: Indexing**       | 🟢 完成   | Crawler (7 Parser, Subprocess 隔離) + Indexing Pipeline |
 | **M1: Input**          | 🟡 部分完成 | Query Decomposition ✅ / Guardrails ❌ |
 | **M2: Retrieval**      | 🟡 部分完成 | Internal Search ✅ / Web Search ❌     |
-| **M3: Ranking**        | 🟢 完成   | BM25 + XGBoost + MMR                 |
+| **M3: Ranking**        | 🟢 完成   | LLM + XGBoost + MMR（BM25 已移除）    |
 | **M4: Reasoning**      | 🟢 完成   | Actor-Critic + 4 Agents + Tier 6 API |
 | **M5: Output**         | 🟡 部分完成 | API + Frontend ✅ / Visualizer ❌      |
 | **M6: Infrastructure** | 🟢 完成   | DB + Cache + LLM + Analytics         |
+| **Auth / Session**     | 🟢 完成   | Email/Password + JWT + Session + Audit + B2B + BP |
 
 **詳細模組資訊**：見 `docs/reference/systemmap.md`
 
@@ -102,18 +104,18 @@
 
 ### 已完成
 
-Track A-W 共 23 個完成項目，涵蓋 Analytics、BM25、MMR、Reasoning、XGBoost、Crawler Subprocess、Dashboard 穩定性、三機協作、Chinatimes Multi-Category 修復等。
+Track A-AB 共 25 個完成項目，涵蓋 Analytics、BM25、MMR、Reasoning、XGBoost、Crawler Subprocess、Dashboard 穩定性、三機協作、Chinatimes Multi-Category 修復等。
 
 **詳細資訊**：見 `docs/archive/completed-work.md`
 
 ### 目前工作
 
-🔄 **UX Issues #1-11 修復完成**：QueryUnderstanding 統一模組、LLM-based boost scoring、前端 polish
-🔄 **Zoe Plan Phase 2 完成**：`/delegate` + `/update-docs` + `/zoe` 完成
-🔄 **待後續**：JWT 認證（SEC-1/9）、Agent Isolation（SEC-6）、BM25 corpus stats 重建
-✅ **GCP Chinatimes full_scan 完成**（~186,744 篇），待合併至桌機
-🔄 **einfo 爬取停止**，需調查失敗原因
-🔄 **Registry 總計 1,910,520 筆**
+✅ **GitHub Actions CI/CD 完成**（2026-03-13）：Push to main → auto deploy to VPS → LINE 通知
+🟡 **UI Redesign Phase 1-4 完成**（2026-03-13）：金炭品牌化換皮（讀豹主題），待收尾細節 + commit
+🔴 **上線 blocker：全量 Indexing**（桌機 TSV → Qwen3-4B embedding → PG → VPS）
+🔄 **Registry 總計 ~2,370,000 筆**（桌機 master，已同步至 GCP）
+
+**更早的完成項**：見 `docs/archive/completed-work.md`
 
 **規劃**：見 `docs/status.md`
 
@@ -127,7 +129,10 @@ Track A-W 共 23 個完成項目，涵蓋 Analytics、BM25、MMR、Reasoning、X
 
 **流程**：
 1. 先讀 `~/.claude/projects/C--users-user-nlweb/memory/MEMORY.md`（專案 memory）
-2. 再讀 `~/.claude/memory/lessons-learned.md`（歷史問題/解法記錄）
+2. 根據問題模組讀取對應 lessons 檔案（在 memory/ 目錄下）：
+   - Crawler / Dashboard → `lessons-crawler.md`
+   - VPS / Docker / 部署 / 資安 → `lessons-infra-deploy.md`
+   - 其他或模組不明 → `lessons-general.md`（優先讀取）
 3. 確認是否為已知問題或類似 pattern
 4. 若為新問題，才開始從程式碼調查
 
@@ -186,3 +191,12 @@ Track A-W 共 23 個完成項目，涵蓋 Analytics、BM25、MMR、Reasoning、X
 **關鍵**：變更 base image 時務必清除 Docker build cache。
 
 **詳細資訊**：見 `docs/reference/docker-deployment.md`（僅在 Docker 部署時需要）
+
+### Memory 更新規則
+
+**禁止**將實質內容（錯誤教訓、開發細節、狀態數字）直接寫入 `MEMORY.md`。`MEMORY.md` 是純索引，只放檔案指標。
+
+- 新的技術教訓 → 寫入對應的 `memory/lessons-*.md`
+- 新的專案狀態 → 寫入對應的 `memory/project_*.md`
+- 新的參考資訊 → 寫入對應的 `memory/reference_*.md`
+- 然後在 `MEMORY.md` 的 File Index 加一行指標

@@ -2,69 +2,59 @@
 
 > 合併自 CONTEXT.md + NEXT_STEPS.md。單一狀態檔案。
 
-**最後更新**：2026-03-05
+**最後更新**：2026-03-13
 
 ---
 
 ## 目前重點
 
-**Login 系統合併完成 + Infra 適配進行中**
+**全量 Indexing（上線 blocker）+ VPS 部署驗證**
 
 ### 最近完成
 
-- **UX Issues #1-11 修復**（19 commits, merged as 77f974a）
-  - QueryUnderstanding 統一模組（取代 3 個 pre-checks）
-  - Qdrant domain filter → LLM-based boost scoring
-  - Deep research session history + UI polish
-  - Author search strict filter + print noise cleanup
-  - 年份推論規則（防止未來日期誤判）
-  - zh-TW 錯誤訊息 + cp950 UnicodeEncodeError 修復
-  - Feedback buttons event delegation
-  - datePublished 注入 Analyst formatted_context
-- **Login 系統合併 + Infra 適配**（branch: `feat/login-system-merge`）
-  - 從 RG repo surgical merge：13 新檔、12 修改檔、2 刪除檔
-  - Infra 適配完成：env var 統一（`DATABASE_URL`）、AsyncConnectionPool、Rate limit 調緊、Alembic infra migration
-  - 詳見 `docs/specs/login-spec.md`
-- **Zoe Plan Phase 2-3 完成**
-  - `/delegate` + `/update-docs` + `/zoe` skills
-  - LINE MCP 通知 + Task 追蹤
-- **SEC-6 Phase 1：Agent Isolation**（先前完成）
-- **全專案 Code Review 修復**（21 檔案、47 項）
+- **Login Code Review 修復 + Session 切換**（2026-03-13）
+  - Code Review: CRITICAL(3) + HIGH(5) + MEDIUM(5) + LOW(2) 全部修復
+  - Deep Research 401 fix: 加入 PUBLIC_ENDPOINTS
+  - Session cleanup type error fix: time.time() → datetime
+  - Session 切換: cancel + retry button（三種 mode 都支援）
+- **UI Redesign Phase 1-4**（2026-03-13）
+  - 純視覺換皮：藍灰工具風 → 金炭品牌化（讀豹/雲豹主題）
+  - Phase 1: CSS 變數換色盤 + Noto Sans TC 字體
+  - Phase 2: 首頁主視覺（Banner + 雲豹吉祥物 + 報紙背景）
+  - Phase 3: 左側欄 icon 替換 + 右側 tab 深色底 + session B_Black.png 背景
+  - Phase 4: 全站硬編碼顏色掃描 + CSS 變數統一
+  - 檔案：`static/news-search.css`、`static/news-search-prototype.html`
+  - 素材：`static/images/`（12 張品牌素材）
+  - 計畫文件：`docs/plans/ui-redesign-plan.md`
+  - Branch: `feature/ui-redesign`（未 commit）
+- **GitHub Actions CI/CD Pipeline**（2026-03-13）
+  - Push to `main` → GitHub Actions → SSH deploy to VPS → Docker rebuild → Health check → LINE 通知
+  - 檔案：`.github/workflows/deploy.yml`
+  - Deploy SSH key（ed25519）+ VPS git repo 初始化（原為 SCP）
+  - LINE Bot push message 通知 success/failure
+  - 6 次迭代修復：SSH key 格式、health check port/retry、commit message shell escaping、YAML newline
+- **GCP Daily Cron**（2026-03-11）：每天 05:00 台灣時間自動 newest scan
+- **Login B2B + Best Practice**（2026-03-11）：B2B bootstrap + httpOnly cookie + token rotation + async email + XFF validation
+- **Login 系統合併**（2026-03-09）：Email/Password + JWT + Session + Audit
+- **Infra Migration Phase 2**：PostgreSQL hybrid search + BM25 清理 + Reranking 4-stage pipeline
+- **Phase 3 Hetzner VPS 部署**：twdubao.com + HTTPS + Cloudflare
+
+**詳細歷史**：見 `docs/archive/completed-work.md`
 
 ---
 
 ## 進行中
 
-**目前三台機器都沒有 crawler 在跑。**（2026-03-05 確認）
+### 全量 Indexing（上線 blocker）
+- **來源**: `data/crawler/articles/`（451 TSV 檔案，6.1GB，~2,058,683 篇）
+- **進度**: 222,460 / ~2,058,683 篇（~10.8%），31/451 檔案完成
+- **速度**: ~5.6 chunks/sec（GPU 溫控頻繁暫停）
+- **腳本**: `run_indexing.sh`（從 `code/python/` 目錄執行）
+- **完成後**: pg_dump → scp → VPS pg_restore → 上線
 
-### 已停止的 Crawler
-
-1. **GCP — Chinatimes full_scan（新版 multi-category）** → ✅ 已完成
-   - Task #29 failed（success=43,632）→ Task #30 completed（success=117,091）
-   - 合計 task 26-30：~186,744 篇 success
-   - **待辦**：GCP 資料收回（`merge_registry.py` 合併至桌機）、確認 hit rate 提升
-
-2. **桌機 — einfo** → ❌ 已停止
-   - 最後 task #18 failed（success=0, failed=626）
-   - 需要調查失敗原因後決定是否重啟
-
-3. **筆電** → ❓ 無法連線（SSH timeout，IP 可能已變）
-
----
-
-## Backfill 狀態
-
-| Source | 狀態 | 數量 |
-|--------|------|------|
-| LTN | ✅ 完成 | 693,273 篇（watermark 5,342,046） |
-| CNA | ✅ 完成 | 242,011 篇（watermark 2026-02-12） |
-| UDN | ✅ 完成 | 桌機 2025-08+ / GCP 2024-01→2025-07 / 筆電 2024-10→2025-02（全部合併） |
-| ESG BT | ✅ 完成 | backfill 完成 |
-| MOEA | ✅ 完成 | 5,805 篇（已合併至桌機） |
-| Chinatimes | ✅ 完成 | GCP full_scan 完成（task 26-30 合計 ~186,744 篇），待合併至桌機 |
-| einfo | ❌ 停止 | 桌機 task #18 failed（0 success），需調查 |
-
-**Registry 總計**：1,910,520 筆
+### GCP Crawler
+- **Daily Cron**: 每天 05:00 台灣時間自動 newest scan（6 sources）
+- **Registry**: ~2,370,000 筆（桌機 master，已同步至 GCP）
 
 ---
 
@@ -77,56 +67,32 @@
 - query_logger 加 org_id
 - Qdrant 移除後重寫 user_qdrant_provider → PostgreSQL
 
-### Zoe Plan 後續
-- Phase 4：自動化排程（待定）
-
 ### Code Review 後續
 - RNK-7：BM25 corpus stats 重建（title weighting 改變）
 - RSN-4 前端：讀取 verification_status 顯示未驗證提示
 
 ### SEC-6 後續
 - Phase 2：Extracted Knowledge（LLM 結構化輸出，Phase 1 驗證有效後）
-  - `ExtractedFact` schema（fact + source_ids + relevance）
-  - Orchestrator 累積邏輯（dedup by fact+source_ids，cap 50）
-  - Analyst prompt 注入 accumulated_knowledge
 
-### Crawler 後續
-1. **GCP Chinatimes 資料收回**：`merge_registry.py` 將 GCP 資料合併至桌機（full_scan 已完成）
-2. **einfo 調查**：桌機 task #18 全部 failed，需查 log 確認原因（proxy？parser？）
-3. **筆電連線**：確認筆電 IP 並恢復 SSH 連線
-4. 效能優化：Reasoning 延遲分析、token 減少
+### UI Redesign 收尾
+- 細節微調（Phase 4 後 CEO 目視檢查待修項目）
+- Branch `feature/ui-redesign` 尚未 commit
 
----
+### Session 切換穩定性 ✅（2026-03-13 完成）
+- **問題**：搜尋中切換 session → 原 session 結果空白
+- **最終方案**：Cancel + Retry Button — 切 session 時直接 cancel stream，標記 `interruptedSearch`，切回顯示 retry 按鈕
+- **歷程**：嘗試過 auto re-search（無限迴圈）→ 背景 stream 繼續（stale reference + 跨 session 污染）→ 加 single-stream-per-mode 限制（還是卡住）→ 全部拆掉改 cancel + retry
+- **檔案**：`static/news-search.js`
 
-## 短期任務
-
-### 0. SEC-6 Phase 1 驗證
-- 啟用 `agent_isolation: true`
-- 觀察 gap search 查詢的 SEC-6 log（context 不增長、reference sheet reduction %）
-- 比對 flag on/off 的引用覆蓋率
-
-### 1. 效能優化
-- 降低 Reasoning 延遲（分析 Analyst/Critic/Writer 瓶頸）
-- 優化 prompt token 使用量
-- 考慮並行 agent 執行
-- 成本分析（各 agent token 使用量）
-
-### 2. 引用品質改善
-- 幻覺防護邊界案例測試
-- 引用連結驗證
-- 來源分層規則調整
-
-### 3. UX 改善
-- 澄清流程 UI
-- 長查詢進度指示器
-- 使用者回饋迴圈
+### 搜尋品質
+- CEO 手動發現 3 問題：多元性、英文摘要、日期（2026-03-12 回報，待排查）
 
 ---
 
 ## 中期任務（1-2 月）
 
-1. **A/B 測試基礎設施** — reasoning vs 標準搜尋 feature flag、查詢路由（10%→50%→100%）、比較指標儀表板
-2. **模型重訓練管道** — XGBoost ranker 自動重訓練、使用者互動資料納入
+1. **A/B 測試基礎設施** — reasoning vs 標準搜尋 feature flag、查詢路由
+2. **模型重訓練管道** — XGBoost ranker 自動重訓練
 3. **進階 Reasoning 功能** — 交叉參考偵測、時間分析、比較研究
 
 ---
@@ -142,9 +108,7 @@
 
 ## 參考資源
 
-- Analytics 儀表板：https://taiwan-news-ai-search.onrender.com/analytics
-- Neon 資料庫：https://console.neon.tech
-- Render 服務：https://dashboard.render.com
+- 線上服務：https://twdubao.com（Hetzner VPS）
+- CI/CD：GitHub Actions（push to main → auto deploy）
 - 系統狀態機：`docs/reference/architecture/state-machine-diagram.md`
-- 歷史進度：`docs/reference/progress-history.md`
 - 已完成工作：`docs/archive/completed-work.md`
