@@ -12,12 +12,13 @@ import uuid
 import pytest
 import pytest_asyncio
 
-# Force SQLite mode
-os.environ.pop('DATABASE_URL', None)
-os.environ.pop('ANALYTICS_DATABASE_URL', None)
-
 from auth.auth_db import AuthDB
 from core.session_service import SessionService, JSONB_SIZE_WARNING_THRESHOLD
+
+# Force SQLite mode: pop AFTER imports (load_dotenv in logger.py re-sets them)
+os.environ.pop('DATABASE_URL', None)
+os.environ.pop('ANALYTICS_DATABASE_URL', None)
+os.environ.pop('POSTGRES_CONNECTION_STRING', None)
 
 
 # ── Fixtures ──────────────────────────────────────────────────────
@@ -295,15 +296,22 @@ class TestExpiredDeletedSessions:
         s2 = await svc.create_session(USER_ID, ORG_ID, title="Recent Deleted")
 
         db = AuthDB.get_instance()
-        # Mark s1 as deleted 45 days ago
+        # get_expired_deleted_sessions uses datetime objects as query params, so we must
+        # store deleted_at as ISO datetime strings (not Unix float timestamps) for
+        # the SQLite comparison to work correctly.
+        from datetime import datetime, timedelta, timezone
+        old_dt = (datetime.now(timezone.utc) - timedelta(days=45)).isoformat()
+        recent_dt = (datetime.now(timezone.utc) - timedelta(days=5)).isoformat()
+
+        # Mark s1 as deleted 45 days ago (older than 30-day threshold)
         await db.execute(
             "UPDATE search_sessions SET deleted_at = ? WHERE id = ?",
-            (time.time() - 45 * 24 * 3600, s1['id'])
+            (old_dt, s1['id'])
         )
-        # Mark s2 as deleted 5 days ago
+        # Mark s2 as deleted 5 days ago (within 30-day threshold, should NOT be expired)
         await db.execute(
             "UPDATE search_sessions SET deleted_at = ? WHERE id = ?",
-            (time.time() - 5 * 24 * 3600, s2['id'])
+            (recent_dt, s2['id'])
         )
 
         expired = await svc.get_expired_deleted_sessions(days=30)

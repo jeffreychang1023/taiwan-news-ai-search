@@ -15,11 +15,7 @@ import jwt
 import pytest
 import pytest_asyncio
 
-# Force SQLite mode: no DATABASE_URL
-os.environ.pop('DATABASE_URL', None)
-os.environ.pop('ANALYTICS_DATABASE_URL', None)
 os.environ['JWT_SECRET'] = 'test-secret-key-for-jwt-signing-1234'
-
 
 from auth.auth_db import AuthDB
 from auth.auth_service import (
@@ -29,6 +25,11 @@ from auth.auth_service import (
     BRUTE_FORCE_WINDOW_SECONDS,
     JWT_ALGORITHM,
 )
+
+# Force SQLite mode: pop AFTER imports (load_dotenv in logger.py re-sets them)
+os.environ.pop('DATABASE_URL', None)
+os.environ.pop('ANALYTICS_DATABASE_URL', None)
+os.environ.pop('POSTGRES_CONNECTION_STRING', None)
 
 
 # ── Fixtures ──────────────────────────────────────────────────────
@@ -105,7 +106,8 @@ class TestRegisterUser:
         result = await service.register_user("alice@example.com", "Passw0rd", "Alice")
         assert result['email'] == "alice@example.com"
         assert result['name'] == "Alice"
-        assert result['email_verified'] is False
+        # B2B bootstrap: first admin is auto-verified
+        assert result['email_verified'] is True
         assert 'id' in result
 
     @pytest.mark.asyncio
@@ -115,8 +117,11 @@ class TestRegisterUser:
 
     @pytest.mark.asyncio
     async def test_register_duplicate_email(self, service, _no_email):
+        # B2B model: register_user is bootstrap-only (first admin + org).
+        # After bootstrap, a second register_user call raises "System already initialized"
+        # because an org now exists — the B2B guard fires before the email-duplicate check.
         await service.register_user("dup@example.com", "Passw0rd", "First")
-        with pytest.raises(ValueError, match="already registered"):
+        with pytest.raises(ValueError, match="System already initialized"):
             await service.register_user("dup@example.com", "Passw0rd", "Second")
 
     @pytest.mark.asyncio
@@ -197,8 +202,17 @@ class TestLogin:
 
     @pytest.mark.asyncio
     async def test_login_unverified_email(self, service, _no_email):
-        """User registered but email not yet verified -> should fail."""
-        await service.register_user("unv@e.com", "Passw0rd", "Unv")
+        """User with password set but email_verified=False -> should fail with Email not verified."""
+        # Bootstrap admin (auto-verified), then insert an unverified user directly.
+        # This represents a user whose account was manually created without going through activation.
+        await service.register_user("admin@e.com", "Passw0rd", "Admin")
+        db = AuthDB.get_instance()
+        password_hash = bcrypt.hashpw(b"Passw0rd", bcrypt.gensalt()).decode('utf-8')
+        await db.execute(
+            "INSERT INTO users (id, email, password_hash, name, email_verified, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (str(uuid.uuid4()), "unv@e.com", password_hash, "Unv", False, time.time())
+        )
         with pytest.raises(ValueError, match="Email not verified"):
             await service.login("unv@e.com", "Passw0rd", ip="127.0.0.1")
 
@@ -207,7 +221,8 @@ class TestLogin:
         user = await _register_and_verify(service)
         db = AuthDB.get_instance()
         await db.execute("UPDATE users SET is_active = 0 WHERE id = ?", (user['id'],))
-        with pytest.raises(ValueError, match="deactivated"):
+        # Login with deactivated account returns same generic error to avoid user enumeration
+        with pytest.raises(ValueError, match="Invalid email or password"):
             await service.login("test@example.com", "Password1", ip="127.0.0.1")
 
     @pytest.mark.asyncio
@@ -395,9 +410,10 @@ class TestOrganization:
 
     @pytest.mark.asyncio
     async def test_list_user_orgs(self, service, _no_email):
+        # B2B bootstrap: register_user automatically creates an org for the admin.
         user = await _register_and_verify(service)
-        await service.create_organization("My Org", user['id'])
         orgs = await service.list_user_orgs(user['id'])
         assert len(orgs) == 1
-        assert orgs[0]['name'] == "My Org"
+        # Auto-created org name follows the pattern "{name}'s organization"
+        assert "Test User" in orgs[0]['name']
         assert orgs[0]['role'] == "admin"

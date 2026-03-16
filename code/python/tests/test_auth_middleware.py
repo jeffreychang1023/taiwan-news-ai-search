@@ -16,14 +16,15 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
-# Ensure no DATABASE_URL so AuthDB stays in SQLite mode
+from webserver.middleware.auth import auth_middleware, PUBLIC_ENDPOINTS
+
+# Force SQLite mode: pop AFTER imports (load_dotenv in logger.py re-sets them)
 os.environ.pop('DATABASE_URL', None)
 os.environ.pop('ANALYTICS_DATABASE_URL', None)
+os.environ.pop('POSTGRES_CONNECTION_STRING', None)
 
 JWT_SECRET = 'test-middleware-secret-9876'
 JWT_ALGORITHM = 'HS256'
-
-from webserver.middleware.auth import auth_middleware, PUBLIC_ENDPOINTS
 
 
 # ── Helpers ──────────────────────────────────────────────────────
@@ -289,12 +290,13 @@ class TestCookieAuth:
 
     @pytest.mark.asyncio
     async def test_auth_from_cookie(self, monkeypatch):
-        """Protected endpoint should accept auth_token from cookie."""
+        """Protected endpoint should accept access_token from cookie (BP-1: httpOnly cookie)."""
         monkeypatch.setenv('JWT_SECRET', JWT_SECRET)
         monkeypatch.delenv('NLWEB_DEV_AUTH_BYPASS', raising=False)
         token = _make_jwt({'user_id': 'cookie-user'})
         async with TestClient(TestServer(_build_app())) as client:
-            client.session.cookie_jar.update_cookies({'auth_token': token})
+            # Middleware reads 'access_token' cookie (BP-1: httpOnly cookie for web UI)
+            client.session.cookie_jar.update_cookies({'access_token': token})
             resp = await client.get('/api/protected')
             assert resp.status == 200
             data = await resp.json()
