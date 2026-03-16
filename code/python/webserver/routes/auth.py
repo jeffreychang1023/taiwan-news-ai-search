@@ -220,6 +220,62 @@ async def logout_handler(request: web.Request) -> web.Response:
     return response
 
 
+async def change_password_handler(request: web.Request) -> web.Response:
+    """POST /api/auth/change-password — Authenticated user changes their own password."""
+    user_info = request.get('user')
+    if not user_info or not user_info.get('authenticated'):
+        return web.json_response({'error': 'Not authenticated'}, status=401)
+
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({'error': 'Invalid JSON'}, status=400)
+
+    current_password = body.get('current_password', '')
+    new_password = body.get('new_password', '')
+
+    if not current_password or not new_password:
+        return web.json_response({'error': 'current_password and new_password are required'}, status=400)
+
+    try:
+        await _get_service().change_password(user_info['id'], current_password, new_password)
+        fire_and_forget(log_action(
+            'auth.change_password',
+            user_id=user_info['id'],
+            org_id=user_info.get('org_id'),
+            ip=_get_client_ip(request),
+        ))
+        return web.json_response({'success': True, 'message': 'Password changed. Please log in again.'})
+    except ValueError as e:
+        return web.json_response({'error': str(e)}, status=400)
+    except Exception as e:
+        logger.error(f"Change password error: {e}", exc_info=True)
+        return web.json_response({'error': 'Internal server error'}, status=500)
+
+
+async def logout_all_handler(request: web.Request) -> web.Response:
+    """POST /api/auth/logout-all — Authenticated user logs out all their devices."""
+    user_info = request.get('user')
+    if not user_info or not user_info.get('authenticated'):
+        return web.json_response({'error': 'Not authenticated'}, status=401)
+
+    try:
+        await _get_service().revoke_all_user_tokens(user_info['id'])
+        fire_and_forget(log_action(
+            'auth.logout_all',
+            user_id=user_info['id'],
+            org_id=user_info.get('org_id'),
+            ip=_get_client_ip(request),
+        ))
+        response = web.json_response({'success': True, 'message': 'Logged out from all devices'})
+        response.del_cookie('access_token', path='/')
+        response.del_cookie('refresh_token', path='/api/auth')
+        return response
+    except Exception as e:
+        logger.error(f"Logout all error: {e}", exc_info=True)
+        return web.json_response({'error': 'Internal server error'}, status=500)
+
+
 async def me_handler(request: web.Request) -> web.Response:
     """GET /api/auth/me — Get current user info (requires auth)."""
     user_info = request.get('user')
@@ -324,6 +380,154 @@ async def admin_create_user_handler(request: web.Request) -> web.Response:
         return web.json_response({'error': str(e)}, status=400)
     except Exception as e:
         logger.error(f"Admin create user error: {e}", exc_info=True)
+        return web.json_response({'error': 'Internal server error'}, status=500)
+
+
+async def admin_logout_user_handler(request: web.Request) -> web.Response:
+    """POST /api/admin/logout-user/{user_id} — Admin force-logs-out a member."""
+    user_info = request.get('user')
+    if not user_info or not user_info.get('authenticated'):
+        return web.json_response({'error': 'Not authenticated'}, status=401)
+
+    target_user_id = request.match_info.get('user_id')
+    org_id = user_info.get('org_id')
+    if not org_id:
+        return web.json_response({'error': 'No organization context'}, status=400)
+
+    # Verify requester is admin of same org
+    from auth.auth_db import AuthDB
+    db = AuthDB.get_instance()
+    membership = await db.fetchone(
+        "SELECT role FROM org_memberships WHERE user_id = ? AND org_id = ? AND status = 'active'",
+        (user_info['id'], org_id)
+    )
+    if not membership or membership['role'] != 'admin':
+        return web.json_response({'error': 'Only admins can force logout members'}, status=403)
+
+    # Verify target is in same org
+    target_membership = await db.fetchone(
+        "SELECT id FROM org_memberships WHERE user_id = ? AND org_id = ? AND status = 'active'",
+        (target_user_id, org_id)
+    )
+    if not target_membership:
+        return web.json_response({'error': 'User not found in organization'}, status=404)
+
+    try:
+        await _get_service().revoke_all_user_tokens(target_user_id)
+        fire_and_forget(log_action(
+            'admin.logout_user',
+            user_id=user_info['id'],
+            org_id=org_id,
+            ip=_get_client_ip(request),
+            details={'target_user_id': target_user_id},
+        ))
+        return web.json_response({'success': True, 'message': 'User logged out from all devices'})
+    except Exception as e:
+        logger.error(f"Admin logout user error: {e}", exc_info=True)
+        return web.json_response({'error': 'Internal server error'}, status=500)
+
+
+async def admin_set_user_active_handler(request: web.Request) -> web.Response:
+    """PATCH /api/admin/user/{user_id}/active — Admin activates or deactivates a member."""
+    user_info = request.get('user')
+    if not user_info or not user_info.get('authenticated'):
+        return web.json_response({'error': 'Not authenticated'}, status=401)
+
+    target_user_id = request.match_info.get('user_id')
+    org_id = user_info.get('org_id')
+    if not org_id:
+        return web.json_response({'error': 'No organization context'}, status=400)
+
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({'error': 'Invalid JSON'}, status=400)
+
+    if 'is_active' not in body:
+        return web.json_response({'error': 'is_active is required'}, status=400)
+
+    is_active = bool(body['is_active'])
+
+    try:
+        await _get_service().set_user_active(target_user_id, is_active, user_info['id'], org_id)
+        fire_and_forget(log_action(
+            'admin.set_user_active',
+            user_id=user_info['id'],
+            org_id=org_id,
+            ip=_get_client_ip(request),
+            details={'target_user_id': target_user_id, 'is_active': is_active},
+        ))
+        action = 'activated' if is_active else 'deactivated'
+        return web.json_response({'success': True, 'message': f'User {action}'})
+    except ValueError as e:
+        return web.json_response({'error': str(e)}, status=400)
+    except Exception as e:
+        logger.error(f"Admin set user active error: {e}", exc_info=True)
+        return web.json_response({'error': 'Internal server error'}, status=500)
+
+
+async def admin_delete_user_handler(request: web.Request) -> web.Response:
+    """DELETE /api/admin/user/{user_id} — Admin soft-deletes a member."""
+    user_info = request.get('user')
+    if not user_info or not user_info.get('authenticated'):
+        return web.json_response({'error': 'Not authenticated'}, status=401)
+
+    target_user_id = request.match_info.get('user_id')
+    org_id = user_info.get('org_id')
+    if not org_id:
+        return web.json_response({'error': 'No organization context'}, status=400)
+
+    try:
+        await _get_service().delete_user(target_user_id, user_info['id'], org_id)
+        fire_and_forget(log_action(
+            'admin.delete_user',
+            user_id=user_info['id'],
+            org_id=org_id,
+            ip=_get_client_ip(request),
+            details={'target_user_id': target_user_id},
+        ))
+        return web.json_response({'success': True, 'message': 'User deleted'})
+    except ValueError as e:
+        return web.json_response({'error': str(e)}, status=400)
+    except Exception as e:
+        logger.error(f"Admin delete user error: {e}", exc_info=True)
+        return web.json_response({'error': 'Internal server error'}, status=500)
+
+
+async def admin_change_role_handler(request: web.Request) -> web.Response:
+    """PATCH /api/admin/user/{user_id}/role — Admin changes a member's role."""
+    user_info = request.get('user')
+    if not user_info or not user_info.get('authenticated'):
+        return web.json_response({'error': 'Not authenticated'}, status=401)
+
+    target_user_id = request.match_info.get('user_id')
+    org_id = user_info.get('org_id')
+    if not org_id:
+        return web.json_response({'error': 'No organization context'}, status=400)
+
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({'error': 'Invalid JSON'}, status=400)
+
+    role = body.get('role', '')
+    if not role:
+        return web.json_response({'error': 'role is required'}, status=400)
+
+    try:
+        await _get_service().change_member_role(org_id, target_user_id, role, user_info['id'])
+        fire_and_forget(log_action(
+            'admin.change_role',
+            user_id=user_info['id'],
+            org_id=org_id,
+            ip=_get_client_ip(request),
+            details={'target_user_id': target_user_id, 'new_role': role},
+        ))
+        return web.json_response({'success': True, 'message': f'Role updated to {role}'})
+    except ValueError as e:
+        return web.json_response({'error': str(e)}, status=400)
+    except Exception as e:
+        logger.error(f"Admin change role error: {e}", exc_info=True)
         return web.json_response({'error': 'Internal server error'}, status=500)
 
 
@@ -538,9 +742,15 @@ def setup_auth_routes(app: web.Application):
     app.router.add_post('/api/auth/reset-password', reset_password_handler)
     app.router.add_get('/api/auth/activate', activate_page_handler)
     app.router.add_post('/api/auth/activate', activate_account_handler)
+    app.router.add_post('/api/auth/change-password', change_password_handler)
+    app.router.add_post('/api/auth/logout-all', logout_all_handler)
 
     # Admin routes (B2B)
     app.router.add_post('/api/admin/create-user', admin_create_user_handler)
+    app.router.add_post('/api/admin/logout-user/{user_id}', admin_logout_user_handler)
+    app.router.add_patch('/api/admin/user/{user_id}/active', admin_set_user_active_handler)
+    app.router.add_patch('/api/admin/user/{user_id}/role', admin_change_role_handler)
+    app.router.add_delete('/api/admin/user/{user_id}', admin_delete_user_handler)
 
     # Organization routes — literal routes before {id} wildcard
     app.router.add_post('/api/org', create_org_handler)
