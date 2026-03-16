@@ -47,7 +47,13 @@
                         <div class="user-menu" id="userMenu" style="display:none;">
                             <span class="user-name" id="userDisplayName"></span>
                             <button class="btn-org-manage" id="btnOrgManage" style="display:none;" title="組織管理">組織</button>
-                            <button class="btn-logout" id="btnLogout">登出</button>
+                            <button class="btn-change-password" id="btnChangePassword" title="變更密碼">變更密碼</button>
+                            <div class="logout-dropdown-wrapper" id="logoutDropdownWrapper">
+                                <button class="btn-logout" id="btnLogout">登出</button>
+                                <div class="logout-dropdown" id="logoutDropdown">
+                                    <button class="logout-dropdown-item" id="btnLogoutAll">登出全部裝置</button>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -62,7 +68,7 @@
     </button>
 
     <!-- ==================== 左側邊欄 ==================== -->
-    <div class="left-sidebar visible" id="leftSidebar">
+    <div class="left-sidebar visible" id="leftSidebar" style="display:none">
         <!-- 頂部：收回按鈕 -->
         <div class="left-sidebar-header">
             <button class="left-sidebar-collapse-btn" id="btnCollapseSidebar">
@@ -293,7 +299,7 @@
             </div>
 
             <!-- Initial State -->
-            <div class="initial-state" id="initialState">
+            <div class="initial-state" id="initialState" style="display:none">
                 <div class="brand-visual-area">
                     <div class="brand-banner-container">
                         <img src="/static/images/Banner.png" alt="" class="brand-banner-img">
@@ -310,7 +316,7 @@
             </div>
 
             <!-- Search Container -->
-            <div class="search-container" id="searchContainer">
+            <div class="search-container" id="searchContainer" style="display:none">
                 <div class="search-box">
                     <textarea
                         class="search-input"
@@ -639,6 +645,31 @@
                 <button class="btn-accept-invite" id="btnAcceptInvite">接受邀請</button>
                 <button class="btn-decline-invite" id="btnDeclineInvite">略過</button>
             </div>
+        </div>
+    </div>
+
+    <!-- Change Password Modal -->
+    <div class="auth-modal-overlay" id="changePwdModalOverlay" style="display:none;">
+        <div class="auth-modal">
+            <button class="auth-modal-close" id="btnCloseChangePwdModal">&times;</button>
+            <div class="auth-tabs"><span class="auth-tab active">變更密碼</span></div>
+            <form class="auth-form" id="changePwdForm">
+                <div class="auth-form-group">
+                    <label for="currentPassword">目前密碼</label>
+                    <input type="password" id="currentPassword" required autocomplete="current-password" placeholder="目前密碼">
+                </div>
+                <div class="auth-form-group">
+                    <label for="newPassword">新密碼</label>
+                    <input type="password" id="newPassword" required autocomplete="new-password" placeholder="至少 8 字元，含大寫與數字">
+                </div>
+                <div class="auth-form-group">
+                    <label for="confirmNewPassword">確認新密碼</label>
+                    <input type="password" id="confirmNewPassword" required autocomplete="new-password" placeholder="再輸入一次新密碼">
+                </div>
+                <div class="auth-error" id="changePwdError" style="display:none;"></div>
+                <div class="auth-success" id="changePwdSuccess" style="display:none;"></div>
+                <button type="submit" class="auth-submit-btn">確認變更</button>
+            </form>
         </div>
     </div>
 

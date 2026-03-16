@@ -135,6 +135,9 @@
                 localStorage.removeItem('authUser');
                 localStorage.removeItem('authAccessToken');
                 updateAuthUI();
+                // Auth guard: hide main UI and show login modal
+                if (typeof hideMainUI === 'function') hideMainUI();
+                if (typeof showAuthModal === 'function') showAuthModal('login');
             }
         }
 
@@ -487,6 +490,17 @@
             }
         }
 
+        // I-3: Full attribute escaping for inline onclick handlers
+        function escapeAttr(s) {
+            return String(s)
+                .replace(/&/g, '&amp;')
+                .replace(/'/g, '&#39;')
+                .replace(/"/g, '&quot;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/\\/g, '\\\\');
+        }
+
         function closeOrgModal() {
             document.getElementById('orgModalOverlay').style.display = 'none';
         }
@@ -500,21 +514,37 @@
             const isAdmin = currentUser.role === 'admin';
             list.innerHTML = members.map(m => {
                 const isSelf = m.id === currentUser.id;
-                const roleLabel = m.role === 'admin' ? 'Admin' : 'Member';
+                const roleLabel = m.role === 'admin' ? '管理員' : '成員';
                 const joinDate = m.accepted_at ? new Date(m.accepted_at).toLocaleDateString('zh-TW') : '-';
-                const removeBtn = isAdmin && !isSelf
-                    ? `<button class="btn-remove-member" onclick="removeMember('${orgId}','${m.id}','${(m.name||m.email).replace(/'/g,"\\'")}')">Remove</button>`
-                    : '';
-                const selfTag = isSelf ? ' <span class="org-self-tag">(me)</span>' : '';
+                const selfTag = isSelf ? ' <span class="org-self-tag">(我)</span>' : '';
+
+                let adminControls = '';
+                if (isAdmin && !isSelf) {
+                    const activeLabel = m.is_active === false ? '啟用' : '停用';
+                    const activeClass = m.is_active === false ? 'btn-activate-member' : 'btn-deactivate-member';
+                    const safeId = escapeAttr(m.id);
+                    const safeName = escapeAttr(m.name || m.email);
+                    adminControls = `
+                        <select class="org-role-select" onchange="changeUserRole('${safeId}', this.value, this)">
+                            <option value="member"${m.role === 'member' ? ' selected' : ''}>成員</option>
+                            <option value="admin"${m.role === 'admin' ? ' selected' : ''}>管理員</option>
+                        </select>
+                        <button class="${activeClass} btn-admin-action" onclick="toggleUserActive('${safeId}', ${m.is_active !== false})">${activeLabel}</button>
+                        <button class="btn-force-logout btn-admin-action" onclick="forceLogoutUser('${safeId}')">強制登出</button>
+                        <button class="btn-delete-member btn-admin-action" onclick="deleteUser('${safeId}','${safeName}')">刪除</button>`;
+                } else if (!isAdmin) {
+                    adminControls = `<span class="org-role-badge org-role-${m.role}">${roleLabel}</span>`;
+                }
+
                 return `<div class="org-member-row">
                     <div class="org-member-info">
                         <span class="org-member-name">${m.name || ''}${selfTag}</span>
                         <span class="org-member-email">${m.email}</span>
                     </div>
                     <div class="org-member-meta">
-                        <span class="org-role-badge org-role-${m.role}">${roleLabel}</span>
+                        ${isAdmin && !isSelf ? '' : `<span class="org-role-badge org-role-${m.role}">${roleLabel}</span>`}
                         <span class="org-join-date">${joinDate}</span>
-                        ${removeBtn}
+                        ${adminControls}
                     </div>
                 </div>`;
             }).join('');
@@ -529,6 +559,77 @@
                 await openOrgModal();
             } catch (e) {
                 alert(`Remove failed: ${e.message}`);
+            }
+        }
+
+        // ==================== FEATURE 4: ADMIN USER CONTROLS ====================
+
+        async function changeUserRole(userId, newRole, selectEl) {
+            try {
+                const res = await authManager.authenticatedFetch(`/api/admin/user/${userId}/role`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ role: newRole })
+                });
+                const data = await res.json();
+                if (!res.ok) {
+                    alert(`角色變更失敗: ${data.error || '未知錯誤'}`);
+                    // Revert select to previous value
+                    selectEl.value = newRole === 'admin' ? 'member' : 'admin';
+                    return;
+                }
+                await openOrgModal();
+            } catch (e) {
+                alert(`角色變更失敗: ${e.message}`);
+            }
+        }
+
+        async function toggleUserActive(userId, currentlyActive) {
+            const newActive = !currentlyActive;
+            const label = newActive ? '啟用' : '停用';
+            try {
+                const res = await authManager.authenticatedFetch(`/api/admin/user/${userId}/active`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ is_active: newActive })
+                });
+                const data = await res.json();
+                if (!res.ok) {
+                    alert(`${label}失敗: ${data.error || '未知錯誤'}`);
+                    return;
+                }
+                await openOrgModal();
+            } catch (e) {
+                alert(`${label}失敗: ${e.message}`);
+            }
+        }
+
+        async function forceLogoutUser(userId) {
+            try {
+                const res = await authManager.authenticatedFetch(`/api/admin/logout-user/${userId}`, { method: 'POST' });
+                const data = await res.json();
+                if (!res.ok) {
+                    alert(`強制登出失敗: ${data.error || '未知錯誤'}`);
+                    return;
+                }
+                alert('已強制登出該使用者');
+            } catch (e) {
+                alert(`強制登出失敗: ${e.message}`);
+            }
+        }
+
+        async function deleteUser(userId, userName) {
+            if (!confirm(`確定要刪除帳號「${userName}」？此操作無法還原。`)) return;
+            try {
+                const res = await authManager.authenticatedFetch(`/api/admin/user/${userId}`, { method: 'DELETE' });
+                const data = await res.json();
+                if (!res.ok) {
+                    alert(`刪除失敗: ${data.error || '未知錯誤'}`);
+                    return;
+                }
+                await openOrgModal();
+            } catch (e) {
+                alert(`刪除失敗: ${e.message}`);
             }
         }
 
@@ -608,7 +709,49 @@
         }
 
         // Auth event listeners (deferred to after DOM ready)
+        // ==================== AUTH GUARD ====================
+        function showMainUI() {
+            document.getElementById('leftSidebar').style.display = '';
+            document.getElementById('searchContainer').style.display = '';
+            document.getElementById('initialState').style.display = '';
+        }
+
+        function hideMainUI() {
+            document.getElementById('leftSidebar').style.display = 'none';
+            document.getElementById('searchContainer').style.display = 'none';
+            document.getElementById('initialState').style.display = 'none';
+        }
+
+        async function checkAuthOnLoad() {
+            try {
+                const res = await authManager.authenticatedFetch('/api/auth/me');
+                if (res.status === 401) {
+                    // _handleAuthFailure already called hideMainUI + showAuthModal via authenticatedFetch
+                    return;
+                }
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data.user) {
+                        authManager._user = data.user;
+                        localStorage.setItem('authUser', JSON.stringify(data.user));
+                    }
+                    showMainUI();
+                    updateAuthUI();
+                }
+            } catch (e) {
+                console.warn('[AuthGuard] /api/auth/me failed:', e);
+                // On network error, allow UI if we have cached auth
+                if (!authManager.isLoggedIn()) {
+                    hideMainUI();
+                    showAuthModal('login');
+                }
+            }
+        }
+
         document.addEventListener('DOMContentLoaded', () => {
+            // Run auth guard first
+            checkAuthOnLoad();
+
             updateAuthUI();
 
             // If already logged in on page load, sync sessions from server
@@ -685,6 +828,7 @@
                 try {
                     await authManager.login(email, password);
                     hideAuthModal();
+                    showMainUI();
                     updateAuthUI();
                     // After login: check pending invite token
                     const pendingToken = sessionStorage.getItem('pendingInviteToken');
@@ -746,6 +890,85 @@
                     errEl.style.display = 'block';
                 }
             });
+
+            // ==================== FEATURE 2: CHANGE PASSWORD ====================
+            document.getElementById('btnChangePassword').addEventListener('click', () => {
+                document.getElementById('changePwdError').style.display = 'none';
+                document.getElementById('changePwdSuccess').style.display = 'none';
+                document.getElementById('changePwdForm').reset();
+                document.getElementById('changePwdModalOverlay').style.display = 'flex';
+            });
+
+            document.getElementById('btnCloseChangePwdModal').addEventListener('click', () => {
+                document.getElementById('changePwdModalOverlay').style.display = 'none';
+            });
+
+            document.getElementById('changePwdModalOverlay').addEventListener('click', (e) => {
+                if (e.target === e.currentTarget) document.getElementById('changePwdModalOverlay').style.display = 'none';
+            });
+
+            document.getElementById('changePwdForm').addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const errEl = document.getElementById('changePwdError');
+                const successEl = document.getElementById('changePwdSuccess');
+                errEl.style.display = 'none';
+                successEl.style.display = 'none';
+
+                const currentPassword = document.getElementById('currentPassword').value;
+                const newPassword = document.getElementById('newPassword').value;
+                const confirmNewPassword = document.getElementById('confirmNewPassword').value;
+
+                if (newPassword !== confirmNewPassword) {
+                    errEl.textContent = '新密碼與確認密碼不一致';
+                    errEl.style.display = 'block';
+                    return;
+                }
+
+                try {
+                    const res = await authManager.authenticatedFetch('/api/auth/change-password', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ current_password: currentPassword, new_password: newPassword })
+                    });
+                    const data = await res.json();
+                    if (!res.ok) throw new Error(data.error || '變更失敗');
+                    successEl.textContent = '密碼已變更，請重新登入';
+                    successEl.style.display = 'block';
+                    setTimeout(async () => {
+                        document.getElementById('changePwdModalOverlay').style.display = 'none';
+                        await authManager.logout();
+                        updateAuthUI();
+                    }, 1500);
+                } catch (err) {
+                    errEl.textContent = err.message;
+                    errEl.style.display = 'block';
+                }
+            });
+
+            // ==================== FEATURE 3: LOGOUT ALL DEVICES ====================
+            // Logout dropdown: show on hover over wrapper
+            const logoutWrapper = document.getElementById('logoutDropdownWrapper');
+            if (logoutWrapper) {
+                logoutWrapper.addEventListener('mouseenter', () => {
+                    document.getElementById('logoutDropdown').style.display = 'block';
+                });
+                logoutWrapper.addEventListener('mouseleave', () => {
+                    document.getElementById('logoutDropdown').style.display = 'none';
+                });
+            }
+
+            const btnLogoutAll = document.getElementById('btnLogoutAll');
+            if (btnLogoutAll) {
+                btnLogoutAll.addEventListener('click', async () => {
+                    document.getElementById('logoutDropdown').style.display = 'none';
+                    try {
+                        await authManager.authenticatedFetch('/api/auth/logout-all', { method: 'POST' });
+                    } catch (e) { /* ignore */ }
+                    authManager._handleAuthFailure();
+                    updateAuthUI();
+                });
+            }
+
         });
 
         const searchInput = document.getElementById('searchInput');
