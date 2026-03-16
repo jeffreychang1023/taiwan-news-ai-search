@@ -213,6 +213,7 @@
                                 headers: { 'Content-Type': 'application/json' },
                                 body: JSON.stringify({
                                     title: session.title,
+                                    mode: session.mode,
                                     conversation_history: session.conversationHistory,
                                     session_history: session.sessionHistory,
                                     chat_history: session.chatHistory,
@@ -220,6 +221,7 @@
                                     pinned_messages: session.pinnedMessages,
                                     pinned_news_cards: session.pinnedNewsCards,
                                     research_report: session.researchReport,
+                                    conversation_id: session.conversationId,
                                 })
                             });
                         } else {
@@ -229,11 +231,13 @@
                                 headers: { 'Content-Type': 'application/json' },
                                 body: JSON.stringify({
                                     title: session.title,
+                                    mode: session.mode,
                                     conversation_history: session.conversationHistory,
                                     session_history: session.sessionHistory,
                                     chat_history: session.chatHistory,
                                     accumulated_articles: session.accumulatedArticles,
                                     research_report: session.researchReport,
+                                    conversation_id: session.conversationId,
                                 })
                             });
                             const data = await res.json();
@@ -818,6 +822,7 @@
         let currentDeepResearchEventSource = null;
         let currentFreeConvAbortController = null;
 
+
         // Session ID for analytics and A/B testing (persists until browser tab closes)
         let currentSessionId = sessionStorage.getItem('nlweb_session_id');
         if (!currentSessionId) {
@@ -1092,7 +1097,7 @@
         // 新對話按鈕：儲存當前對話後清空
         btnNewConversation.addEventListener('click', () => {
             // 如果有內容，先儲存
-            if (sessionHistory.length > 0) {
+            if (sessionHistory.length > 0 || currentResearchReport || chatHistory.length > 0) {
                 saveCurrentSession();
             }
             // 清空並重置
@@ -1191,7 +1196,7 @@
 
                 item.addEventListener('click', () => {
                     // 切換前先保存當前對話（防止深度報告等狀態丟失）
-                    if (sessionHistory.length > 0 || currentResearchReport) {
+                    if (sessionHistory.length > 0 || currentResearchReport || chatHistory.length > 0) {
                         saveCurrentSession();
                     }
                     loadSavedSession(session);
@@ -1223,6 +1228,7 @@
                 savedSessions[existingSessionIndex] = {
                     id: currentLoadedSessionId,
                     title: conversationHistory[0] || '未命名搜尋',
+                    mode: currentMode,
                     conversationHistory: [...conversationHistory],
                     sessionHistory: [...sessionHistory],
                     chatHistory: [...chatHistory],
@@ -1230,6 +1236,7 @@
                     pinnedMessages: [...pinnedMessages],
                     pinnedNewsCards: [...pinnedNewsCards],
                     researchReport: researchReportData,
+                    conversationId: currentConversationId,
                     createdAt: savedSessions[existingSessionIndex].createdAt,
                     updatedAt: Date.now()
                 };
@@ -1238,6 +1245,7 @@
                 const newSession = {
                     id: Date.now(),
                     title: conversationHistory[0] || '未命名搜尋',
+                    mode: currentMode,
                     conversationHistory: [...conversationHistory],
                     sessionHistory: [...sessionHistory],
                     chatHistory: [...chatHistory],
@@ -1245,6 +1253,7 @@
                     pinnedMessages: [...pinnedMessages],
                     pinnedNewsCards: [...pinnedNewsCards],
                     researchReport: researchReportData,
+                    conversationId: currentConversationId,
                     createdAt: Date.now()
                 };
                 savedSessions.push(newSession);
@@ -1295,7 +1304,18 @@
             resultsSection.classList.remove('active');
             resultsSection.style.display = '';
             listView.innerHTML = '';
+            listView.style.display = '';  // Clear inline display so CSS default (flex) takes effect
             timelineView.innerHTML = '';
+            timelineView.classList.remove('active');
+            const researchViewReset = document.getElementById('researchView');
+            if (researchViewReset) researchViewReset.classList.remove('active');
+
+            // Reset tabs to default (list tab active)
+            const allTabs = document.querySelectorAll('.tab');
+            allTabs.forEach(t => t.classList.remove('active'));
+            const listTab = document.querySelector('.tab[data-view="list"]');
+            if (listTab) listTab.classList.add('active');
+            if (summaryToggle) summaryToggle.classList.add('active');
 
             // 隱藏釘選 banner
             const pinnedBanner = document.getElementById('pinnedBanner');
@@ -2393,6 +2413,57 @@
             if (chatLoadingEl) chatLoadingEl.classList.remove('active');
         }
 
+        // Show interrupted search notice with retry button
+        function showInterruptedSearchNotice(query, mode) {
+            resultsSection.classList.add('active');
+            initialState.style.display = 'none';
+
+            const modeLabels = { 'search': '搜尋', 'deep_research': '深度研究', 'chat': '對話' };
+            const modeLabel = modeLabels[mode] || '搜尋';
+
+            // Insert notice at top of listView (don't clear existing results)
+            const listView = document.getElementById('listView');
+            if (listView) {
+                // Remove any existing interrupted notice first
+                const existing = document.getElementById('interrupted-search-notice');
+                if (existing) existing.remove();
+
+                const notice = document.createElement('div');
+                notice.id = 'interrupted-search-notice';
+                notice.style.cssText = 'text-align: center; padding: 24px 20px; margin-bottom: 16px; background: var(--bg-secondary, #f5f5f5); border-radius: 8px; border: 1px solid var(--border-color, #ddd);';
+
+                const title = document.createElement('div');
+                title.style.cssText = 'font-size: 15px; margin-bottom: 8px; color: var(--text-secondary, #666);';
+                title.textContent = `${modeLabel}被中斷`;
+
+                const queryDisplay = document.createElement('div');
+                queryDisplay.style.cssText = 'font-size: 13px; margin-bottom: 14px; color: var(--text-tertiary, #999);';
+                queryDisplay.textContent = `「${query}」`;
+
+                const retryBtn = document.createElement('button');
+                retryBtn.style.cssText = 'padding: 8px 20px; background: var(--accent-color, #b8860b); color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px;';
+                retryBtn.textContent = `重新${modeLabel}`;
+                retryBtn.addEventListener('click', () => {
+                    // Clear interrupted state
+                    const idx = savedSessions.findIndex(s => s.id === currentLoadedSessionId);
+                    if (idx !== -1) {
+                        delete savedSessions[idx].interruptedSearch;
+                        localStorage.setItem('taiwanNewsSavedSessions', JSON.stringify(savedSessions));
+                    }
+                    // Remove notice
+                    notice.remove();
+                    // Trigger search (mode already restored by loadSavedSession)
+                    const searchBtn = document.getElementById('btnSearch');
+                    if (searchBtn) searchBtn.click();
+                });
+
+                notice.appendChild(title);
+                notice.appendChild(queryDisplay);
+                notice.appendChild(retryBtn);
+                listView.prepend(notice);
+            }
+        }
+
         // Clear all query-related UI state before starting a new search
         function clearQueryState() {
             // Clear deep research state
@@ -2458,6 +2529,13 @@
 
             // Bug #23: Cancel all active requests (search, DR, FC) before starting new search
             cancelAllActiveRequests();
+
+            // Clear interrupted state since user is re-searching
+            const currentIdx = savedSessions.findIndex(s => s.id === currentLoadedSessionId);
+            if (currentIdx !== -1 && savedSessions[currentIdx].interruptedSearch) {
+                delete savedSessions[currentIdx].interruptedSearch;
+            }
+
             clearQueryState();
             setProcessingState(true);
             const mySearchGeneration = searchGenerationId;
@@ -2547,9 +2625,9 @@
                     '/ask', body, query, currentSearchAbortController.signal, callbacks
                 );
 
-                // Stale check
+                // Stale check: user switched away during search
                 if (mySearchGeneration !== searchGenerationId) {
-                    console.log('[Search] Stale search discarded before rendering');
+                    console.log('[Search] Stale search discarded');
                     return;
                 }
 
@@ -2789,8 +2867,8 @@
                             eventSource.close();
                             currentDeepResearchEventSource = null;
                             loadingState.classList.remove('active');
-                            setProcessingState(false); // Bug #23
                             alert('Deep Research 發生錯誤: ' + data.error);
+                            setProcessingState(false); // Bug #23
                         }
                     } catch (e) {
                         console.error('Failed to parse SSE data:', e);
@@ -2801,8 +2879,8 @@
                     console.error('SSE connection error:', error);
                     eventSource.close();
                     currentDeepResearchEventSource = null;
-                    loadingState.classList.remove('active');
                     setProcessingState(false); // Bug #23
+                    loadingState.classList.remove('active');
                     alert('Deep Research 連線錯誤');
                 };
 
@@ -4139,7 +4217,7 @@
                 if (typingElErr) typingElErr.remove();
 
                 if (error.name === 'AbortError') {
-                    console.log('[Free Conversation] Request aborted by user');
+                    console.log('[Free Conversation] Request aborted');
                     return;
                 }
                 console.error('Chat failed:', error);
@@ -5055,8 +5133,32 @@
 
         // Function to load a saved session
         function loadSavedSession(session) {
-            console.log('Loading saved session:', session);
-            cancelActiveSearch();
+            // Always resolve fresh from savedSessions — closure may hold stale object
+            const freshSession = savedSessions.find(s => s.id === session.id) || session;
+            session = freshSession;
+            console.log('Loading saved session:', session.id, 'sessionHistory:', session.sessionHistory?.length || 0);
+
+            // If there's an active request, mark current session as interrupted before cancelling
+            if (searchInput.dataset.processing === 'true' && currentLoadedSessionId !== null) {
+                const interruptedQuery = currentMode === 'chat'
+                    ? (chatHistory.filter(m => m.role === 'user').pop()?.content || '')
+                    : (conversationHistory.length > 0 ? conversationHistory[conversationHistory.length - 1] : '');
+                if (interruptedQuery) {
+                    const idx = savedSessions.findIndex(s => s.id === currentLoadedSessionId);
+                    if (idx !== -1) {
+                        savedSessions[idx].interruptedSearch = { query: interruptedQuery, mode: currentMode };
+                        localStorage.setItem('taiwanNewsSavedSessions', JSON.stringify(savedSessions));
+                        console.log('[Session] Marked as interrupted:', currentLoadedSessionId, interruptedQuery);
+                    }
+                }
+            }
+
+            // Cancel all active requests (search, DR, free convo)
+            cancelAllActiveRequests();
+            setProcessingState(false);
+
+            // Increment searchGenerationId so any lingering callbacks skip DOM updates
+            searchGenerationId++;
 
             // Track this session's ID to prevent duplicate saves
             currentLoadedSessionId = session.id;
@@ -5070,6 +5172,9 @@
             accumulatedArticles = session.accumulatedArticles ? [...session.accumulatedArticles] : [];
             pinnedMessages = session.pinnedMessages ? [...session.pinnedMessages] : [];
             pinnedNewsCards = session.pinnedNewsCards ? [...session.pinnedNewsCards] : [];
+
+            // Restore conversation ID for follow-up context continuity
+            currentConversationId = session.conversationId || null;
 
             // Restore Deep Research report for follow-up Q&A
             currentResearchReport = session.researchReport ? { ...session.researchReport } : null;
@@ -5088,42 +5193,52 @@
                 currentChainAnalysis = null;
             }
 
-            // 先重置 UI 到首頁狀態
+            // 先重置 UI 到首頁狀態（resets mode to search, clears all containers, resets tabs to list)
             resetToHome();
             const aiSummarySec = document.getElementById('aiSummarySection');
             if (aiSummarySec) aiSummarySec.style.display = 'none';
 
-            // Render the last query's results
-            if (sessionHistory.length > 0) {
+            // Render the last query's results (articles + AI summary)
+            if (session.interruptedSearch) {
+                // Session had an in-progress search that was interrupted — show retry button
+                // Show old results underneath if available
+                if (sessionHistory.length > 0) {
+                    const lastSession = sessionHistory[sessionHistory.length - 1];
+                    populateResultsFromAPI(lastSession.data, lastSession.query);
+                }
+                showInterruptedSearchNotice(session.interruptedSearch.query, session.interruptedSearch.mode);
+                searchInput.value = session.interruptedSearch.query || '';
+                resultsSection.classList.add('active');
+                initialState.style.display = 'none';
+            } else if (sessionHistory.length > 0) {
                 const lastSession = sessionHistory[sessionHistory.length - 1];
                 populateResultsFromAPI(lastSession.data, lastSession.query);
 
                 // resetToHome() 移除了 .active class，恢復 session 後需要重新加上
                 resultsSection.classList.add('active');
                 initialState.style.display = 'none';
+            } else if (conversationHistory.length > 0 && !currentResearchReport) {
+                // Session has query but no results (edge case)
+                const lastQuery = conversationHistory[conversationHistory.length - 1];
+                searchInput.value = lastQuery;
             }
 
             // Update conversation history display
             renderConversationHistory();
 
-            // Restore chat UI if there were chat messages
+            // Restore chat messages if any (rendering only, mode switch handled below)
             if (chatHistory.length > 0) {
                 console.log(`Restoring ${chatHistory.length} chat messages`);
-                chatMessagesEl.innerHTML = ''; // Clear existing messages
+                chatMessagesEl.innerHTML = '';
 
-                // Re-render all chat messages with pin buttons
                 chatHistory.forEach(msg => {
                     const messageDiv = document.createElement('div');
                     messageDiv.className = `chat-message ${msg.role}`;
 
-                    // Use existing msgId or generate one for legacy messages
                     const msgId = msg.msgId || `msg-${msg.timestamp}-${Math.random().toString(36).substr(2, 9)}`;
                     messageDiv.setAttribute('data-msg-id', msgId);
 
                     const headerText = msg.role === 'user' ? '你' : 'AI 助理';
-
-                    // Format content based on role
-                    // Use marked.js for assistant messages, escape HTML for user messages
                     let formattedContent = msg.content;
                     if (msg.role === 'assistant') {
                         formattedContent = DOMPurify.sanitize(marked.parse(msg.content));
@@ -5131,7 +5246,6 @@
                         formattedContent = escapeHTML(msg.content);
                     }
 
-                    // Check if this message is pinned
                     const isPinned = pinnedMessages.some(p => p.msgId === msgId);
 
                     messageDiv.innerHTML = `
@@ -5142,33 +5256,14 @@
                         </div>
                     `;
 
-                    // Add click handler for pin button
                     const pinBtn = messageDiv.querySelector('.chat-message-pin');
                     pinBtn.addEventListener('click', () => togglePinMessage(msgId, msg.content, msg.role));
 
                     chatMessagesEl.appendChild(messageDiv);
                 });
 
-                // Show chat container if we restored messages
                 chatContainer.classList.add('active');
-
-                // Render pinned banner
                 renderPinnedBanner();
-
-                // Optionally switch to chat mode
-                currentMode = 'chat';
-                modeButtons.forEach(btn => btn.classList.remove('active')); modeButtons[2].classList.add('active');
-                modeButtonsInline.forEach(btn => btn.classList.remove('active'));
-                const chatInlineBtn = document.querySelector('.mode-btn-inline[data-mode="chat"]');
-                if (chatInlineBtn) chatInlineBtn.classList.add('active');
-                btnSearch.textContent = '發送';
-                searchInput.placeholder = '研究助理會參考摘要內容及您釘選的文章來回答...';
-
-                // Move search container into chat area
-                chatInputContainer.appendChild(searchContainer);
-                chatInputContainer.style.display = 'block';
-
-                // Scroll to bottom of chat
                 chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
             }
 
@@ -5232,6 +5327,45 @@
                     researchViewEl.innerHTML = '';
                 }
             }
+
+            // Restore mode from saved session (default: infer from content)
+            const savedMode = session.mode || (currentResearchReport ? 'deep_research' : (chatHistory.length > 0 ? 'chat' : 'search'));
+            currentMode = savedMode;
+
+            // Sync mode button UI
+            modeButtons.forEach(btn => {
+                btn.classList.remove('active');
+                if (btn.dataset.mode === savedMode) btn.classList.add('active');
+            });
+            modeButtonsInline.forEach(btn => {
+                btn.classList.remove('active');
+                if (btn.dataset.mode === savedMode) btn.classList.add('active');
+            });
+
+            // Mode-specific UI setup
+            if (savedMode === 'deep_research') {
+                btnSearch.textContent = '搜尋';
+                searchInput.placeholder = '輸入問題進行深度研究分析...';
+                chatContainer.classList.add('active');
+                chatInputContainer.appendChild(searchContainer);
+                chatInputContainer.style.display = 'block';
+                // DR popup already confirmed for restored sessions
+                advancedSearchConfirmed = true;
+            } else if (savedMode === 'chat') {
+                btnSearch.textContent = '發送';
+                searchInput.placeholder = '研究助理會參考摘要內容及您釘選的文章來回答...';
+                chatContainer.classList.add('active');
+                chatInputContainer.appendChild(searchContainer);
+                chatInputContainer.style.display = 'block';
+            }
+            // search mode: already set by resetToHome(), no extra work needed
+
+            // Restore search input to last query
+            if (conversationHistory.length > 0) {
+                searchInput.value = conversationHistory[conversationHistory.length - 1];
+            }
+
+            console.log(`[Session] Mode restored: ${savedMode}`);
 
             // Hide initial state (session has content)
             initialState.style.display = 'none';
@@ -6788,7 +6922,7 @@
                     const session = savedSessions.find(s => s.id === sessionId);
                     if (session) {
                         // 切換前先保存當前對話（防止深度報告等狀態丟失）
-                        if (sessionHistory.length > 0 || currentResearchReport) {
+                        if (sessionHistory.length > 0 || currentResearchReport || chatHistory.length > 0) {
                             saveCurrentSession();
                         }
                         loadSavedSession(session);

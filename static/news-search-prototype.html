@@ -4,6 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>台灣新聞 AI 搜尋引擎</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/static/news-search.css">
     <!-- D3.js for Knowledge Graph Visualization -->
     <script src="https://d3js.org/d3.v7.min.js"></script>
@@ -63,35 +66,35 @@
         <!-- 頂部：收回按鈕 -->
         <div class="left-sidebar-header">
             <button class="left-sidebar-collapse-btn" id="btnCollapseSidebar">
-                <span>◀◀◀</span>
+                <img src="/static/images/Icon_back.png" alt="" class="sidebar-icon">
                 <span>收回</span>
             </button>
         </div>
 
         <!-- 內容區 -->
         <div class="left-sidebar-content">
-            <!-- 分享結果按鈕 -->
-            <button class="btn-share-sidebar" id="btnShareSidebar">
-                <span>🔗</span>
-                <span>分享結果</span>
+            <!-- 新對話按鈕（outline style，排第一） -->
+            <button class="btn-new-conversation" id="btnNewConversation">
+                <img src="/static/images/Icon_New.png" alt="" class="sidebar-icon">
+                <span>開啟新對話</span>
             </button>
 
-            <!-- 新對話按鈕 -->
-            <button class="btn-new-conversation" id="btnNewConversation">
-                <span>+</span>
-                <span>開啟新對話</span>
+            <!-- 分享結果按鈕 -->
+            <button class="btn-share-sidebar" id="btnShareSidebar">
+                <img src="/static/images/Icon_share.png" alt="" class="sidebar-icon">
+                <span>分享結果</span>
             </button>
 
             <!-- 歷史搜尋按鈕 -->
             <button class="btn-history-search" id="btnHistorySearch">
-                <span>🔍</span>
+                <img src="/static/images/Icon_Filter.png" alt="" class="sidebar-icon">
                 <span>歷史搜尋</span>
             </button>
 
             <!-- 資料夾/專案區塊 -->
             <div class="left-sidebar-section">
                 <button class="btn-toggle-categories" id="btnToggleCategories">
-                    <span>📁</span>
+                    <img src="/static/images/Icon_Folder_Black.png" alt="" class="sidebar-icon">
                     <span>開啟資料夾</span>
                 </button>
             </div>
@@ -112,7 +115,7 @@
         <!-- 底部：說明與設置 -->
         <div class="left-sidebar-footer">
             <button class="btn-settings" id="btnSettings">
-                <span>⚙️</span>
+                <img src="/static/images/Icon_setting.png" alt="" class="sidebar-icon">
                 <span>說明與設置</span>
             </button>
         </div>
@@ -291,8 +294,19 @@
 
             <!-- Initial State -->
             <div class="initial-state" id="initialState">
+                <div class="brand-visual-area">
+                    <div class="brand-banner-container">
+                        <img src="/static/images/Banner.png" alt="" class="brand-banner-img">
+                        <img src="/static/images/Leopard.png" alt="讀豹" class="brand-leopard-img">
+                    </div>
+                </div>
                 <h1>用自然語言搜尋最新新聞</h1>
                 <p>隨時掌握事實的全貌，讓 AI 替您整理多家媒體的觀點</p>
+            </div>
+
+            <!-- Brand tail decoration -->
+            <div class="brand-tail-container">
+                <img src="/static/images/Tail.png" alt="" class="brand-tail-img">
             </div>
 
             <!-- Search Container -->
