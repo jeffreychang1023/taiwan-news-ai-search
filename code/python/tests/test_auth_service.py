@@ -395,6 +395,250 @@ class TestBruteForce:
         assert 'access_token' in result
 
 
+# ── Change Password Tests ────────────────────────────────────────
+
+
+class TestChangePassword:
+
+    @pytest.mark.asyncio
+    async def test_change_password_success(self, service, _no_email):
+        login_result = await _register_verify_and_login(service)
+        user_id = login_result['user']['id']
+        result = await service.change_password(user_id, "Password1", "NewPassw0rd")
+        assert result is True
+        # Old password no longer works
+        with pytest.raises(ValueError, match="Invalid email or password"):
+            await service.login("test@example.com", "Password1", ip="127.0.0.1")
+        # New password works
+        new_login = await service.login("test@example.com", "NewPassw0rd", ip="127.0.0.1")
+        assert 'access_token' in new_login
+
+    @pytest.mark.asyncio
+    async def test_change_password_wrong_current(self, service, _no_email):
+        login_result = await _register_verify_and_login(service)
+        user_id = login_result['user']['id']
+        with pytest.raises(ValueError, match="Current password is incorrect"):
+            await service.change_password(user_id, "WrongPass1", "NewPassw0rd")
+
+    @pytest.mark.asyncio
+    async def test_change_password_weak_new_password(self, service, _no_email):
+        login_result = await _register_verify_and_login(service)
+        user_id = login_result['user']['id']
+        with pytest.raises(ValueError, match="at least 8 characters"):
+            await service.change_password(user_id, "Password1", "short")
+
+    @pytest.mark.asyncio
+    async def test_change_password_revokes_all_tokens(self, service, _no_email):
+        """After change_password, old refresh tokens are revoked."""
+        login_result = await _register_verify_and_login(service)
+        user_id = login_result['user']['id']
+        old_refresh = login_result['refresh_token']
+        await service.change_password(user_id, "Password1", "NewPassw0rd")
+        with pytest.raises(ValueError, match="revoked"):
+            await service.refresh_token(old_refresh)
+
+
+# ── Revoke All User Tokens Tests ────────────────────────────────
+
+
+class TestRevokeAllUserTokens:
+
+    @pytest.mark.asyncio
+    async def test_revoke_all_tokens_success(self, service, _no_email):
+        login_result = await _register_verify_and_login(service)
+        user_id = login_result['user']['id']
+        old_refresh = login_result['refresh_token']
+        result = await service.revoke_all_user_tokens(user_id)
+        assert result is True
+        with pytest.raises(ValueError, match="revoked"):
+            await service.refresh_token(old_refresh)
+
+    @pytest.mark.asyncio
+    async def test_revoke_all_tokens_multiple_sessions(self, service, _no_email):
+        """Revokes tokens from multiple login sessions."""
+        await _register_and_verify(service)
+        r1 = await service.login("test@example.com", "Password1", ip="1.1.1.1")
+        r2 = await service.login("test@example.com", "Password1", ip="2.2.2.2")
+        user_id = r1['user']['id']
+        await service.revoke_all_user_tokens(user_id)
+        with pytest.raises(ValueError, match="revoked"):
+            await service.refresh_token(r1['refresh_token'])
+        with pytest.raises(ValueError, match="revoked"):
+            await service.refresh_token(r2['refresh_token'])
+
+
+# ── Set User Active Tests ────────────────────────────────────────
+
+
+class TestSetUserActive:
+
+    async def _setup_admin_and_member(self, service):
+        """Helper: bootstrap admin, create a member. Returns (admin_id, org_id, member_id)."""
+        admin = await service.register_user("admin@e.com", "Passw0rd", "Admin")
+        db = AuthDB.get_instance()
+        org = await db.fetchone("SELECT id FROM organizations LIMIT 1")
+        org_id = org['id']
+        member = await service.admin_create_user("member@e.com", "Member", "member", org_id, admin['id'])
+        return admin['id'], org_id, member['id']
+
+    @pytest.mark.asyncio
+    async def test_deactivate_user(self, service, _no_email):
+        admin_id, org_id, member_id = await self._setup_admin_and_member(service)
+        # Activate member first so they have a password
+        db = AuthDB.get_instance()
+        row = await db.fetchone("SELECT email_verification_token FROM users WHERE id = ?", (member_id,))
+        await service.activate_account(row['email_verification_token'], "MemberPass1")
+
+        result = await service.set_user_active(member_id, False, admin_id, org_id)
+        assert result is True
+        user = await db.fetchone("SELECT is_active FROM users WHERE id = ?", (member_id,))
+        assert user['is_active'] in (0, False)
+
+    @pytest.mark.asyncio
+    async def test_deactivate_user_revokes_tokens(self, service, _no_email):
+        admin_id, org_id, member_id = await self._setup_admin_and_member(service)
+        db = AuthDB.get_instance()
+        row = await db.fetchone("SELECT email_verification_token FROM users WHERE id = ?", (member_id,))
+        await service.activate_account(row['email_verification_token'], "MemberPass1")
+        # Member logs in to get a token
+        member_login = await service.login("member@e.com", "MemberPass1", ip="127.0.0.1")
+        await service.set_user_active(member_id, False, admin_id, org_id)
+        # Tokens are revoked first, so we get "revoked" (not "deactivated")
+        with pytest.raises(ValueError, match="revoked"):
+            await service.refresh_token(member_login['refresh_token'])
+
+    @pytest.mark.asyncio
+    async def test_reactivate_user(self, service, _no_email):
+        admin_id, org_id, member_id = await self._setup_admin_and_member(service)
+        await service.set_user_active(member_id, False, admin_id, org_id)
+        result = await service.set_user_active(member_id, True, admin_id, org_id)
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_cannot_deactivate_self(self, service, _no_email):
+        admin_id, org_id, _ = await self._setup_admin_and_member(service)
+        with pytest.raises(ValueError, match="Cannot deactivate your own account"):
+            await service.set_user_active(admin_id, False, admin_id, org_id)
+
+    @pytest.mark.asyncio
+    async def test_non_admin_cannot_deactivate(self, service, _no_email):
+        admin_id, org_id, member_id = await self._setup_admin_and_member(service)
+        with pytest.raises(ValueError, match="Only admins"):
+            await service.set_user_active(admin_id, False, member_id, org_id)
+
+
+# ── Delete User Tests ────────────────────────────────────────────
+
+
+class TestDeleteUser:
+
+    async def _setup_admin_and_member(self, service):
+        admin = await service.register_user("admin@e.com", "Passw0rd", "Admin")
+        db = AuthDB.get_instance()
+        org = await db.fetchone("SELECT id FROM organizations LIMIT 1")
+        org_id = org['id']
+        member = await service.admin_create_user("member@e.com", "Member", "member", org_id, admin['id'])
+        return admin['id'], org_id, member['id']
+
+    @pytest.mark.asyncio
+    async def test_delete_user_success(self, service, _no_email):
+        admin_id, org_id, member_id = await self._setup_admin_and_member(service)
+        result = await service.delete_user(member_id, admin_id, org_id)
+        assert result is True
+        db = AuthDB.get_instance()
+        user = await db.fetchone("SELECT is_active, email FROM users WHERE id = ?", (member_id,))
+        assert user['is_active'] in (0, False)
+        assert '_deleted_' in user['email']
+
+    @pytest.mark.asyncio
+    async def test_delete_user_removes_membership(self, service, _no_email):
+        admin_id, org_id, member_id = await self._setup_admin_and_member(service)
+        await service.delete_user(member_id, admin_id, org_id)
+        db = AuthDB.get_instance()
+        membership = await db.fetchone(
+            "SELECT status FROM org_memberships WHERE user_id = ? AND org_id = ?",
+            (member_id, org_id)
+        )
+        assert membership['status'] == 'removed'
+
+    @pytest.mark.asyncio
+    async def test_delete_user_revokes_tokens(self, service, _no_email):
+        admin_id, org_id, member_id = await self._setup_admin_and_member(service)
+        db = AuthDB.get_instance()
+        row = await db.fetchone("SELECT email_verification_token FROM users WHERE id = ?", (member_id,))
+        await service.activate_account(row['email_verification_token'], "MemberPass1")
+        member_login = await service.login("member@e.com", "MemberPass1", ip="127.0.0.1")
+        await service.delete_user(member_id, admin_id, org_id)
+        # Token revoked → deactivated error
+        with pytest.raises(ValueError):
+            await service.refresh_token(member_login['refresh_token'])
+
+    @pytest.mark.asyncio
+    async def test_cannot_delete_self(self, service, _no_email):
+        admin_id, org_id, _ = await self._setup_admin_and_member(service)
+        with pytest.raises(ValueError, match="Cannot delete your own account"):
+            await service.delete_user(admin_id, admin_id, org_id)
+
+    @pytest.mark.asyncio
+    async def test_non_admin_cannot_delete(self, service, _no_email):
+        admin_id, org_id, member_id = await self._setup_admin_and_member(service)
+        with pytest.raises(ValueError, match="Only admins"):
+            await service.delete_user(admin_id, member_id, org_id)
+
+
+# ── Change Member Role Tests ─────────────────────────────────────
+
+
+class TestChangeMemberRole:
+
+    async def _setup_admin_and_member(self, service):
+        admin = await service.register_user("admin@e.com", "Passw0rd", "Admin")
+        db = AuthDB.get_instance()
+        org = await db.fetchone("SELECT id FROM organizations LIMIT 1")
+        org_id = org['id']
+        member = await service.admin_create_user("member@e.com", "Member", "member", org_id, admin['id'])
+        return admin['id'], org_id, member['id']
+
+    @pytest.mark.asyncio
+    async def test_promote_to_admin(self, service, _no_email):
+        admin_id, org_id, member_id = await self._setup_admin_and_member(service)
+        result = await service.change_member_role(org_id, member_id, "admin", admin_id)
+        assert result is True
+        db = AuthDB.get_instance()
+        row = await db.fetchone(
+            "SELECT role FROM org_memberships WHERE user_id = ? AND org_id = ?",
+            (member_id, org_id)
+        )
+        assert row['role'] == 'admin'
+
+    @pytest.mark.asyncio
+    async def test_demote_to_member(self, service, _no_email):
+        admin_id, org_id, member_id = await self._setup_admin_and_member(service)
+        # Promote first
+        await service.change_member_role(org_id, member_id, "admin", admin_id)
+        # Then demote
+        result = await service.change_member_role(org_id, member_id, "member", admin_id)
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_invalid_role(self, service, _no_email):
+        admin_id, org_id, member_id = await self._setup_admin_and_member(service)
+        with pytest.raises(ValueError, match="role must be"):
+            await service.change_member_role(org_id, member_id, "superuser", admin_id)
+
+    @pytest.mark.asyncio
+    async def test_cannot_change_own_role(self, service, _no_email):
+        admin_id, org_id, _ = await self._setup_admin_and_member(service)
+        with pytest.raises(ValueError, match="Cannot change your own role"):
+            await service.change_member_role(org_id, admin_id, "member", admin_id)
+
+    @pytest.mark.asyncio
+    async def test_non_admin_cannot_change_role(self, service, _no_email):
+        admin_id, org_id, member_id = await self._setup_admin_and_member(service)
+        with pytest.raises(ValueError, match="Only admins"):
+            await service.change_member_role(org_id, admin_id, "member", member_id)
+
+
 # ── Organization Tests ───────────────────────────────────────────
 
 

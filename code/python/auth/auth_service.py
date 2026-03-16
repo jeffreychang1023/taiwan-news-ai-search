@@ -408,6 +408,162 @@ class AuthService:
         logger.info(f"Password reset completed for user: {user['id']}")
         return True
 
+    # ── Change Password (Authenticated User) ──────────────────────
+
+    async def change_password(self, user_id: str, current_password: str, new_password: str) -> bool:
+        """Change password for authenticated user. Revokes all refresh tokens."""
+        self._validate_password(new_password)
+
+        user = await self.db.fetchone(
+            "SELECT id, password_hash FROM users WHERE id = ? AND is_active = ?",
+            (user_id, True)
+        )
+        if not user or not user.get('password_hash'):
+            raise ValueError("User not found")
+
+        valid = bcrypt.checkpw(current_password.encode('utf-8'), user['password_hash'].encode('utf-8'))
+        if not valid:
+            raise ValueError("Current password is incorrect")
+
+        new_hash = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+        await self.db.execute(
+            "UPDATE users SET password_hash = ? WHERE id = ?",
+            (new_hash, user_id)
+        )
+
+        # Revoke all refresh tokens (force re-login on all devices)
+        await self.db.execute(
+            "UPDATE refresh_tokens SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL",
+            (time.time(), user_id)
+        )
+
+        logger.info(f"Password changed for user: {user_id}")
+        return True
+
+    # ── Revoke All User Tokens ─────────────────────────────────────
+
+    async def revoke_all_user_tokens(self, user_id: str) -> bool:
+        """Revoke all active refresh tokens for a user (logout all devices)."""
+        await self.db.execute(
+            "UPDATE refresh_tokens SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL",
+            (time.time(), user_id)
+        )
+        logger.info(f"All tokens revoked for user: {user_id}")
+        return True
+
+    # ── Admin: Set User Active ─────────────────────────────────────
+
+    async def set_user_active(self, target_user_id: str, is_active: bool,
+                               admin_user_id: str, org_id: str) -> bool:
+        """Admin activates or deactivates a user. Deactivation also revokes all tokens."""
+        if target_user_id == admin_user_id:
+            raise ValueError("Cannot deactivate your own account")
+
+        membership = await self.db.fetchone(
+            "SELECT role FROM org_memberships WHERE user_id = ? AND org_id = ? AND status = 'active'",
+            (admin_user_id, org_id)
+        )
+        if not membership or membership['role'] != 'admin':
+            raise ValueError("Only admins can change user status")
+
+        # Verify target is in same org
+        target_membership = await self.db.fetchone(
+            "SELECT id FROM org_memberships WHERE user_id = ? AND org_id = ? AND status = 'active'",
+            (target_user_id, org_id)
+        )
+        if not target_membership:
+            raise ValueError("User not found in organization")
+
+        active_val = True if is_active else False
+        if self.db.db_type == 'sqlite':
+            active_val = 1 if is_active else 0
+
+        await self.db.execute(
+            "UPDATE users SET is_active = ? WHERE id = ?",
+            (active_val, target_user_id)
+        )
+
+        if not is_active:
+            await self.revoke_all_user_tokens(target_user_id)
+
+        logger.info(f"User {target_user_id} set is_active={is_active} by admin {admin_user_id}")
+        return True
+
+    # ── Admin: Delete User (Soft) ──────────────────────────────────
+
+    async def delete_user(self, target_user_id: str, admin_user_id: str, org_id: str) -> bool:
+        """Soft-delete a user: revoke tokens, remove from org, deactivate, mangle email."""
+        if target_user_id == admin_user_id:
+            raise ValueError("Cannot delete your own account")
+
+        membership = await self.db.fetchone(
+            "SELECT role FROM org_memberships WHERE user_id = ? AND org_id = ? AND status = 'active'",
+            (admin_user_id, org_id)
+        )
+        if not membership or membership['role'] != 'admin':
+            raise ValueError("Only admins can delete users")
+
+        target_membership = await self.db.fetchone(
+            "SELECT id FROM org_memberships WHERE user_id = ? AND org_id = ? AND status = 'active'",
+            (target_user_id, org_id)
+        )
+        if not target_membership:
+            raise ValueError("User not found in organization")
+
+        # Revoke all tokens first
+        await self.revoke_all_user_tokens(target_user_id)
+
+        # Remove from org
+        await self.db.execute(
+            "UPDATE org_memberships SET status = 'removed' WHERE user_id = ? AND org_id = ? AND status = 'active'",
+            (target_user_id, org_id)
+        )
+
+        # Soft delete: deactivate + mangle email to allow re-registration
+        user = await self.db.fetchone("SELECT email FROM users WHERE id = ?", (target_user_id,))
+        deleted_email = f"_deleted_{uuid.uuid4().hex[:8]}_{user['email']}"
+        active_val = False if self.db.db_type == 'postgres' else 0
+        await self.db.execute(
+            "UPDATE users SET is_active = ?, email = ? WHERE id = ?",
+            (active_val, deleted_email, target_user_id)
+        )
+
+        logger.info(f"User {target_user_id} soft-deleted by admin {admin_user_id} in org {org_id}")
+        return True
+
+    # ── Admin: Change Member Role ──────────────────────────────────
+
+    async def change_member_role(self, org_id: str, target_user_id: str,
+                                  new_role: str, admin_user_id: str) -> bool:
+        """Change a member's role in an organization."""
+        if target_user_id == admin_user_id:
+            raise ValueError("Cannot change your own role")
+
+        if new_role not in ('admin', 'member'):
+            raise ValueError("role must be 'admin' or 'member'")
+
+        membership = await self.db.fetchone(
+            "SELECT role FROM org_memberships WHERE user_id = ? AND org_id = ? AND status = 'active'",
+            (admin_user_id, org_id)
+        )
+        if not membership or membership['role'] != 'admin':
+            raise ValueError("Only admins can change member roles")
+
+        target_membership = await self.db.fetchone(
+            "SELECT id FROM org_memberships WHERE user_id = ? AND org_id = ? AND status = 'active'",
+            (target_user_id, org_id)
+        )
+        if not target_membership:
+            raise ValueError("User not found in organization")
+
+        await self.db.execute(
+            "UPDATE org_memberships SET role = ? WHERE user_id = ? AND org_id = ? AND status = 'active'",
+            (new_role, target_user_id, org_id)
+        )
+
+        logger.info(f"User {target_user_id} role changed to {new_role} by admin {admin_user_id} in org {org_id}")
+        return True
+
     # ── Organization ──────────────────────────────────────────────
 
     async def create_organization(self, name: str, admin_user_id: str) -> Dict[str, Any]:
