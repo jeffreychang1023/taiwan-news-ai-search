@@ -480,7 +480,6 @@ The user's question is: {request.query}. The item's description is {item.descrip
             )
 
             # Log MMR scores to analytics
-            from core.query_logger import get_query_logger
             query_logger = get_query_logger()
             if hasattr(self.handler, 'query_id'):
                 for idx, (result, mmr_score) in enumerate(zip(reranked_results, mmr_scores)):

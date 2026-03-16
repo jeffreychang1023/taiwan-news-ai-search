@@ -86,7 +86,10 @@ class RankingAnalyticsHandler:
         GET /api/ranking/pipeline/{query_id}?limit=10
         """
         query_id = request.match_info['query_id']
-        limit = int(request.query.get('limit', 10))
+        try:
+            limit = int(request.query.get('limit', 10))
+        except (ValueError, TypeError):
+            return web.json_response({'error': 'Invalid limit parameter; must be an integer'}, status=400)
 
         try:
             # 1. Get query info

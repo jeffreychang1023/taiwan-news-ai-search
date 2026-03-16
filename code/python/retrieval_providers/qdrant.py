@@ -1251,7 +1251,7 @@ class QdrantVectorClient(RetrievalClientBase):
                                 final_retrieval_score=float(final_score),
                                 doc_published_date=date_published,
                                 doc_author=author,
-                                doc_source='qdrant_hybrid_search',
+                                doc_source=site_name or 'unknown',
                                 retrieval_algorithm='qdrant_hybrid',
                                 doc_length=doc_length,
                                 has_author=has_author,

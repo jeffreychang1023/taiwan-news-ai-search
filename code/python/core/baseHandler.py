@@ -11,6 +11,7 @@ Backwards compatibility is not guaranteed at this time.
 from core.retriever import search, search_with_expansion
 import asyncio
 import importlib
+import os
 import time
 import uuid
 from typing import Any, Dict, List
@@ -241,7 +242,7 @@ class NLWebHandler:
 
         try:
             _effective_user_id = self.user_id or "anonymous"
-            if _effective_user_id == "anonymous":
+            if _effective_user_id == "anonymous" and os.environ.get('NLWEB_DEV_AUTH_BYPASS') != 'true':
                 logger.warning("Anonymous user in B2B mode — should not happen")
             query_logger.log_query_start(
                 query_id=self.query_id,

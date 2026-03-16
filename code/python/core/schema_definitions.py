@@ -11,6 +11,9 @@ Tables (7):
   queries, retrieved_documents, ranking_scores, user_interactions,
   feature_vectors, user_feedback, tier_6_enrichment
 
+ALLOWED_COLUMNS: 101 unique entries (security whitelist for dynamic queries)
+Indexes: 18 (get_index_sql returns 18 CREATE INDEX statements)
+
 Schema version: 2
 """
 

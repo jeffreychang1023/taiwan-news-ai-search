@@ -264,10 +264,10 @@ class QueryLogger:
                         if "duplicate column name" not in str(e).lower() and "already exists" not in str(e).lower():
                             raise
 
-            logger.info("✅ Schema v2 migration completed successfully!")
+            logger.info("[OK] Schema v2 migration completed successfully.")
 
         except Exception as e:
-            logger.error(f"❌ Schema migration failed: {e}")
+            logger.error(f"[FAILED] Schema migration failed: {e}")
             raise
 
     def _ensure_org_id_column(self, cursor):
@@ -690,7 +690,7 @@ class QueryLogger:
             for doc_url, position in positions:
                 cursor.execute(
                     f"UPDATE ranking_scores SET ranking_position = {placeholder} "
-                    f"WHERE query_id = {placeholder} AND doc_url = {placeholder}",
+                    f"WHERE query_id = {placeholder} AND doc_url = {placeholder} AND ranking_method = 'llm'",
                     (position, query_id, doc_url)
                 )
 
