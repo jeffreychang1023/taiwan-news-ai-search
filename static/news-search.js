@@ -726,7 +726,9 @@
             try {
                 const res = await authManager.authenticatedFetch('/api/auth/me');
                 if (res.status === 401) {
-                    // _handleAuthFailure already called hideMainUI + showAuthModal via authenticatedFetch
+                    // Ensure login modal is shown (may not have been triggered if no refresh token existed)
+                    hideMainUI();
+                    showAuthModal('login');
                     return;
                 }
                 if (res.ok) {
