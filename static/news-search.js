@@ -750,9 +750,9 @@
             }
         }
 
-        document.addEventListener('DOMContentLoaded', () => {
-            // Run auth guard first
-            checkAuthOnLoad();
+        document.addEventListener('DOMContentLoaded', async () => {
+            // Run auth guard first — must await to prevent later code from overriding modal state
+            await checkAuthOnLoad();
 
             updateAuthUI();
 
