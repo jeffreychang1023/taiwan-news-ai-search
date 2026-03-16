@@ -804,8 +804,8 @@ class AuthService:
             cutoff = time.time() - BRUTE_FORCE_WINDOW_SECONDS
             count_row = await self.db.fetchone(
                 "SELECT COUNT(*) as cnt FROM login_attempts "
-                "WHERE email = ? AND attempted_at > ? AND success = 0",
-                (email, cutoff)
+                "WHERE email = ? AND attempted_at > ? AND success = ?",
+                (email, cutoff, False)
             )
             if count_row and count_row['cnt'] == BRUTE_FORCE_MAX_ATTEMPTS:
                 import asyncio
