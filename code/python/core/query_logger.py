@@ -19,6 +19,7 @@ Backwards compatibility is not guaranteed at this time.
 
 import asyncio
 import json
+import queue
 import time
 import uuid
 from datetime import datetime, timezone
@@ -28,6 +29,10 @@ import threading
 from queue import Queue
 from misc.logger.logging_config_helper import get_configured_logger
 from core.analytics_db import AnalyticsDB
+from core.schema_definitions import (
+    get_sqlite_schema, get_postgres_schema, get_index_sql,
+    ALLOWED_TABLES, ALLOWED_COLUMNS,
+)
 
 logger = get_configured_logger("query_logger")
 
@@ -71,26 +76,40 @@ class QueryLogger:
         Args:
             db_path: Path to SQLite database file (used if ANALYTICS_DATABASE_URL not set).
                      If None, uses absolute path from project root.
+                     Note: db_path is ignored; always uses the shared singleton AnalyticsDB instance.
         """
-        # Use absolute path from project root if not specified
-        if db_path is None:
-            db_path = get_project_root_db_path()
-
-        # Initialize database abstraction layer
-        self.db = AnalyticsDB(db_path)
+        # Always use the shared singleton instance to avoid multiple connection pools
+        self.db = AnalyticsDB.get_instance()
 
         # Async queue for non-blocking logging
         self.log_queue = Queue()
         self.is_running = False
         self.worker_thread = None
 
-        # Initialize database schema
-        self._init_database()
+        # Lazy init flag: _init_database() is deferred to first _write_to_db()
+        # to avoid blocking the event loop with a sync connect() at startup.
+        self._db_initialized = False
+        self._db_init_lock = threading.Lock()
 
         # Start async worker thread
         self._start_worker()
 
         logger.info(f"QueryLogger initialized with {self.db.db_type} database")
+
+    def _ensure_initialized(self):
+        """
+        Ensure database schema is initialized before first write.
+
+        Uses a threading.Lock so that if multiple worker threads call this
+        simultaneously, only one executes _init_database(). Subsequent calls
+        are no-ops after _db_initialized is set.
+        """
+        if self._db_initialized:
+            return
+        with self._db_init_lock:
+            if not self._db_initialized:
+                self._init_database()
+                self._db_initialized = True
 
     def _init_database(self):
         """Initialize database schema with all necessary tables."""
@@ -115,8 +134,11 @@ class QueryLogger:
             # Ensure org_id column exists (idempotent, for existing v2 DBs)
             self._ensure_org_id_column(cursor)
 
+            # Ensure Phase 3 B2B columns exist (idempotent, for existing DBs)
+            self._ensure_phase3_columns(cursor)
+
             # Create indexes
-            index_sqls = self._get_database_indexes()
+            index_sqls = get_index_sql(self.db.db_type)
             for index_sql in index_sqls:
                 cursor.execute(index_sql)
 
@@ -259,364 +281,39 @@ class QueryLogger:
             if "duplicate column" not in str(e).lower() and "already exists" not in str(e).lower():
                 logger.warning(f"Failed to add org_id column: {e}")
 
+    def _ensure_phase3_columns(self, cursor):
+        """
+        Add Phase 3 B2B columns to user_interactions and user_feedback tables
+        if missing (idempotent — safe to run on both new and existing DBs).
+        """
+        # Columns to add: (table, column, sqlite_type, pg_type)
+        new_columns = [
+            ("user_interactions", "user_id", "TEXT", "VARCHAR(255)"),
+            ("user_interactions", "org_id", "TEXT", "VARCHAR(255)"),
+            ("user_feedback", "query_id", "TEXT", "VARCHAR(255)"),
+            ("user_feedback", "user_id", "TEXT", "VARCHAR(255)"),
+            ("user_feedback", "org_id", "TEXT", "VARCHAR(255)"),
+        ]
+        for table, column, sqlite_type, pg_type in new_columns:
+            try:
+                if self.db.db_type == 'postgres':
+                    cursor.execute(
+                        f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {pg_type}"
+                    )
+                else:
+                    cursor.execute(
+                        f"ALTER TABLE {table} ADD COLUMN {column} {sqlite_type}"
+                    )
+            except Exception as e:
+                if "duplicate column" not in str(e).lower() and "already exists" not in str(e).lower():
+                    logger.warning(f"Failed to add {table}.{column}: {e}")
+
     def _get_database_schema(self) -> Dict[str, str]:
         """Get database schema SQL for current database type."""
         if self.db.db_type == 'postgres':
-            return self._get_postgres_schema()
+            return get_postgres_schema()
         else:
-            return self._get_sqlite_schema()
-
-    def _get_sqlite_schema(self) -> Dict[str, str]:
-        """Get SQLite schema - Schema v2 (ML-ready)."""
-        return {
-            'queries': """
-                CREATE TABLE IF NOT EXISTS queries (
-                    query_id TEXT PRIMARY KEY,
-                    timestamp REAL NOT NULL,
-                    user_id TEXT NOT NULL,
-                    org_id TEXT,
-                    session_id TEXT,
-                    conversation_id TEXT,
-                    query_text TEXT NOT NULL,
-                    decontextualized_query TEXT,
-                    site TEXT NOT NULL,
-                    mode TEXT NOT NULL,
-                    model TEXT,
-                    parent_query_id TEXT,
-                    latency_total_ms REAL,
-                    latency_retrieval_ms REAL,
-                    latency_ranking_ms REAL,
-                    latency_generation_ms REAL,
-                    num_results_retrieved INTEGER,
-                    num_results_ranked INTEGER,
-                    num_results_returned INTEGER,
-                    cost_usd REAL,
-                    error_occurred INTEGER DEFAULT 0,
-                    error_message TEXT,
-                    query_length_words INTEGER,
-                    query_length_chars INTEGER,
-                    has_temporal_indicator INTEGER DEFAULT 0,
-                    embedding_model TEXT,
-                    schema_version INTEGER DEFAULT 2
-                )
-            """,
-            'retrieved_documents': """
-                CREATE TABLE IF NOT EXISTS retrieved_documents (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    query_id TEXT NOT NULL,
-                    doc_url TEXT NOT NULL,
-                    doc_title TEXT,
-                    doc_description TEXT,
-                    doc_published_date TEXT,
-                    doc_author TEXT,
-                    doc_source TEXT,
-                    retrieval_position INTEGER NOT NULL,
-                    vector_similarity_score REAL,
-                    keyword_boost_score REAL,
-                    bm25_score REAL,
-                    temporal_boost REAL,
-                    domain_match INTEGER,
-                    final_retrieval_score REAL,
-                    query_term_count INTEGER,
-                    doc_length INTEGER,
-                    title_exact_match INTEGER DEFAULT 0,
-                    desc_exact_match INTEGER DEFAULT 0,
-                    keyword_overlap_ratio REAL,
-                    recency_days INTEGER,
-                    has_author INTEGER DEFAULT 0,
-                    retrieval_algorithm TEXT,
-                    schema_version INTEGER DEFAULT 2,
-                    FOREIGN KEY (query_id) REFERENCES queries(query_id)
-                )
-            """,
-            'ranking_scores': """
-                CREATE TABLE IF NOT EXISTS ranking_scores (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    query_id TEXT NOT NULL,
-                    doc_url TEXT NOT NULL,
-                    ranking_position INTEGER NOT NULL,
-                    llm_relevance_score REAL,
-                    llm_keyword_score REAL,
-                    llm_semantic_score REAL,
-                    llm_freshness_score REAL,
-                    llm_authority_score REAL,
-                    llm_final_score REAL,
-                    llm_snippet TEXT,
-                    xgboost_score REAL,
-                    xgboost_confidence REAL,
-                    mmr_diversity_score REAL,
-                    final_ranking_score REAL,
-                    ranking_method TEXT,
-                    relative_score REAL,
-                    score_percentile REAL,
-                    schema_version INTEGER DEFAULT 2,
-                    FOREIGN KEY (query_id) REFERENCES queries(query_id)
-                )
-            """,
-            'user_interactions': """
-                CREATE TABLE IF NOT EXISTS user_interactions (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    query_id TEXT NOT NULL,
-                    doc_url TEXT NOT NULL,
-                    interaction_type TEXT NOT NULL,
-                    interaction_timestamp REAL NOT NULL,
-                    result_position INTEGER,
-                    dwell_time_ms REAL,
-                    scroll_depth_percent REAL,
-                    clicked INTEGER DEFAULT 0,
-                    client_user_agent TEXT,
-                    client_ip_hash TEXT,
-                    schema_version INTEGER DEFAULT 2,
-                    FOREIGN KEY (query_id) REFERENCES queries(query_id)
-                )
-            """,
-            'feature_vectors': """
-                CREATE TABLE IF NOT EXISTS feature_vectors (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    query_id TEXT NOT NULL,
-                    doc_url TEXT NOT NULL,
-                    query_length_words INTEGER,
-                    query_length_chars INTEGER,
-                    query_type TEXT,
-                    has_temporal_indicator INTEGER,
-                    has_brand_mention INTEGER,
-                    doc_length_words INTEGER,
-                    doc_length_chars INTEGER,
-                    title_length INTEGER,
-                    has_publication_date INTEGER,
-                    recency_days INTEGER,
-                    has_author INTEGER,
-                    schema_completeness REAL,
-                    domain_authority REAL,
-                    vector_similarity REAL,
-                    bm25_score REAL,
-                    title_exact_match INTEGER,
-                    desc_exact_match INTEGER,
-                    keyword_overlap_ratio REAL,
-                    query_term_coverage REAL,
-                    temporal_relevance REAL,
-                    domain_match INTEGER,
-                    entity_match_count INTEGER,
-                    partial_match_count INTEGER,
-                    retrieval_position INTEGER,
-                    ranking_position INTEGER,
-                    llm_score REAL,
-                    relative_score_to_top REAL,
-                    score_percentile REAL,
-                    clicked INTEGER DEFAULT 0,
-                    dwell_time_ms REAL,
-                    relevance_grade INTEGER,
-                    schema_version INTEGER DEFAULT 2,
-                    created_at REAL NOT NULL,
-                    FOREIGN KEY (query_id) REFERENCES queries(query_id)
-                )
-            """,
-            'user_feedback': """
-                CREATE TABLE IF NOT EXISTS user_feedback (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    query TEXT,
-                    answer_snippet TEXT,
-                    rating TEXT NOT NULL,
-                    comment TEXT,
-                    session_id TEXT,
-                    created_at REAL NOT NULL
-                )
-            """
-        }
-
-    def _get_postgres_schema(self) -> Dict[str, str]:
-        """Get PostgreSQL schema - Schema v2 (ML-ready)."""
-        return {
-            'queries': """
-                CREATE TABLE IF NOT EXISTS queries (
-                    query_id VARCHAR(255) PRIMARY KEY,
-                    timestamp DOUBLE PRECISION NOT NULL,
-                    user_id VARCHAR(255) NOT NULL,
-                    org_id VARCHAR(255),
-                    session_id VARCHAR(255),
-                    conversation_id VARCHAR(255),
-                    query_text TEXT NOT NULL,
-                    decontextualized_query TEXT,
-                    site VARCHAR(100) NOT NULL,
-                    mode VARCHAR(50) NOT NULL,
-                    model VARCHAR(100),
-                    parent_query_id VARCHAR(255),
-                    latency_total_ms DOUBLE PRECISION,
-                    latency_retrieval_ms DOUBLE PRECISION,
-                    latency_ranking_ms DOUBLE PRECISION,
-                    latency_generation_ms DOUBLE PRECISION,
-                    num_results_retrieved INTEGER,
-                    num_results_ranked INTEGER,
-                    num_results_returned INTEGER,
-                    cost_usd DOUBLE PRECISION,
-                    error_occurred INTEGER DEFAULT 0,
-                    error_message TEXT,
-
-                    -- NEW v2 fields for ML
-                    query_length_words INTEGER,
-                    query_length_chars INTEGER,
-                    has_temporal_indicator INTEGER DEFAULT 0,
-                    embedding_model VARCHAR(100),
-                    schema_version INTEGER DEFAULT 2
-                )
-            """,
-            'retrieved_documents': """
-                CREATE TABLE IF NOT EXISTS retrieved_documents (
-                    id SERIAL PRIMARY KEY,
-                    query_id VARCHAR(255) NOT NULL,
-                    doc_url TEXT NOT NULL,
-                    doc_title TEXT,
-                    doc_description TEXT,
-                    doc_published_date VARCHAR(50),
-                    doc_author VARCHAR(255),
-                    doc_source VARCHAR(255),
-                    retrieval_position INTEGER NOT NULL,
-                    vector_similarity_score DOUBLE PRECISION,
-                    keyword_boost_score DOUBLE PRECISION,
-                    bm25_score DOUBLE PRECISION,
-                    temporal_boost DOUBLE PRECISION,
-                    domain_match INTEGER,
-                    final_retrieval_score DOUBLE PRECISION,
-
-                    -- NEW v2 fields for ML
-                    query_term_count INTEGER,
-                    doc_length INTEGER,
-                    title_exact_match INTEGER DEFAULT 0,
-                    desc_exact_match INTEGER DEFAULT 0,
-                    keyword_overlap_ratio DOUBLE PRECISION,
-                    recency_days INTEGER,
-                    has_author INTEGER DEFAULT 0,
-                    retrieval_algorithm VARCHAR(50),
-                    schema_version INTEGER DEFAULT 2,
-                    FOREIGN KEY (query_id) REFERENCES queries(query_id)
-                )
-            """,
-            'ranking_scores': """
-                CREATE TABLE IF NOT EXISTS ranking_scores (
-                    id SERIAL PRIMARY KEY,
-                    query_id VARCHAR(255) NOT NULL,
-                    doc_url TEXT NOT NULL,
-                    ranking_position INTEGER NOT NULL,
-                    llm_relevance_score DOUBLE PRECISION,
-                    llm_keyword_score DOUBLE PRECISION,
-                    llm_semantic_score DOUBLE PRECISION,
-                    llm_freshness_score DOUBLE PRECISION,
-                    llm_authority_score DOUBLE PRECISION,
-                    llm_final_score DOUBLE PRECISION,
-                    llm_snippet TEXT,
-                    xgboost_score DOUBLE PRECISION,
-                    xgboost_confidence DOUBLE PRECISION,
-                    mmr_diversity_score DOUBLE PRECISION,
-                    final_ranking_score DOUBLE PRECISION,
-                    ranking_method VARCHAR(50),
-
-                    -- NEW v2 fields for ML
-                    relative_score DOUBLE PRECISION,
-                    score_percentile DOUBLE PRECISION,
-                    schema_version INTEGER DEFAULT 2,
-                    FOREIGN KEY (query_id) REFERENCES queries(query_id)
-                )
-            """,
-            'user_interactions': """
-                CREATE TABLE IF NOT EXISTS user_interactions (
-                    id SERIAL PRIMARY KEY,
-                    query_id VARCHAR(255) NOT NULL,
-                    doc_url TEXT NOT NULL,
-                    interaction_type VARCHAR(50) NOT NULL,
-                    interaction_timestamp DOUBLE PRECISION NOT NULL,
-                    result_position INTEGER,
-                    dwell_time_ms DOUBLE PRECISION,
-                    scroll_depth_percent DOUBLE PRECISION,
-                    clicked INTEGER DEFAULT 0,
-                    client_user_agent TEXT,
-                    client_ip_hash VARCHAR(255),
-
-                    -- NEW v2 field
-                    schema_version INTEGER DEFAULT 2,
-                    FOREIGN KEY (query_id) REFERENCES queries(query_id)
-                )
-            """,
-            'feature_vectors': """
-                CREATE TABLE IF NOT EXISTS feature_vectors (
-                    id SERIAL PRIMARY KEY,
-                    query_id VARCHAR(255) NOT NULL,
-                    doc_url TEXT NOT NULL,
-
-                    -- Query features (5)
-                    query_length_words INTEGER,
-                    query_length_chars INTEGER,
-                    query_type VARCHAR(50),
-                    has_temporal_indicator INTEGER,
-                    has_brand_mention INTEGER,
-
-                    -- Document features (8)
-                    doc_length_words INTEGER,
-                    doc_length_chars INTEGER,
-                    title_length INTEGER,
-                    has_publication_date INTEGER,
-                    recency_days INTEGER,
-                    has_author INTEGER,
-                    schema_completeness DOUBLE PRECISION,
-                    domain_authority DOUBLE PRECISION,
-
-                    -- Query-document features (10)
-                    vector_similarity DOUBLE PRECISION,
-                    bm25_score DOUBLE PRECISION,
-                    title_exact_match INTEGER,
-                    desc_exact_match INTEGER,
-                    keyword_overlap_ratio DOUBLE PRECISION,
-                    query_term_coverage DOUBLE PRECISION,
-                    temporal_relevance DOUBLE PRECISION,
-                    domain_match INTEGER,
-                    entity_match_count INTEGER,
-                    partial_match_count INTEGER,
-
-                    -- Ranking features (5)
-                    retrieval_position INTEGER,
-                    ranking_position INTEGER,
-                    llm_score DOUBLE PRECISION,
-                    relative_score_to_top DOUBLE PRECISION,
-                    score_percentile DOUBLE PRECISION,
-
-                    -- Labels (3)
-                    clicked INTEGER DEFAULT 0,
-                    dwell_time_ms DOUBLE PRECISION,
-                    relevance_grade INTEGER,
-
-                    -- Metadata
-                    schema_version INTEGER DEFAULT 2,
-                    created_at DOUBLE PRECISION NOT NULL,
-                    FOREIGN KEY (query_id) REFERENCES queries(query_id)
-                )
-            """,
-            'user_feedback': """
-                CREATE TABLE IF NOT EXISTS user_feedback (
-                    id SERIAL PRIMARY KEY,
-                    query TEXT,
-                    answer_snippet TEXT,
-                    rating VARCHAR(20) NOT NULL,
-                    comment TEXT,
-                    session_id VARCHAR(255),
-                    created_at DOUBLE PRECISION NOT NULL
-                )
-            """
-        }
-
-    def _get_database_indexes(self) -> List[str]:
-        """Get database index SQL - Schema v2."""
-        return [
-            "CREATE INDEX IF NOT EXISTS idx_queries_timestamp ON queries(timestamp)",
-            "CREATE INDEX IF NOT EXISTS idx_queries_user_id ON queries(user_id)",
-            "CREATE INDEX IF NOT EXISTS idx_retrieved_docs_query ON retrieved_documents(query_id)",
-            "CREATE INDEX IF NOT EXISTS idx_ranking_scores_query ON ranking_scores(query_id)",
-            "CREATE INDEX IF NOT EXISTS idx_interactions_query ON user_interactions(query_id)",
-            "CREATE INDEX IF NOT EXISTS idx_interactions_url ON user_interactions(doc_url)",
-            "CREATE INDEX IF NOT EXISTS idx_feature_vectors_query ON feature_vectors(query_id)",
-            "CREATE INDEX IF NOT EXISTS idx_feature_vectors_doc ON feature_vectors(doc_url)",
-            "CREATE INDEX IF NOT EXISTS idx_feature_vectors_clicked ON feature_vectors(clicked)",
-            "CREATE INDEX IF NOT EXISTS idx_user_feedback_created ON user_feedback(created_at)",
-            "CREATE INDEX IF NOT EXISTS idx_user_feedback_rating ON user_feedback(rating)"
-        ]
+            return get_sqlite_schema()
 
     def _start_worker(self):
         """Start background worker thread for async logging."""
@@ -629,82 +326,29 @@ class QueryLogger:
         """Background worker that processes log queue."""
         while self.is_running:
             try:
-                # Get log entry from queue (blocks with timeout)
-                if not self.log_queue.empty():
-                    log_entry = self.log_queue.get(timeout=0.1)
-
-                    # Process the log entry
-                    table_name = log_entry.get("table")
-                    data = log_entry.get("data")
-
-                    if table_name and data:
-                        self._write_to_db(table_name, data)
-
-                    self.log_queue.task_done()
-                else:
-                    time.sleep(0.1)
+                log_entry = self.log_queue.get(timeout=1.0)
+                table_name = log_entry.get("table")
+                data = log_entry.get("data")
+                if table_name and data:
+                    self._write_to_db(table_name, data)
+                self.log_queue.task_done()
+            except queue.Empty:
+                continue
             except Exception as e:
                 logger.error(f"Error in logging worker: {e}")
 
-    # Whitelist of allowed table names for dynamic INSERT
-    ALLOWED_TABLES = {
-        'queries', 'retrieved_documents', 'ranking_scores',
-        'user_interactions', 'feature_vectors', 'user_feedback',
-        'tier_6_enrichment',
-    }
-
-    # Whitelist of allowed column names for dynamic INSERT
-    ALLOWED_COLUMNS = {
-        # queries
-        'query_id', 'timestamp', 'user_id', 'org_id', 'session_id', 'conversation_id',
-        'query_text', 'decontextualized_query', 'site', 'mode', 'model',
-        'parent_query_id', 'latency_total_ms', 'latency_retrieval_ms',
-        'latency_ranking_ms', 'latency_generation_ms', 'num_results_retrieved',
-        'num_results_ranked', 'num_results_returned', 'cost_usd',
-        'error_occurred', 'error_message', 'query_length_words',
-        'query_length_chars', 'has_temporal_indicator', 'embedding_model',
-        'schema_version',
-        # retrieved_documents
-        'doc_url', 'doc_title', 'doc_description', 'doc_published_date',
-        'doc_author', 'doc_source', 'retrieval_position',
-        'vector_similarity_score', 'keyword_boost_score', 'bm25_score',
-        'temporal_boost', 'domain_match', 'final_retrieval_score',
-        'query_term_count', 'doc_length', 'title_exact_match',
-        'desc_exact_match', 'keyword_overlap_ratio', 'recency_days',
-        'has_author', 'retrieval_algorithm',
-        # ranking_scores
-        'ranking_position', 'llm_relevance_score', 'llm_keyword_score',
-        'llm_semantic_score', 'llm_freshness_score', 'llm_authority_score',
-        'llm_final_score', 'llm_snippet', 'xgboost_score',
-        'xgboost_confidence', 'mmr_diversity_score', 'final_ranking_score',
-        'ranking_method', 'relative_score', 'score_percentile',
-        # user_interactions
-        'interaction_type', 'interaction_timestamp', 'result_position',
-        'dwell_time_ms', 'scroll_depth_percent', 'clicked',
-        'client_user_agent', 'client_ip_hash',
-        # feature_vectors
-        'query_type', 'has_brand_mention', 'doc_length_words',
-        'doc_length_chars', 'title_length', 'has_publication_date',
-        'schema_completeness', 'domain_authority', 'vector_similarity',
-        'query_term_coverage', 'temporal_relevance', 'entity_match_count',
-        'partial_match_count', 'relative_score_to_top', 'relevance_grade',
-        'created_at',
-        # user_feedback
-        'query', 'answer_snippet', 'rating', 'comment',
-        # tier_6_enrichment
-        'source_type', 'cache_hit', 'latency_ms', 'timeout_occurred',
-        'result_count', 'metadata',
-    }
-
     def _write_to_db(self, table_name: str, data: Dict[str, Any]):
         """Write data to database (synchronous, called by worker thread)."""
+        # Lazy init: ensure schema exists before first write (avoids blocking event loop at startup)
+        self._ensure_initialized()
+
         # Validate table name against whitelist
-        if table_name not in self.ALLOWED_TABLES:
+        if table_name not in ALLOWED_TABLES:
             logger.error(f"Rejected write to invalid table name: {table_name}")
             return
 
         # Validate column names against whitelist
-        invalid_cols = set(data.keys()) - self.ALLOWED_COLUMNS
+        invalid_cols = set(data.keys()) - ALLOWED_COLUMNS
         if invalid_cols:
             logger.error(f"Rejected write with invalid column names: {invalid_cols}")
             return
@@ -754,6 +398,15 @@ class QueryLogger:
                     except Exception:
                         pass
 
+    # Regex pattern for detecting temporal indicators in Chinese queries
+    # Compiled once at class level for efficiency
+    import re as _re
+    _TEMPORAL_PATTERN = _re.compile(
+        r'最新|近日|去年|今年|上週|本月|昨天|前天|上個月|近期|最近|'
+        r'今天|本週|本年|上半年|下半年|第[一二三四]季|'
+        r'2020|2021|2022|2023|2024|2025|2026|2027'
+    )
+
     def log_query_start(
         self,
         query_id: str,
@@ -766,7 +419,8 @@ class QueryLogger:
         conversation_id: str = "",
         model: str = "",
         parent_query_id: str = None,
-        org_id: str = None
+        org_id: str = None,
+        embedding_model: str = "",
     ) -> None:
         """
         Log the start of a query (SYNCHRONOUS - ensures queries table is written first).
@@ -783,7 +437,15 @@ class QueryLogger:
             model: LLM model being used
             parent_query_id: Parent query ID (for generate requests that follow summarize)
             org_id: Organization identifier (for B2B analytics)
+            embedding_model: Embedding model used for vector search
         """
+        # Compute query length metrics
+        query_length_chars = len(query_text) if query_text else 0
+        query_length_words = len(query_text.split()) if query_text else 0
+
+        # Detect temporal indicators (simple regex, no LLM call)
+        has_temporal_indicator = 1 if (query_text and self._TEMPORAL_PATTERN.search(query_text)) else 0
+
         data = {
             "query_id": query_id,
             "timestamp": time.time(),
@@ -797,6 +459,11 @@ class QueryLogger:
             "mode": mode,
             "model": model,
             "parent_query_id": parent_query_id,
+            "query_length_chars": query_length_chars,
+            "query_length_words": query_length_words,
+            "has_temporal_indicator": has_temporal_indicator,
+            "embedding_model": embedding_model or "",
+            "schema_version": 2,
         }
 
         # Write synchronously to ensure queries table has the record BEFORE
@@ -895,7 +562,11 @@ class QueryLogger:
         final_retrieval_score: float = 0,
         doc_published_date: str = "",
         doc_author: str = "",
-        doc_source: str = ""
+        doc_source: str = "",
+        retrieval_algorithm: str = "",
+        doc_length: int = None,
+        has_author: int = None,
+        recency_days: int = None,
     ) -> None:
         """
         Log a retrieved document (before ranking).
@@ -908,13 +579,17 @@ class QueryLogger:
             retrieval_position: Position in retrieval results
             vector_similarity_score: Embedding similarity score
             keyword_boost_score: Keyword boosting score
-            bm25_score: BM25 score (when implemented)
+            bm25_score: BM25 score
             temporal_boost: Temporal boosting score
             domain_match: Whether domain matched
             final_retrieval_score: Combined retrieval score
             doc_published_date: Publication date
             doc_author: Author name
             doc_source: Source/publisher
+            retrieval_algorithm: Algorithm used for retrieval (e.g. 'qdrant_hybrid_search', 'postgres_hybrid')
+            doc_length: Length of the document text in characters
+            has_author: 1 if author is present, 0 otherwise
+            recency_days: Days since publication (None if unknown)
         """
         data = {
             "query_id": query_id,
@@ -933,6 +608,16 @@ class QueryLogger:
             "final_retrieval_score": final_retrieval_score,
         }
 
+        # Optional instant-fillable ML fields
+        if retrieval_algorithm:
+            data["retrieval_algorithm"] = retrieval_algorithm
+        if doc_length is not None:
+            data["doc_length"] = doc_length
+        if has_author is not None:
+            data["has_author"] = has_author
+        if recency_days is not None:
+            data["recency_days"] = recency_days
+
         self.log_queue.put({"table": "retrieved_documents", "data": data})
 
     def log_ranking_score(
@@ -940,18 +625,19 @@ class QueryLogger:
         query_id: str,
         doc_url: str,
         ranking_position: int,
-        llm_relevance_score: float = 0,
-        llm_keyword_score: float = 0,
-        llm_semantic_score: float = 0,
-        llm_freshness_score: float = 0,
-        llm_authority_score: float = 0,
         llm_final_score: float = 0,
         llm_snippet: str = "",
         xgboost_score: float = 0,
         xgboost_confidence: float = 0,
         mmr_diversity_score: float = 0,
         final_ranking_score: float = 0,
-        ranking_method: str = "llm"
+        ranking_method: str = "llm",
+        # Deprecated sub-score params kept for backwards compatibility (ignored)
+        llm_relevance_score: float = 0,
+        llm_keyword_score: float = 0,
+        llm_semantic_score: float = 0,
+        llm_freshness_score: float = 0,
+        llm_authority_score: float = 0,
     ) -> None:
         """
         Log ranking scores for a document.
@@ -959,29 +645,19 @@ class QueryLogger:
         Args:
             query_id: Query identifier
             doc_url: Document URL
-            ranking_position: Position after ranking
-            llm_relevance_score: LLM overall relevance score
-            llm_keyword_score: LLM keyword matching score
-            llm_semantic_score: LLM semantic relevance score
-            llm_freshness_score: LLM freshness score
-            llm_authority_score: LLM authority score
+            ranking_position: Position after ranking (0-based)
             llm_final_score: LLM combined score
             llm_snippet: LLM-generated snippet
             xgboost_score: XGBoost predicted score
             xgboost_confidence: XGBoost confidence
             mmr_diversity_score: MMR diversity score
             final_ranking_score: Final combined score
-            ranking_method: Method used (llm, xgboost, hybrid)
+            ranking_method: Method used (llm, xgboost, hybrid, mmr)
         """
         data = {
             "query_id": query_id,
             "doc_url": doc_url,
             "ranking_position": ranking_position,
-            "llm_relevance_score": llm_relevance_score,
-            "llm_keyword_score": llm_keyword_score,
-            "llm_semantic_score": llm_semantic_score,
-            "llm_freshness_score": llm_freshness_score,
-            "llm_authority_score": llm_authority_score,
             "llm_final_score": llm_final_score,
             "llm_snippet": llm_snippet[:200] if llm_snippet else "",  # Truncate
             "xgboost_score": xgboost_score,
@@ -992,6 +668,42 @@ class QueryLogger:
         }
 
         self.log_queue.put({"table": "ranking_scores", "data": data})
+
+    def update_ranking_positions(
+        self,
+        query_id: str,
+        positions: list,
+    ) -> None:
+        """
+        Batch-update ranking_position for all documents of a query after final sort.
+
+        Args:
+            query_id: Query identifier
+            positions: List of (doc_url, position) tuples in final sorted order
+        """
+        conn = None
+        try:
+            conn = self.db.connect()
+            cursor = conn.cursor()
+            placeholder = "%s" if self.db.db_type == 'postgres' else "?"
+
+            for doc_url, position in positions:
+                cursor.execute(
+                    f"UPDATE ranking_scores SET ranking_position = {placeholder} "
+                    f"WHERE query_id = {placeholder} AND doc_url = {placeholder}",
+                    (position, query_id, doc_url)
+                )
+
+            conn.commit()
+            logger.debug(f"Updated ranking_position for {len(positions)} documents in query {query_id}")
+        except Exception as e:
+            logger.error(f"Failed to update ranking positions for query {query_id}: {e}")
+        finally:
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
 
     def log_mmr_score(
         self,
@@ -1018,7 +730,6 @@ class QueryLogger:
             "mmr_diversity_score": mmr_score,
             "ranking_method": "mmr",
             # Other scores will be 0/empty for this partial update
-            "llm_relevance_score": 0,
             "llm_final_score": 0,
             "final_ranking_score": mmr_score,
         }
@@ -1057,7 +768,6 @@ class QueryLogger:
             "xgboost_confidence": xgboost_confidence,
             "ranking_method": "xgboost_shadow",
             # Placeholder values for other scores (not used in Phase A)
-            "llm_relevance_score": 0,
             "llm_final_score": 0,
             "mmr_diversity_score": 0,
             "final_ranking_score": 0,
@@ -1075,7 +785,9 @@ class QueryLogger:
         scroll_depth_percent: float = 0,
         clicked: bool = False,
         client_user_agent: str = "",
-        client_ip_hash: str = ""
+        client_ip_hash: str = "",
+        user_id: str = None,
+        org_id: str = None,
     ) -> None:
         """
         Log user interaction with a result.
@@ -1090,6 +802,8 @@ class QueryLogger:
             clicked: Whether result was clicked
             client_user_agent: User agent string
             client_ip_hash: Hashed IP address
+            user_id: User identifier (for B2B analytics)
+            org_id: Organization identifier (for B2B analytics)
         """
         data = {
             "query_id": query_id,
@@ -1103,6 +817,11 @@ class QueryLogger:
             "client_user_agent": client_user_agent,
             "client_ip_hash": client_ip_hash,
         }
+
+        if user_id is not None:
+            data["user_id"] = user_id
+        if org_id is not None:
+            data["org_id"] = org_id
 
         self.log_queue.put({"table": "user_interactions", "data": data})
 
@@ -1142,7 +861,7 @@ class QueryLogger:
 
         self.log_queue.put({"table": "tier_6_enrichment", "data": data})
 
-    def get_query_stats(self, days: int = 7) -> Dict[str, Any]:
+    async def get_query_stats(self, days: int = 7) -> Dict[str, Any]:
         """
         Get query statistics for the past N days.
 
@@ -1152,55 +871,53 @@ class QueryLogger:
         Returns:
             Dictionary with statistics
         """
-        conn = None
         try:
-            conn = self.db.connect()
-            cursor = conn.cursor()
-
             cutoff_timestamp = time.time() - (days * 24 * 60 * 60)
 
-            # Use appropriate placeholder for database type
-            placeholder = "%s" if self.db.db_type == 'postgres' else "?"
+            def get_val(row, key):
+                """Extract scalar value from fetchone() dict result."""
+                if row is None:
+                    return 0
+                # Explicit alias key first, then fallback to first value
+                if key in row:
+                    return row[key] or 0
+                return list(row.values())[0] or 0
 
             # Total queries
-            cursor.execute(f"""
-                SELECT COUNT(*) FROM queries WHERE timestamp > {placeholder}
-            """, (cutoff_timestamp,))
-            result = cursor.fetchone()
-            total_queries = result[0] if isinstance(result, tuple) else result['count']
+            row = await self.db.fetchone(
+                "SELECT COUNT(*) AS total_count FROM queries WHERE timestamp > ?",
+                (cutoff_timestamp,)
+            )
+            total_queries = get_val(row, 'total_count')
 
             # Average latency
-            cursor.execute(f"""
-                SELECT AVG(latency_total_ms) FROM queries
-                WHERE timestamp > {placeholder} AND latency_total_ms IS NOT NULL
-            """, (cutoff_timestamp,))
-            result = cursor.fetchone()
-            avg_latency = (result[0] if isinstance(result, tuple) else result['avg']) or 0
+            row = await self.db.fetchone(
+                "SELECT AVG(latency_total_ms) AS avg_latency FROM queries WHERE timestamp > ? AND latency_total_ms IS NOT NULL",
+                (cutoff_timestamp,)
+            )
+            avg_latency = get_val(row, 'avg_latency')
 
             # Total cost
-            cursor.execute(f"""
-                SELECT SUM(cost_usd) FROM queries
-                WHERE timestamp > {placeholder} AND cost_usd IS NOT NULL
-            """, (cutoff_timestamp,))
-            result = cursor.fetchone()
-            total_cost = (result[0] if isinstance(result, tuple) else result['sum']) or 0
+            row = await self.db.fetchone(
+                "SELECT SUM(cost_usd) AS total_cost FROM queries WHERE timestamp > ? AND cost_usd IS NOT NULL",
+                (cutoff_timestamp,)
+            )
+            total_cost = get_val(row, 'total_cost')
 
             # Error rate
-            cursor.execute(f"""
-                SELECT COUNT(*) FROM queries
-                WHERE timestamp > {placeholder} AND error_occurred = 1
-            """, (cutoff_timestamp,))
-            result = cursor.fetchone()
-            error_count = result[0] if isinstance(result, tuple) else result['count']
+            row = await self.db.fetchone(
+                "SELECT COUNT(*) AS error_count FROM queries WHERE timestamp > ? AND error_occurred = 1",
+                (cutoff_timestamp,)
+            )
+            error_count = get_val(row, 'error_count')
             error_rate = error_count / total_queries if total_queries > 0 else 0
 
             # Click-through rate
-            cursor.execute(f"""
-                SELECT COUNT(DISTINCT query_id) FROM user_interactions
-                WHERE interaction_timestamp > {placeholder} AND clicked = 1
-            """, (cutoff_timestamp,))
-            result = cursor.fetchone()
-            queries_with_clicks = result[0] if isinstance(result, tuple) else result['count']
+            row = await self.db.fetchone(
+                "SELECT COUNT(DISTINCT query_id) AS click_count FROM user_interactions WHERE interaction_timestamp > ? AND clicked = 1",
+                (cutoff_timestamp,)
+            )
+            queries_with_clicks = get_val(row, 'click_count')
             ctr = queries_with_clicks / total_queries if total_queries > 0 else 0
 
             return {
@@ -1214,14 +931,18 @@ class QueryLogger:
         except Exception as e:
             logger.error(f"Error getting query stats: {e}")
             return {}
-        finally:
-            if conn is not None:
-                try:
-                    conn.close()
-                except Exception:
-                    pass
 
-    def log_feedback(self, query: str, answer_snippet: str, rating: str, comment: str = "", session_id: str = ""):
+    def log_feedback(
+        self,
+        query: str,
+        answer_snippet: str,
+        rating: str,
+        comment: str = "",
+        session_id: str = "",
+        query_id: str = None,
+        user_id: str = None,
+        org_id: str = None,
+    ):
         """Log user feedback (thumbs up/down + optional comment).
 
         Args:
@@ -1230,6 +951,9 @@ class QueryLogger:
             rating: 'positive' or 'negative'
             comment: Optional user comment
             session_id: Optional session identifier
+            query_id: Optional query identifier (FK to queries table)
+            user_id: Optional user identifier (for B2B analytics)
+            org_id: Optional organization identifier (for B2B analytics)
         """
         data = {
             "query": query or "",
@@ -1239,6 +963,12 @@ class QueryLogger:
             "session_id": session_id or "",
             "created_at": time.time()
         }
+        if query_id is not None:
+            data["query_id"] = query_id
+        if user_id is not None:
+            data["user_id"] = user_id
+        if org_id is not None:
+            data["org_id"] = org_id
         self.log_queue.put({"table": "user_feedback", "data": data})
         logger.info(f"Queued feedback: rating={rating}, query='{(query or '')[:50]}'")
 

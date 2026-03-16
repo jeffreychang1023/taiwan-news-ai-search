@@ -1190,6 +1190,7 @@ class QdrantVectorClient(RetrievalClientBase):
                                     }
 
                         # Log each retrieved document
+                        from datetime import datetime, timezone as _tz
                         for position, result in enumerate(results):
                             # Handle Dict format (new format)
                             if isinstance(result, dict):
@@ -1226,6 +1227,18 @@ class QdrantVectorClient(RetrievalClientBase):
                             else:
                                 continue
 
+                            # Compute instant-fillable ML fields
+                            doc_length = len(schema_json) if schema_json else 0
+                            has_author = 1 if author else 0
+                            recency_days = None
+                            if date_published:
+                                try:
+                                    date_str = date_published.split('T')[0] if 'T' in date_published else date_published
+                                    pub_date = datetime.strptime(date_str, '%Y-%m-%d').replace(tzinfo=_tz.utc)
+                                    recency_days = (datetime.now(_tz.utc) - pub_date).days
+                                except Exception:
+                                    pass
+
                             query_logger.log_retrieved_document(
                                 query_id=handler.query_id,
                                 doc_url=url,
@@ -1238,7 +1251,11 @@ class QdrantVectorClient(RetrievalClientBase):
                                 final_retrieval_score=float(final_score),
                                 doc_published_date=date_published,
                                 doc_author=author,
-                                doc_source='qdrant_hybrid_search'
+                                doc_source='qdrant_hybrid_search',
+                                retrieval_algorithm='qdrant_hybrid',
+                                doc_length=doc_length,
+                                has_author=has_author,
+                                recency_days=recency_days,
                             )
 
                         logger.info(f"Analytics: Logged {len(results)} retrieved documents for query {handler.query_id}")

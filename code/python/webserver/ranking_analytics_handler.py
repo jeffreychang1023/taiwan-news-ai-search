@@ -27,9 +27,11 @@ class RankingAnalyticsHandler:
         Initialize the ranking analytics handler.
 
         Args:
-            db_path: Path to SQLite database. If None, uses absolute path from project root.
+            db_path: Ignored; always uses the shared singleton AnalyticsDB instance.
+                     Kept for API compatibility with register_ranking_analytics_routes callers.
         """
-        self.db = AnalyticsDB(db_path)
+        # Always use the shared singleton instance to avoid multiple connection pools
+        self.db = AnalyticsDB.get_instance()
 
     async def get_config(self, request: web.Request) -> web.Response:
         """

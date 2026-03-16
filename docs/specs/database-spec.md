@@ -120,57 +120,30 @@
 
 ---
 
-## Analytics 表（待遷移）
+## Analytics 表
 
-目前由 `analytics_db.py` 管理，支援 SQLite/PostgreSQL 雙 DB。待整合至 VPS PostgreSQL。
+由 `analytics_db.py` + `query_logger.py` 管理。Async 改寫完成（2026-03-16）。
 
-### 待處理事項
+**完整規格**：見 `docs/specs/analytics-spec.md`（schema、API、資料流的 source of truth）。
 
-1. **P0+P1: DB 整合 + Async 改寫（一起做）**
-   - 從獨立 `ANALYTICS_DATABASE_URL`（Neon.tech）遷移至 VPS PostgreSQL（同一個 `nlweb` database）
-   - 同時將 `analytics_db.py` 從 sync `psycopg.connect()` 改為 async `AsyncConnectionPool`（照 `auth_db.py` pattern）
-   - 改動範圍：`analytics_db.py`、`analytics_handler.py`、`ranking_analytics_handler.py`、baseHandler 呼叫端
-   - 風險低：analytics 是 write-mostly（記 log），不影響搜尋主路徑。寫入失敗不阻斷搜尋
-   - 時機：全量 indexing 完成、pg_dump → VPS 時一起做
-2. **P2: Login 整合** — `queries.user_id` 從 anonymous hash 改為真實 user_id（NOT NULL）+ 加 `org_id`（NOT NULL）。B2B only，無未登入用戶，不需 anonymous fallback。auth middleware 保證每個 request 都有身份。P0 做 DB 整合時先加 `org_id` 欄位（nullable），P2 實作時改為 NOT NULL
-3. **P3: Schema cleanup** — `ranking_scores.bm25_score` rename 為 `text_search_score`（對齊 XGBoost feature rename）。P0 時順手做，一行 ALTER TABLE + handler query 更新
-4. **P4: 保留 SQLite 本地開發** — `analytics_db.py` 的 SQLite/PostgreSQL 雙 DB 支援保留。改 schema 時兩邊（`_get_sqlite_schema()` / `_get_postgres_schema()`）一起更新。SQLite 檔案已加入 `.gitignore`（`data/analytics/*.db`）
+以下為摘要。7 張表：
 
-### queries
+| 表 | 說明 | 每次搜尋寫入 |
+|----|------|-------------|
+| `queries` | 主查詢記錄（25 欄位，含 org_id, v2 ML 欄位） | 1 INSERT + 1 UPDATE |
+| `retrieved_documents` | Retrieval 文件及分數（21 欄位） | N（每 doc 一列） |
+| `ranking_scores` | Ranking 分數，多 method（17 欄位） | N x M（llm/xgboost/mmr） |
+| `user_interactions` | 前端行為：click, dwell, scroll（12 欄位） | 非同步，使用者操作時 |
+| `tier_6_enrichment` | Tier 6 API 呼叫記錄（10 欄位） | 選擇性 |
+| `feature_vectors` | XGBoost 預計算特徵（32 欄位） | Phase B 實作 |
+| `user_feedback` | 讚/踩評價（7 欄位） | 選擇性 |
 
-| 欄位 | 型別 | 說明 |
-|------|------|------|
-| query_id | VARCHAR PK | |
-| timestamp | DOUBLE PRECISION | epoch |
-| user_id | VARCHAR | 目前是 anonymous hash，待改為真實 user_id |
-| session_id | VARCHAR | |
-| query_text | TEXT | 原始查詢 |
-| decontextualized_query | TEXT | 去脈絡化查詢 |
-| site | VARCHAR | |
-| mode | VARCHAR | search / deep_research |
-| latency_total_ms | DOUBLE PRECISION | |
-| latency_retrieval_ms | DOUBLE PRECISION | |
-| latency_ranking_ms | DOUBLE PRECISION | |
-| latency_generation_ms | DOUBLE PRECISION | |
-| num_results_* | INTEGER | retrieved / ranked / returned |
-| cost_usd | DOUBLE PRECISION | LLM API 成本 |
-| error_occurred | INTEGER | |
+### 待處理
 
-### retrieved_documents
-
-每次查詢檢索到的文件及其分數。
-
-### ranking_scores
-
-每次查詢的排序分數（LLM、text_search、MMR、XGBoost、final）。XGBoost shadow mode 資料收集用。
-
-### user_interactions
-
-前端使用者行為（click, dwell_time, scroll_depth）。XGBoost training signal。
-
-### tier_6_enrichment
-
-Tier 6 API（Stock/Weather/Wikipedia）呼叫記錄。
+1. ~~P0+P1: Async 改寫~~ — ✅ 完成（2026-03-16）
+2. **P2: user_id/org_id NOT NULL** — blocker 已解除（搜尋已強制登入），待實作 ALTER TABLE
+3. ~~P3: Schema cleanup~~ — ✅ 完成（ranking_scores 本就無 bm25_score 欄位，無需 rename）
+4. ~~P4: SQLite 本地開發保留~~ — ✅ 完成
 
 ---
 

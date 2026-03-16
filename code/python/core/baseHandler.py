@@ -240,9 +240,12 @@ class NLWebHandler:
         query_start_time = time.time()
 
         try:
+            _effective_user_id = self.user_id or "anonymous"
+            if _effective_user_id == "anonymous":
+                logger.warning("Anonymous user in B2B mode — should not happen")
             query_logger.log_query_start(
                 query_id=self.query_id,
-                user_id=self.user_id or "anonymous",
+                user_id=_effective_user_id,
                 query_text=self.query,
                 site=str(self.site) if isinstance(self.site, list) else self.site,
                 mode=self.generate_mode or "list",
@@ -251,7 +254,8 @@ class NLWebHandler:
                 conversation_id=self.conversation_id,
                 model=self.model,
                 parent_query_id=self.parent_query_id,
-                org_id=self.org_id
+                org_id=self.org_id,
+                embedding_model=getattr(CONFIG, 'embedding_model', '') or 'qwen3-4b',
             )
             # Allow parent commit to propagate to avoid foreign key race conditions
             await asyncio.sleep(0.15)

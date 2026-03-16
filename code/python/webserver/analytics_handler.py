@@ -36,10 +36,11 @@ class AnalyticsHandler:
         Initialize the analytics handler.
 
         Args:
-            db_path: Path to SQLite database (used if DATABASE_URL not set).
-                     If None, uses absolute path from project root.
+            db_path: Ignored; always uses the shared singleton AnalyticsDB instance.
+                     Kept for API compatibility with register_analytics_routes callers.
         """
-        self.db = AnalyticsDB(db_path)
+        # Always use the shared singleton instance to avoid multiple connection pools
+        self.db = AnalyticsDB.get_instance()
         logger.info(f"Analytics handler initialized with {self.db.db_type} database")
 
     async def get_stats(self, request: web.Request) -> web.Response:
@@ -206,7 +207,7 @@ class AnalyticsHandler:
                     AVG(ui.result_position) as avg_position,
                     AVG(ui.dwell_time_ms) as avg_dwell_time
                 FROM user_interactions ui
-                LEFT JOIN retrieved_documents rd ON ui.doc_url = rd.doc_url
+                LEFT JOIN retrieved_documents rd ON ui.doc_url = rd.doc_url AND ui.query_id = rd.query_id
                 WHERE ui.clicked = 1
                   AND ui.interaction_timestamp > ?
                 GROUP BY ui.doc_url, rd.doc_title
@@ -266,7 +267,7 @@ class AnalyticsHandler:
                     rd.has_author,
                     rd.vector_similarity_score,
                     rd.keyword_boost_score,
-                    rd.text_search_score,
+                    rd.bm25_score,
                     rd.final_retrieval_score,
                     rd.retrieval_position,
                     rd.retrieval_algorithm,
@@ -294,10 +295,10 @@ class AnalyticsHandler:
                 'query_id', 'query_text', 'query_length_words', 'query_length_chars', 'has_temporal_indicator',
                 'doc_url', 'doc_title', 'doc_length', 'title_exact_match', 'desc_exact_match',
                 'keyword_overlap_ratio', 'recency_days', 'has_author',
-                'vector_similarity_score', 'keyword_boost_score', 'text_search_score', 'final_retrieval_score',
+                'vector_similarity_score', 'keyword_boost_score', 'bm25_score', 'final_retrieval_score',
                 'retrieval_position', 'retrieval_algorithm',
                 'llm_final_score', 'relative_score', 'score_percentile', 'ranking_position', 'ranking_method',
-                'clicked', 'dwell_time_ms', 'mode', 'query_latency_ms', 'schema_version'
+                'clicked', 'dwell_time_ms', 'mode', 'latency_total_ms', 'schema_version'
             ]
 
             output = io.StringIO()
@@ -348,6 +349,11 @@ class AnalyticsHandler:
             from core.query_logger import get_query_logger
             query_logger = get_query_logger()
 
+            # Extract authenticated user info for B2B analytics
+            auth_user = request.get('user') or {}
+            req_user_id = auth_user.get('id') if auth_user.get('authenticated') else None
+            req_org_id = auth_user.get('org_id') if auth_user.get('authenticated') else None
+
             if event_type == 'query_start':
                 pass
 
@@ -365,7 +371,9 @@ class AnalyticsHandler:
                     result_position=data.get('result_position', 0),
                     clicked=True,
                     client_user_agent=data.get('client_user_agent', ''),
-                    client_ip_hash=self._hash_ip(request)
+                    client_ip_hash=self._hash_ip(request),
+                    user_id=req_user_id,
+                    org_id=req_org_id,
                 )
 
             elif event_type == 'dwell_time':
@@ -375,7 +383,9 @@ class AnalyticsHandler:
                     interaction_type='dwell',
                     result_position=data.get('result_position', 0),
                     dwell_time_ms=data.get('dwell_time_ms', 0),
-                    scroll_depth_percent=data.get('scroll_depth_percent', 0)
+                    scroll_depth_percent=data.get('scroll_depth_percent', 0),
+                    user_id=req_user_id,
+                    org_id=req_org_id,
                 )
 
             return web.json_response({"status": "ok"})
@@ -402,6 +412,11 @@ class AnalyticsHandler:
             from core.query_logger import get_query_logger
             query_logger = get_query_logger()
 
+            # Extract authenticated user info for B2B analytics
+            auth_user = request.get('user') or {}
+            batch_user_id = auth_user.get('id') if auth_user.get('authenticated') else None
+            batch_org_id = auth_user.get('org_id') if auth_user.get('authenticated') else None
+
             for event in events:
                 event_type = event.get('event_type')
                 data = event.get('data', {})
@@ -418,7 +433,9 @@ class AnalyticsHandler:
                             result_position=data.get('result_position', 0),
                             clicked=True,
                             client_user_agent=data.get('client_user_agent', ''),
-                            client_ip_hash=self._hash_ip(request)
+                            client_ip_hash=self._hash_ip(request),
+                            user_id=batch_user_id,
+                            org_id=batch_org_id,
                         )
 
                     elif event_type == 'dwell_time':
@@ -427,7 +444,9 @@ class AnalyticsHandler:
                             doc_url=data.get('doc_url'),
                             interaction_type='dwell',
                             dwell_time_ms=data.get('dwell_time_ms', 0),
-                            scroll_depth_percent=data.get('scroll_depth_percent', 0)
+                            scroll_depth_percent=data.get('scroll_depth_percent', 0),
+                            user_id=batch_user_id,
+                            org_id=batch_org_id,
                         )
 
                 except Exception as e:

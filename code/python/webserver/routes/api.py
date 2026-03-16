@@ -494,6 +494,12 @@ async def feedback_handler(request: web.Request) -> web.Response:
     answer_snippet = body.get("answer_snippet", "")
     comment = body.get("comment", "")[:2000] if body.get("comment") else ""
     session_id = body.get("session_id", "")
+    query_id = body.get("query_id") or None
+
+    # Extract authenticated user info for B2B analytics
+    auth_user = request.get('user') or {}
+    feedback_user_id = auth_user.get('id') if auth_user.get('authenticated') else None
+    feedback_org_id = auth_user.get('org_id') if auth_user.get('authenticated') else None
 
     try:
         from core.query_logger import get_query_logger
@@ -503,7 +509,10 @@ async def feedback_handler(request: web.Request) -> web.Response:
             answer_snippet=answer_snippet,
             rating=rating,
             comment=comment,
-            session_id=session_id
+            session_id=session_id,
+            query_id=query_id,
+            user_id=feedback_user_id,
+            org_id=feedback_org_id,
         )
         logger.info(f"[Feedback] Stored: rating={rating}, query='{query[:50]}'")
         return web.json_response({"status": "ok"})

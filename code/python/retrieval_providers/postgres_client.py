@@ -5,6 +5,7 @@ import json
 import os
 import asyncio
 import time
+from datetime import datetime, timezone
 from typing import List, Dict, Union, Optional, Any, Tuple, Set
 
 from urllib.parse import urlparse, parse_qs
@@ -20,6 +21,9 @@ from core.retriever import RetrievalClientBase
 from core.embedding import get_embedding
 from misc.logger.logging_config_helper  import get_configured_logger
 from misc.logger.logger import LogLevel
+
+# Analytics logging
+from core.query_logger import get_query_logger
 
 logger = get_configured_logger("postgres_client")
 
@@ -455,14 +459,77 @@ class PgVectorClient(RetrievalClientBase):
                 results = []
                 for row in merged:
                     schema_str = self._build_schema_json(row)
-                    results.append([row["url"], schema_str, row["title"], row["source"]])
+                    results.append({
+                        'url': row["url"],
+                        'schema_str': schema_str,
+                        'title': row["title"],
+                        'source': row["source"],
+                        'author': row.get("author") or "",
+                        'date_published': row["date_published"].isoformat() if row.get("date_published") else "",
+                        'vector_score': float(row.get("vector_score") or 0.0),
+                        'text_score': float(row.get("text_score") or 0.0),
+                    })
 
                 return results
 
         try:
-            results = await self._execute_with_retry(_search_docs)
+            raw_results = await self._execute_with_retry(_search_docs)
             duration = time.time() - start_time
-            logger.info(f"Search completed in {duration:.2f}s, found {len(results)} results")
+            logger.info(f"Search completed in {duration:.2f}s, found {len(raw_results)} results")
+
+            # Analytics: Log retrieved documents with scores
+            handler = kwargs.get('handler')
+            if handler and hasattr(handler, 'query_id'):
+                query_logger = get_query_logger()
+                try:
+                    for position, item in enumerate(raw_results):
+                        url = item['url']
+                        author = item.get('author', '')
+                        date_published = item.get('date_published', '')
+                        vector_score = item.get('vector_score', 0.0)
+                        text_score = item.get('text_score', 0.0)
+                        # Combined hybrid score (vector + text)
+                        final_score = vector_score if vector_score > 0 else text_score
+
+                        # Compute derived fields
+                        schema_str = item.get('schema_str', '')
+                        doc_length = len(schema_str)
+                        has_author = 1 if author else 0
+
+                        # Compute recency_days from date_published
+                        recency_days = None
+                        if date_published:
+                            try:
+                                date_str = date_published.split('T')[0] if 'T' in date_published else date_published
+                                pub_date = datetime.strptime(date_str, '%Y-%m-%d').replace(tzinfo=timezone.utc)
+                                recency_days = (datetime.now(timezone.utc) - pub_date).days
+                            except Exception:
+                                pass
+
+                        query_logger.log_retrieved_document(
+                            query_id=handler.query_id,
+                            doc_url=url,
+                            doc_title=item.get('title', ''),
+                            doc_description='',
+                            retrieval_position=position,
+                            vector_similarity_score=vector_score,
+                            bm25_score=text_score,
+                            keyword_boost_score=0.0,
+                            final_retrieval_score=final_score,
+                            doc_published_date=date_published,
+                            doc_author=author,
+                            doc_source=item.get('source', ''),
+                            retrieval_algorithm='postgres_hybrid',
+                            doc_length=doc_length,
+                            has_author=has_author,
+                            recency_days=recency_days,
+                        )
+                    logger.info(f"Analytics: Logged {len(raw_results)} retrieved documents for query {handler.query_id}")
+                except Exception as log_err:
+                    logger.warning(f"Failed to log retrieved documents: {log_err}")
+
+            # Convert back to list-of-lists format expected by downstream code
+            results = [[item['url'], item['schema_str'], item['title'], item['source']] for item in raw_results]
             return results
         except Exception as e:
             logger.exception(f"Error in search: {e}")

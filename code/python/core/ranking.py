@@ -183,17 +183,17 @@ The user's question is: {request.query}. The item's description is {item.descrip
 
             logger.debug(f"Item {name} ranked successfully")
 
-            # Analytics: Log ranking score
+            # Analytics: Log ranking score (position=-1 = pending; updated in batch after sort)
             if hasattr(self.handler, 'query_id'):
                 query_logger = get_query_logger()
                 try:
                     query_logger.log_ranking_score(
                         query_id=self.handler.query_id,
                         doc_url=url,
-                        ranking_position=0,  # Temporary position, will update after final sort
+                        ranking_position=-1,  # Placeholder; updated by update_ranking_positions()
                         llm_final_score=float(ranking.get("score", 0)),
                         llm_snippet=ranking.get("description", ""),
-                        ranking_method='llm_fast_track' if self.ranking_type == Ranking.FAST_TRACK else 'llm_regular'
+                        ranking_method='llm'
                     )
                 except Exception as log_err:
                     logger.warning(f"Failed to log ranking score: {log_err}")
@@ -409,6 +409,15 @@ The user's question is: {request.query}. The item's description is {item.descrip
 
         filtered = [r for r in self.rankedAnswers if r['ranking']['score'] > 51]
         ranked = sorted(filtered, key=lambda x: x['ranking']["score"], reverse=True)
+
+        # Analytics: Batch-update ranking_position now that final order is known
+        if hasattr(self.handler, 'query_id') and ranked:
+            try:
+                query_logger = get_query_logger()
+                positions = [(r.get('url', ''), idx) for idx, r in enumerate(ranked)]
+                query_logger.update_ranking_positions(self.handler.query_id, positions)
+            except Exception as log_err:
+                logger.warning(f"Failed to update ranking positions: {log_err}")
 
         # Phase A: Apply XGBoost ML re-ranking (shadow mode - logs predictions without changing rankings)
         from core.config import CONFIG
