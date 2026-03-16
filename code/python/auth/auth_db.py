@@ -151,6 +151,12 @@ class AuthDB:
         """
         return query.replace('?', '%s')
 
+    @staticmethod
+    def _serialize_row(row: Dict) -> Dict:
+        """Ensure all values are JSON-serializable (PostgreSQL returns UUID objects)."""
+        import uuid as _uuid
+        return {k: str(v) if isinstance(v, _uuid.UUID) else v for k, v in row.items()}
+
     async def _pg_fetchone(self, query: str, params: Optional[Tuple] = None) -> Optional[Dict]:
         query = self._adapt_query_pg(query)
         pool = await self._get_pool()
@@ -158,7 +164,7 @@ class AuthDB:
             async with conn.cursor(row_factory=dict_row) as cur:
                 await cur.execute(query, params)
                 row = await cur.fetchone()
-                return dict(row) if row else None
+                return self._serialize_row(dict(row)) if row else None
 
     async def _pg_fetchall(self, query: str, params: Optional[Tuple] = None) -> List[Dict]:
         query = self._adapt_query_pg(query)
@@ -167,7 +173,7 @@ class AuthDB:
             async with conn.cursor(row_factory=dict_row) as cur:
                 await cur.execute(query, params)
                 rows = await cur.fetchall()
-                return [dict(r) for r in rows]
+                return [self._serialize_row(dict(r)) for r in rows]
 
     async def _pg_execute(self, query: str, params: Optional[Tuple] = None):
         query = self._adapt_query_pg(query)
