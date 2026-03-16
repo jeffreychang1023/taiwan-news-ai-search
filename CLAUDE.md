@@ -110,6 +110,7 @@ Track A-AB 共 25 個完成項目，涵蓋 Analytics、BM25、MMR、Reasoning、
 
 ### 目前工作
 
+✅ **Analytics 系統完整清理**（2026-03-16）：schema 統一 + 29 bugs 修復 + B2B 對齊 + VPS 驗證通過
 ✅ **GitHub Actions CI/CD 完成**（2026-03-13）：Push to main → auto deploy to VPS → LINE 通知
 🟡 **UI Redesign Phase 1-4 完成**（2026-03-13）：金炭品牌化換皮（讀豹主題），待收尾細節 + commit
 🔴 **上線 blocker：全量 Indexing**（桌機 TSV → Qwen3-4B embedding → PG → VPS）

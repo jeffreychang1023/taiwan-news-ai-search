@@ -34,6 +34,21 @@
   - LINE Bot push message 通知 success/failure
   - 6 次迭代修復：SSH key 格式、health check port/retry、commit message shell escaping、YAML newline
 - **GCP Daily Cron**（2026-03-11）：每天 05:00 台灣時間自動 newest scan
+- **Analytics 系統完整清理**（2026-03-16）：
+  - Phase 0: schema 統一 — `schema_definitions.py` 作為 single source of truth（刪除 ~586 行重複）
+  - Phase 1: 3 Critical + 3 High + 2 Medium bugs 修復（export 壞掉、JOIN 膨脹、event loop blocking）
+  - Phase 2: 16 個幽靈欄位清理、`postgres_client.py` 補 analytics logging、ranking_position 修正
+  - Phase 3: B2B 欄位對齊（user_interactions + user_feedback 加 user_id/org_id）、feature_vectors 重建
+  - Phase 4: AnalyticsDB singleton 統一、Worker busy-wait 修正
+  - Phase 5: VPS migration（DROP + RECREATE 7 表）+ 線上驗證通過
+  - Code review x2（21 + 8 issues 全部修復）
+  - 新建 `docs/specs/analytics-spec.md`
+  - 待做：E2E 測試（VPS 需有 indexed data 才能驗證子表寫入）
+- **Analytics DB Async Migration**（2026-03-16）：
+  - `analytics_db.py` sync → async `AsyncConnectionPool`
+  - 環境變數統一至 `POSTGRES_CONNECTION_STRING`
+  - VPS 部署驗證通過（login + search + analytics 記錄）
+  - 途中修 3 個 production bug：bcrypt/resend 缺套件、UUID stringify
 - **Login 系統 B2B Production Ready**（2026-03-16）：
   - Bug fixes（SQLite boolean compat、datetime fix、PUBLIC_ENDPOINTS、route ordering）
   - 113/113 tests pass（適配 B2B bootstrap model）
@@ -74,8 +89,12 @@
 - Code review（login 系統新 API）
 - 前端改動 commit（feature/ui-redesign branch 含 auth guard + admin modal）
 
+### Analytics E2E 測試（待 indexed data）
+- queries 表驗證通過（user_id, org_id, query_length, embedding_model 皆正確）
+- 子表驗證待做：VPS 無 indexed data → retrieval 0 結果 → retrieved_documents / ranking_scores 空
+- 待全量 indexing 完成後自然驗證，或本地用 SQLite 跑 E2E
+
 ### Code Review 後續
-- RNK-7：BM25 corpus stats 重建（title weighting 改變）
 - RSN-4 前端：讀取 verification_status 顯示未驗證提示
 
 ### SEC-6 後續

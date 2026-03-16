@@ -4,6 +4,21 @@
 
 ---
 
+## ✅ Track AF：Analytics 系統完整清理（2026-03-16）
+
+**目標**：修復 analytics 系統技術債 — 兩套不同步 schema、16 個幽靈欄位、data collection 缺口、B2B 欄位缺失。
+
+- **Phase 0**: Schema 統一 — 新建 `schema_definitions.py`（7 表、101 欄位、18 index），刪除 ~586 行重複
+- **Phase 1**: 3 Critical + 3 High + 2 Medium bugs 修復（export 壞掉、event loop blocking、JOIN 膨脹）
+- **Phase 2**: 幽靈欄位清理、`postgres_client.py` 補 analytics logging、ranking_position 修正
+- **Phase 3**: B2B 欄位對齊、feature_vectors 重建
+- **Phase 4**: AnalyticsDB singleton 統一、Worker busy-wait 修正
+- **Phase 5**: VPS migration + 線上驗證通過
+- **Code Review x2**: 21 + 8 issues 全部修復
+- **新建**: `docs/specs/analytics-spec.md`
+
+---
+
 ## ✅ Track Y：SEC-6 Lossless Agent Isolation Phase 1（2026-02-23）
 
 **目標**：防止 `reasoning/orchestrator.py` gap resolution 迴圈中 `current_context` 無限增長，超出 LLM token 上限。每個 agent 只注入它需要的 context，零 LLM 行為變更。
