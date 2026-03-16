@@ -24,7 +24,8 @@
             }
 
             isLoggedIn() {
-                return !!this._user && !!this._accessToken;
+                // BP-1: access_token is in httpOnly cookie (not in JS), so only check _user
+                return !!this._user;
             }
 
             getCurrentUser() {
