@@ -738,6 +738,7 @@
                         authManager._user = data.user;
                         localStorage.setItem('authUser', JSON.stringify(data.user));
                     }
+                    hideAuthModal();
                     showMainUI();
                     updateAuthUI();
                 }
