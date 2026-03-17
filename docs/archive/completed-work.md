@@ -4,6 +4,35 @@
 
 ---
 
+## ✅ Track AG：Bootstrap Token Onboarding Flow + E2E 第一輪修復（2026-03-17）
+
+**目標**：B2B 封閉式用戶引導流程（非自助註冊）+ Login 系統 E2E 第一輪測試修復。
+
+### Bootstrap Token Onboarding
+
+- `bootstrap_tokens` 新 table（SQLite + PostgreSQL，`auth_db.py` auto-create）
+- `register_user` 改為需要 valid bootstrap_token（一次性，用完即失效）
+- Admin 首次建帳號時 auto-verified（不寄 verification email）
+- `GET /setup?token=xxx` 獨立品牌化 setup 頁面（讀豹 logo + 深藍金色風格）
+- CLI 工具：`python -m auth.bootstrap_cli --org "Company" --expires 72`
+- Login modal 移除「註冊」tab（B2B 用 /setup，不自助註冊）
+- `/setup` 加入 PUBLIC_ENDPOINTS
+- 117/117 tests pass
+
+### E2E 第一輪修復（3 個 bugs）
+
+- invite → admin_create_user（邀請 flow 修正）
+- modal close guard（Modal 關閉防護）
+- date format（日期格式修正）
+- Setup 成功訊息 visibility 修復
+
+### 新增文件
+
+- `docs/specs/login-spec.md` 新增 Part 6: Bootstrap Token Onboarding 章節
+- `docs/specs/login-spec.md` Known Gaps 新增 E2E 第一輪 8 個待修問題
+
+---
+
 ## ✅ Track AF：Analytics 系統完整清理（2026-03-16）
 
 **目標**：修復 analytics 系統技術債 — 兩套不同步 schema、16 個幽靈欄位、data collection 缺口、B2B 欄位缺失。

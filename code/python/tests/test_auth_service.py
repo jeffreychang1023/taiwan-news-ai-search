@@ -269,8 +269,8 @@ class TestLogin:
         user = await _register_and_verify(service)
         db = AuthDB.get_instance()
         await db.execute("UPDATE users SET is_active = 0 WHERE id = ?", (user['id'],))
-        # Login with deactivated account returns same generic error to avoid user enumeration
-        with pytest.raises(ValueError, match="Invalid email or password"):
+        # B2B: deactivated account returns a clear message so user doesn't keep retrying
+        with pytest.raises(ValueError, match="Account is deactivated"):
             await service.login("test@example.com", "Password1", ip="127.0.0.1")
 
     @pytest.mark.asyncio
@@ -596,20 +596,21 @@ class TestDeleteUser:
         result = await service.delete_user(member_id, admin_id, org_id)
         assert result is True
         db = AuthDB.get_instance()
-        user = await db.fetchone("SELECT is_active, email FROM users WHERE id = ?", (member_id,))
-        assert user['is_active'] in (0, False)
-        assert '_deleted_' in user['email']
+        # Hard delete: user record should no longer exist
+        user = await db.fetchone("SELECT id FROM users WHERE id = ?", (member_id,))
+        assert user is None
 
     @pytest.mark.asyncio
     async def test_delete_user_removes_membership(self, service, _no_email):
         admin_id, org_id, member_id = await self._setup_admin_and_member(service)
         await service.delete_user(member_id, admin_id, org_id)
         db = AuthDB.get_instance()
+        # Hard delete: membership record should no longer exist
         membership = await db.fetchone(
-            "SELECT status FROM org_memberships WHERE user_id = ? AND org_id = ?",
+            "SELECT id FROM org_memberships WHERE user_id = ? AND org_id = ?",
             (member_id, org_id)
         )
-        assert membership['status'] == 'removed'
+        assert membership is None
 
     @pytest.mark.asyncio
     async def test_delete_user_revokes_tokens(self, service, _no_email):
@@ -619,7 +620,7 @@ class TestDeleteUser:
         await service.activate_account(row['email_verification_token'], "MemberPass1")
         member_login = await service.login("member@e.com", "MemberPass1", ip="127.0.0.1")
         await service.delete_user(member_id, admin_id, org_id)
-        # Token revoked → deactivated error
+        # Hard delete removes refresh_tokens rows → "Invalid refresh token"
         with pytest.raises(ValueError):
             await service.refresh_token(member_login['refresh_token'])
 

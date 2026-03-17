@@ -611,6 +611,197 @@ async def activate_account_handler(request: web.Request) -> web.Response:
         return web.json_response({'error': 'Internal server error'}, status=500)
 
 
+# ── Reset Password Page ───────────────────────────────────────────
+
+
+async def reset_password_page_handler(request: web.Request) -> web.Response:
+    """GET /api/auth/reset-password?token=xxx — Show new password form."""
+    token = request.query.get('token', '')
+    if not token:
+        return web.Response(text='Missing reset token.', content_type='text/html', status=400)
+
+    safe_token_attr = _html_escape(token, quote=True)
+    safe_token_js = json.dumps(token)
+
+    html = f"""<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>重設密碼 - 讀豹</title>
+<style>
+  * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+  body {{
+    font-family: 'Noto Sans TC', -apple-system, BlinkMacSystemFont, sans-serif;
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+  }}
+  .reset-card {{
+    background: #fff;
+    border-radius: 16px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+    padding: 40px;
+    width: 100%;
+    max-width: 440px;
+  }}
+  .reset-logo {{
+    text-align: center;
+    margin-bottom: 24px;
+  }}
+  .reset-logo img {{
+    height: 64px;
+    margin-bottom: 8px;
+  }}
+  .reset-logo h1 {{
+    font-size: 1.5rem;
+    color: #1a1a2e;
+    font-weight: 700;
+  }}
+  .reset-logo p {{
+    color: #666;
+    font-size: 0.9rem;
+    margin-top: 4px;
+  }}
+  .form-group {{
+    margin-bottom: 16px;
+  }}
+  .form-group label {{
+    display: block;
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: #333;
+    margin-bottom: 6px;
+  }}
+  .form-group input {{
+    width: 100%;
+    padding: 10px 14px;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    font-size: 0.95rem;
+    transition: border-color 0.2s;
+  }}
+  .form-group input:focus {{
+    outline: none;
+    border-color: #c8a96e;
+    box-shadow: 0 0 0 3px rgba(200,169,110,0.15);
+  }}
+  .form-hint {{
+    font-size: 0.8rem;
+    color: #888;
+    margin-top: 4px;
+  }}
+  .reset-btn {{
+    width: 100%;
+    padding: 12px;
+    background: linear-gradient(135deg, #c8a96e, #b8963e);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    margin-top: 8px;
+    transition: opacity 0.2s;
+  }}
+  .reset-btn:hover {{ opacity: 0.9; }}
+  .reset-btn:disabled {{ opacity: 0.5; cursor: not-allowed; }}
+  .error-msg {{
+    color: #dc3545;
+    font-size: 0.875rem;
+    margin-top: 8px;
+    display: none;
+  }}
+  .success-msg {{
+    color: #28a745;
+    font-size: 1rem;
+    margin-top: 16px;
+    padding: 20px;
+    display: none;
+    text-align: center;
+  }}
+</style>
+</head>
+<body>
+<div class="reset-card">
+  <div class="reset-logo">
+    <img src="/static/images/Leopard.png" alt="讀豹" onerror="this.style.display='none'">
+    <h1>重設密碼</h1>
+    <p>請輸入您的新密碼</p>
+  </div>
+  <form id="resetForm" onsubmit="return handleReset()">
+    <input type="hidden" id="tokenField" name="token" value="{safe_token_attr}">
+    <div class="form-group">
+      <label for="newPassword">新密碼</label>
+      <input type="password" id="newPassword" required minlength="8" placeholder="至少 8 字元，含大寫與數字" autocomplete="new-password">
+      <div class="form-hint">至少 8 字元，需包含大寫字母與數字</div>
+    </div>
+    <div class="form-group">
+      <label for="confirmPassword">確認密碼</label>
+      <input type="password" id="confirmPassword" required placeholder="再次輸入新密碼" autocomplete="new-password">
+    </div>
+    <div class="error-msg" id="resetError"></div>
+    <div class="success-msg" id="resetSuccess"></div>
+    <button type="submit" class="reset-btn" id="resetBtn">重設密碼</button>
+  </form>
+</div>
+<script>
+async function handleReset() {{
+  event.preventDefault();
+  const errEl = document.getElementById('resetError');
+  const successEl = document.getElementById('resetSuccess');
+  const btn = document.getElementById('resetBtn');
+  errEl.style.display = 'none';
+  successEl.style.display = 'none';
+
+  const pw = document.getElementById('newPassword').value;
+  const pw2 = document.getElementById('confirmPassword').value;
+  if (pw !== pw2) {{
+    errEl.textContent = '密碼不一致';
+    errEl.style.display = 'block';
+    return;
+  }}
+
+  btn.disabled = true;
+  btn.textContent = '重設中...';
+
+  try {{
+    const token = {safe_token_js};
+    const res = await fetch('/api/auth/reset-password', {{
+      method: 'POST',
+      headers: {{ 'Content-Type': 'application/json' }},
+      body: JSON.stringify({{ token: token, new_password: pw }})
+    }});
+    const data = await res.json();
+    if (data.success) {{
+      document.getElementById('resetForm').style.display = 'none';
+      successEl.innerHTML = '<h2 style="margin-bottom:12px;">密碼已重設!</h2>'
+        + '<p>您的密碼已成功更新。即將跳轉至首頁...</p>'
+        + '<p style="margin-top:16px;"><a href="/" style="color:#c8a96e;font-weight:600;">前往登入</a></p>';
+      successEl.style.display = 'block';
+      setTimeout(() => {{ window.location.href = '/'; }}, 2000);
+    }} else {{
+      errEl.textContent = data.error || '重設失敗';
+      errEl.style.display = 'block';
+      btn.disabled = false;
+      btn.textContent = '重設密碼';
+    }}
+  }} catch (e) {{
+    errEl.textContent = '網路錯誤，請稍後再試';
+    errEl.style.display = 'block';
+    btn.disabled = false;
+    btn.textContent = '重設密碼';
+  }}
+}}
+</script>
+</body>
+</html>"""
+    return web.Response(text=html, content_type='text/html')
+
+
 # ── Setup Page (Bootstrap Onboarding) ────────────────────────────
 
 
@@ -808,9 +999,10 @@ async function handleSetup() {{
     if (data.success) {{
       document.getElementById('setupForm').style.display = 'none';
       successEl.innerHTML = '<h2 style="margin-bottom:12px;color:#c8a96e;">組織建立成功!</h2>'
-        + '<p style="color:#e0e0e0;">您的管理員帳號已建立。</p>'
+        + '<p style="color:#666;">您的管理員帳號已建立。</p>'
         + '<p style="margin-top:16px;"><a href="/" style="color:#fff;background:#c8a96e;padding:10px 24px;border-radius:8px;text-decoration:none;font-weight:600;">前往登入</a></p>';
       successEl.style.display = 'block';
+      setTimeout(() => {{ window.location.href = '/'; }}, 2000);
     }} else {{
       errEl.textContent = data.error || '建立失敗';
       errEl.style.display = 'block';
@@ -1031,6 +1223,7 @@ def setup_auth_routes(app: web.Application):
     app.router.add_post('/api/auth/logout', logout_handler)
     app.router.add_get('/api/auth/me', me_handler)
     app.router.add_post('/api/auth/forgot-password', forgot_password_handler)
+    app.router.add_get('/api/auth/reset-password', reset_password_page_handler)
     app.router.add_post('/api/auth/reset-password', reset_password_handler)
     app.router.add_get('/api/auth/activate', activate_page_handler)
     app.router.add_post('/api/auth/activate', activate_account_handler)

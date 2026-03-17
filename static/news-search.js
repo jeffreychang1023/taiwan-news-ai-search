@@ -441,6 +441,7 @@
             const userMenu = document.getElementById('userMenu');
             const userDisplayName = document.getElementById('userDisplayName');
             const btnOrgManage = document.getElementById('btnOrgManage');
+            const btnCloseAuthModal = document.getElementById('btnCloseAuthModal');
 
             if (authManager.isLoggedIn()) {
                 btnShowLogin.style.display = 'none';
@@ -450,6 +451,8 @@
                 if (btnOrgManage) {
                     btnOrgManage.style.display = user.role === 'admin' ? 'inline-block' : 'none';
                 }
+                // X button is usable when logged in (to close modal after login)
+                if (btnCloseAuthModal) btnCloseAuthModal.style.display = '';
                 // Show pending invite toast if any
                 const pendingToken = sessionStorage.getItem('pendingInviteToken');
                 if (pendingToken) showAcceptInviteToast(pendingToken);
@@ -458,6 +461,8 @@
                 userMenu.style.display = 'none';
                 userDisplayName.textContent = '';
                 if (btnOrgManage) btnOrgManage.style.display = 'none';
+                // Hide X button when not logged in — it has no function in that state
+                if (btnCloseAuthModal) btnCloseAuthModal.style.display = 'none';
             }
         }
 
@@ -533,9 +538,11 @@
                 if (isAdmin && !isSelf) {
                     const activeLabel = m.is_active === false ? '啟用' : '停用';
                     const activeClass = m.is_active === false ? 'btn-activate-member' : 'btn-deactivate-member';
+                    const inactiveBadge = m.is_active === false ? '<span class="org-inactive-badge">已停用</span>' : '';
                     const safeId = escapeAttr(m.id);
                     const safeName = escapeAttr(m.name || m.email);
                     adminControls = `
+                        ${inactiveBadge}
                         <select class="org-role-select" onchange="changeUserRole('${safeId}', this.value, this)">
                             <option value="member"${m.role === 'member' ? ' selected' : ''}>成員</option>
                             <option value="admin"${m.role === 'admin' ? ' selected' : ''}>管理員</option>
@@ -609,6 +616,7 @@
                     alert(`${label}失敗: ${data.error || '未知錯誤'}`);
                     return;
                 }
+                alert(`已${label}該使用者`);
                 await openOrgModal();
             } catch (e) {
                 alert(`${label}失敗: ${e.message}`);
@@ -690,6 +698,11 @@
         function showAuthModal(tab = 'login') {
             const overlay = document.getElementById('authModalOverlay');
             overlay.style.display = 'flex';
+            // Clear credential fields for security — prevents old values lingering after logout/failure
+            const emailEl = document.getElementById('loginEmail');
+            const passwordEl = document.getElementById('loginPassword');
+            if (emailEl) emailEl.value = '';
+            if (passwordEl) passwordEl.value = '';
             switchAuthTab(tab);
         }
 

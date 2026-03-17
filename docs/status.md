@@ -2,7 +2,7 @@
 
 > 合併自 CONTEXT.md + NEXT_STEPS.md。單一狀態檔案。
 
-**最後更新**：2026-03-16
+**最後更新**：2026-03-17
 
 ---
 
@@ -49,6 +49,15 @@
   - 環境變數統一至 `POSTGRES_CONNECTION_STRING`
   - VPS 部署驗證通過（login + search + analytics 記錄）
   - 途中修 3 個 production bug：bcrypt/resend 缺套件、UUID stringify
+- **Bootstrap Token Onboarding Flow + E2E 第一輪修復**（2026-03-17）：
+  - `bootstrap_tokens` 新 table（SQLite + PostgreSQL），register_user 改為需要 valid bootstrap_token（一次性）
+  - `GET /setup?token=xxx` 獨立品牌化 setup 頁面（讀豹 logo + 深藍金色風格）
+  - CLI 工具：`python -m auth.bootstrap_cli --org "Company" --expires 72`
+  - Login modal 移除「註冊」tab（B2B 用 /setup，不自助註冊）
+  - `/setup` 加入 PUBLIC_ENDPOINTS
+  - 117/117 tests pass
+  - E2E 3 個 bugs 修復：invite → admin_create_user、modal close guard、date format
+  - Setup 成功訊息 visibility 修復
 - **Login 系統 B2B Production Ready**（2026-03-16）：
   - Bug fixes（SQLite boolean compat、datetime fix、PUBLIC_ENDPOINTS、route ordering）
   - 113/113 tests pass（適配 B2B bootstrap model）
@@ -84,9 +93,17 @@
 ## 待處理
 
 ### Login 系統後續
-- Email 服務上線：CEO 註冊 Resend + Cloudflare DNS 設定（decisions.md #42）
-- E2E 測試（login 系統）
-- Code review（login 系統新 API）
+- ✅ Email 服務上線（Resend + Cloudflare Email Routing 完成）
+- ✅ Bootstrap token onboarding flow 完成（117/117 tests pass）
+- E2E 第一輪 8 個待修問題：
+  1. Setup 成功後沒有 auto redirect 到 login 頁
+  2. Bootstrap 不應該寄 verification email（admin 已 auto-verify）
+  3. 未登入 login modal 的 X 按鈕應拿掉（而非禁用）
+  4. 停用帳號：無明確反饋 + 沒有「啟用」按鈕恢復
+  5. 被停用帳號登入應顯示「帳號已被停用」而非「密碼錯誤」
+  6. 刪除帳號要完整清除（hard delete user + 清 login_attempts + 保留但斷開 sessions user_id）
+  7. Login modal 密碼欄位在登出/失敗後必須清空
+  8. 忘記密碼 reset link → 405（GET /api/auth/reset-password 沒有 handler，需像 activate 一樣做 HTML 頁面）
 - 前端改動 commit（feature/ui-redesign branch 含 auth guard + admin modal）
 
 ### Analytics E2E 測試（待 indexed data）

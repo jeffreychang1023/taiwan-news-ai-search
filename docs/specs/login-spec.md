@@ -1,7 +1,7 @@
 # Login System Specification
 
 > **Owner**: NLWeb Team (接手自外部 dev)
-> **Last Updated**: 2026-03-16
+> **Last Updated**: 2026-03-17
 > **Source repo**: `c0925028920-cpu/taiwan-news-ai-search-RG`
 
 ---
@@ -17,6 +17,7 @@
 - [Part 4: Data Migration](#part-4-data-migration)
 - [Part 5+: Research Collaboration](#part-5-research-collaboration)
 - [Infra Adaptation](#infra-adaptation)
+- [Part 6: Bootstrap Token Onboarding](#part-6-bootstrap-token-onboarding)
 - [Known Gaps](#known-gaps)
 - [File Inventory](#file-inventory)
 - [Environment Variables](#environment-variables)
@@ -339,6 +340,65 @@ Infra migration 將 Qdrant 替換為 PostgreSQL pgvector。以下 login 修改**
 
 ---
 
+## Part 6: Bootstrap Token Onboarding
+
+> 完成於 2026-03-17。B2B 用戶不自助註冊，由 admin 透過 bootstrap token 引導。
+
+### 設計決策
+
+B2B 模型下，不開放任何人自行註冊。Admin 事先產生一次性 bootstrap token，發給目標用戶，用戶在 `/setup?token=xxx` 頁面完成首次設定帳號。
+
+### Table Schema
+
+```sql
+CREATE TABLE bootstrap_tokens (
+    id          TEXT PRIMARY KEY,           -- UUID
+    token       TEXT UNIQUE NOT NULL,       -- secrets.token_urlsafe(32)
+    org_id      TEXT NOT NULL,
+    org_name    TEXT NOT NULL,
+    created_by  TEXT NOT NULL,              -- admin user_id
+    expires_at  TIMESTAMP NOT NULL,
+    used_at     TIMESTAMP,                  -- NULL = unused
+    used_by     TEXT                        -- user_id after use
+);
+```
+
+SQLite 與 PostgreSQL 共用相同 schema（`auth_db.py` auto-create）。
+
+### Setup 頁面
+
+- **路由**: `GET /setup?token=xxx`（已加入 PUBLIC_ENDPOINTS）
+- **UI**: 獨立品牌化頁面（讀豹 logo + 深藍金色風格），與 login modal 分離
+- **流程**: token 驗證 → 填寫 email/password/name → 帳號建立 → 成功訊息
+
+### CLI 工具
+
+```bash
+# 產生 bootstrap token
+python -m auth.bootstrap_cli --org "Company Name" --expires 72
+
+# 列出所有 token
+python -m auth.bootstrap_cli --list
+
+# 撤銷 token
+python -m auth.bootstrap_cli --revoke <token_id>
+```
+
+`--expires` 單位為小時，預設 72 小時。
+
+### register_user 修改
+
+`auth_service.py` 的 `register_user()` 新增必填參數 `bootstrap_token: str`。收到請求時：
+1. 驗證 token 存在且未使用、未過期
+2. 建立 user + org_membership（admin 角色，auto-verified，不寄 verification email）
+3. 標記 token `used_at = now(), used_by = user_id`（一次性）
+
+### 測試覆蓋
+
+117/117 tests pass（含 bootstrap token 流程的 test cases）。
+
+---
+
 ## Known Gaps
 
 > 程式碼審計發現的問題。合併前需逐一處理。
@@ -381,6 +441,21 @@ Infra migration 將 Qdrant 替換為 PostgreSQL pgvector。以下 login 修改**
 | D5 | login_attempts 表無 cleanup 機制 | 資料增長慢，可加 scheduled SQL DELETE | Low |
 | ~~D6~~ | ~~_windows dict 記憶體洩漏（rate_limit）~~ | ✅ 非問題：已有 sliding window eviction，key 數量有限（3 條規則 × IP），restart 清空。Single-instance 部署無需 Redis | ~~Low~~ |
 | ~~D7~~ | ~~email_service 每次 import time 讀 env var~~ | ✅ 已確認非問題 | ~~Very Low~~ |
+
+### E2E 第一輪發現（2026-03-17）
+
+> 8 個待修問題，來自 E2E 第一輪測試。
+
+| # | 問題 | 嚴重度 |
+|---|------|--------|
+| E1 | Setup 成功後沒有 auto redirect 到 login 頁 | Medium |
+| E2 | Bootstrap 不應該寄 verification email（admin 已 auto-verify） | High |
+| E3 | 未登入 login modal 的 X 按鈕應拿掉（而非禁用） | Low |
+| E4 | 停用帳號：無明確反饋 + 沒有「啟用」按鈕恢復 | Medium |
+| E5 | 被停用帳號登入應顯示「帳號已被停用」而非「密碼錯誤」 | High |
+| E6 | 刪除帳號要完整清除（hard delete user + 清 login_attempts + 保留但斷開 sessions user_id） | High |
+| E7 | Login modal 密碼欄位在登出/失敗後必須清空 | Medium |
+| E8 | 忘記密碼 reset link → 405（GET /api/auth/reset-password 沒有 handler，需像 activate 一樣做 HTML 頁面） | High |
 
 ### Will Be Invalidated by Infra Migration
 

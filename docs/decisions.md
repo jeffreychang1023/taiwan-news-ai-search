@@ -1,6 +1,6 @@
 # NLWeb 決策日誌
 
-> 從 Notion 決策日誌 DB 導出（2026-03-03）+ 持續更新。共 42 筆。
+> 從 Notion 決策日誌 DB 導出（2026-03-03）+ 持續更新。共 43 筆。
 > 欄位：Decision / Category / Modules / Date / Status / Reason / Tradeoff
 
 ---
@@ -265,6 +265,12 @@
 - **Category**: technical | **Modules**: M5-Output, Auth | **Date**: 2026-03-13 | **Status**: active
 - **Reason**: 搜尋結果（sessionHistory）、對話紀錄（chatHistory）存於 localStorage，server session 只存 metadata。這是因為搜尋結果量大、即時性要求高，server round-trip 不划算。Login 後 server session 用於跨裝置恢復 metadata。
 - **Tradeoff**: 換瀏覽器/清 cache 會遺失本地搜尋結果，但 MVP 階段可接受
+
+### B2B Onboarding：Bootstrap Token（非自助註冊）
+- **Category**: product | **Modules**: Auth | **Date**: 2026-03-17 | **Status**: active
+- **Decision**: B2B 用戶不開放自助註冊。Admin 透過 CLI 產生一次性 bootstrap token，發給目標用戶；用戶在 `/setup?token=xxx` 頁面完成首次帳號設定。Login modal 移除「註冊」tab。
+- **Reason**: B2B 服務需要控管誰能進入系統。開放自助註冊會引入未授權用戶，增加管理成本和安全風險。Bootstrap token 一次性設計確保每個 token 只能建立一個帳號，admin 全程掌控用戶引導。
+- **Tradeoff**: 用戶無法自行申請，所有帳號建立需 admin 介入。但 B2B 模型本來就需要銷售/onboarding 流程，此設計與業務流程一致。
 
 ### Transactional Email：Resend SaaS + Cloudflare Email Routing（非自架 SMTP）
 - **Category**: technical | **Modules**: Auth, M6-Infra | **Date**: 2026-03-16 | **Status**: active

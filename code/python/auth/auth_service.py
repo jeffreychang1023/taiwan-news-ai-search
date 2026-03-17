@@ -124,10 +124,7 @@ class AuthService:
             (time.time(), email, bootstrap_token)
         )
 
-        # BP-4: Non-blocking email (still send for record, but admin is auto-verified)
-        from auth.email_service import send_verification_email
-        await asyncio.to_thread(send_verification_email, email, verification_token, name)
-
+        # Bootstrap admin is auto-verified — no verification email needed
         logger.info(f"Bootstrap admin registered (auto-verified): {email} (id={user_id})")
         return {
             'id': user_id,
@@ -296,7 +293,7 @@ class AuthService:
             is_active = bool(is_active)
         if not is_active:
             await self._record_login_attempt(email, ip, success=False)
-            raise ValueError("Invalid email or password")
+            raise ValueError("Account is deactivated. Please contact your administrator.")
 
         email_verified = user['email_verified']
         if self.db.db_type == 'sqlite':
@@ -542,7 +539,7 @@ class AuthService:
     # ── Admin: Delete User (Soft) ──────────────────────────────────
 
     async def delete_user(self, target_user_id: str, admin_user_id: str, org_id: str) -> bool:
-        """Soft-delete a user: revoke tokens, remove from org, deactivate, mangle email."""
+        """Hard-delete a user: revoke tokens, clean up all associated data, delete record."""
         if target_user_id == admin_user_id:
             raise PermissionError("Cannot delete your own account")
 
@@ -560,25 +557,42 @@ class AuthService:
         if not target_membership:
             raise ValueError("User not found in organization")
 
-        # Revoke all tokens first
-        await self.revoke_all_user_tokens(target_user_id)
+        user = await self.db.fetchone("SELECT email FROM users WHERE id = ?", (target_user_id,))
 
-        # Remove from org
+        # 1. Delete login attempts
         await self.db.execute(
-            "UPDATE org_memberships SET status = 'removed' WHERE user_id = ? AND org_id = ? AND status = 'active'",
+            "DELETE FROM login_attempts WHERE email = ?",
+            (user['email'],)
+        )
+
+        # 2. Delete refresh tokens
+        await self.db.execute(
+            "DELETE FROM refresh_tokens WHERE user_id = ?",
+            (target_user_id,)
+        )
+
+        # 3. Remove from org
+        await self.db.execute(
+            "DELETE FROM org_memberships WHERE user_id = ? AND org_id = ?",
             (target_user_id, org_id)
         )
 
-        # Soft delete: deactivate + mangle email to allow re-registration
-        user = await self.db.fetchone("SELECT email FROM users WHERE id = ?", (target_user_id,))
-        deleted_email = f"_deleted_{uuid.uuid4().hex[:8]}_{user['email']}"
-        active_val = False if self.db.db_type == 'postgres' else 0
+        # 4. Nullify search sessions (in separate DB — ignore if table doesn't exist)
+        try:
+            await self.db.execute(
+                "UPDATE search_sessions SET user_id = NULL WHERE user_id = ?",
+                (target_user_id,)
+            )
+        except Exception:
+            pass  # search_sessions may be in a different database
+
+        # 5. Hard delete the user record
         await self.db.execute(
-            "UPDATE users SET is_active = ?, email = ? WHERE id = ?",
-            (active_val, deleted_email, target_user_id)
+            "DELETE FROM users WHERE id = ?",
+            (target_user_id,)
         )
 
-        logger.info(f"User {target_user_id} soft-deleted by admin {admin_user_id} in org {org_id}")
+        logger.info(f"User {target_user_id} hard-deleted by admin {admin_user_id} in org {org_id}")
         return True
 
     # ── Admin: Change Member Role ──────────────────────────────────
