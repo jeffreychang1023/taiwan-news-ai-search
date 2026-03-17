@@ -877,6 +877,8 @@
                 } catch (err) {
                     errEl.textContent = err.message;
                     errEl.style.display = 'block';
+                    // Clear password field on failed login (security)
+                    document.getElementById('loginPassword').value = '';
                 }
             });
 

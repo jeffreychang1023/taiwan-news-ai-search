@@ -754,7 +754,7 @@ class AuthService:
             raise ValueError("Not a member of this organization")
 
         return await self.db.fetchall(
-            "SELECT u.id, u.email, u.name, m.role, m.accepted_at "
+            "SELECT u.id, u.email, u.name, u.is_active, m.role, m.accepted_at "
             "FROM org_memberships m JOIN users u ON m.user_id = u.id "
             "WHERE m.org_id = ? AND m.status = 'active'",
             (org_id,)
