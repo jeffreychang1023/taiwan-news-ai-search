@@ -526,7 +526,7 @@
             list.innerHTML = members.map(m => {
                 const isSelf = m.id === currentUser.id;
                 const roleLabel = m.role === 'admin' ? '管理員' : '成員';
-                const joinDate = m.accepted_at ? new Date(m.accepted_at).toLocaleDateString('zh-TW') : '-';
+                const joinDate = (m.accepted_at && m.accepted_at > 0) ? new Date(m.accepted_at * 1000).toLocaleDateString('zh-TW') : '-';
                 const selfTag = isSelf ? ' <span class="org-self-tag">(我)</span>' : '';
 
                 let adminControls = '';
@@ -779,9 +779,11 @@
             }
 
             document.getElementById('btnShowLogin').addEventListener('click', () => showAuthModal('login'));
-            document.getElementById('btnCloseAuthModal').addEventListener('click', hideAuthModal);
+            document.getElementById('btnCloseAuthModal').addEventListener('click', () => {
+                if (authManager.isLoggedIn()) hideAuthModal();
+            });
             document.getElementById('authModalOverlay').addEventListener('click', (e) => {
-                if (e.target === e.currentTarget) hideAuthModal();
+                if (e.target === e.currentTarget && authManager.isLoggedIn()) hideAuthModal();
             });
             document.getElementById('tabLogin').addEventListener('click', () => switchAuthTab('login'));
             document.getElementById('tabRegister').addEventListener('click', () => switchAuthTab('register'));
@@ -800,27 +802,28 @@
                 if (e.target === e.currentTarget) closeOrgModal();
             });
 
-            // Invite form
+            // Invite form (admin creates employee account)
             document.getElementById('orgInviteForm').addEventListener('submit', async (e) => {
                 e.preventDefault();
-                const orgId = authManager.getCurrentUser()?.org_id;
+                const name = document.getElementById('inviteName').value.trim();
                 const email = document.getElementById('inviteEmail').value.trim();
                 const role = document.getElementById('inviteRole').value;
                 const feedback = document.getElementById('orgInviteFeedback');
                 feedback.className = 'org-invite-feedback';
                 feedback.style.display = 'none';
-                if (!email || !orgId) return;
+                if (!name || !email) return;
                 try {
-                    const res = await authManager.authenticatedFetch(`/api/org/${orgId}/invite`, {
+                    const res = await authManager.authenticatedFetch('/api/admin/create-user', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ email, role })
+                        body: JSON.stringify({ email, name, role })
                     });
                     const data = await res.json();
-                    if (!res.ok) throw new Error(data.error || 'Invite failed');
-                    feedback.textContent = `Invitation sent to ${email}`;
+                    if (!res.ok) throw new Error(data.error || '建立帳號失敗');
+                    feedback.textContent = `帳號已建立，啟用信已寄出（${email}）`;
                     feedback.className = 'org-invite-feedback success';
                     feedback.style.display = 'block';
+                    document.getElementById('inviteName').value = '';
                     document.getElementById('inviteEmail').value = '';
                 } catch (err) {
                     feedback.textContent = err.message;

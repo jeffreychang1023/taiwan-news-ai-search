@@ -607,7 +607,7 @@
     <!-- DOMPurify for sanitizing HTML output from marked.js -->
     <script src="https://cdn.jsdelivr.net/npm/dompurify@3.2.4/dist/purify.min.js"></script>
 
-    <script src="/static/news-search.js?v=20260316e"></script>
+    <script src="/static/news-search.js?v=20260317a"></script>
 
     <!-- Org Management Modal -->
     <div class="org-modal-overlay" id="orgModalOverlay" style="display:none;">
@@ -624,12 +624,13 @@
                 <div class="org-section" id="orgInviteSection" style="display:none;">
                     <h3 class="org-section-title">邀請成員</h3>
                     <form class="org-invite-form" id="orgInviteForm">
+                        <input type="text" id="inviteName" placeholder="員工姓名" required>
                         <input type="email" id="inviteEmail" placeholder="email@example.com" required>
                         <select id="inviteRole">
                             <option value="member">成員</option>
                             <option value="admin">管理員</option>
                         </select>
-                        <button type="submit" class="btn-invite">邀請</button>
+                        <button type="submit" class="btn-invite">建立帳號</button>
                     </form>
                     <div class="org-invite-feedback" id="orgInviteFeedback" style="display:none;"></div>
                 </div>

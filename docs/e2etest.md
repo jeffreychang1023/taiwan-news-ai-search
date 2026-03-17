@@ -84,7 +84,7 @@
 > 人工測試用。Analytics 相關改動後跑一遍。需要 VPS 有 indexed data（全量 indexing 完成後）。
 
 **測試 URL**: https://twdubao.com
-**Admin 帳號**: admin@twdubao.com / Admin123!
+**Admin 帳號**: admin@twdubao.com / Twdubao2026!
 **VPS SSH**: `ssh -p 2222 root@95.217.153.63`
 **DB 查詢**: `docker exec nlweb-postgres psql -U nlweb -d nlweb -c "<SQL>"`
 
