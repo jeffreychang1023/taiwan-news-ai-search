@@ -49,6 +49,16 @@
   - 環境變數統一至 `POSTGRES_CONNECTION_STRING`
   - VPS 部署驗證通過（login + search + analytics 記錄）
   - 途中修 3 個 production bug：bcrypt/resend 缺套件、UUID stringify
+- **Analytics Click Event 修復 + E2E 驗證**（2026-03-17）：
+  - Root cause: POST SSE handler 漏呼叫 `analyticsTracker.startQuery()` → `trackClick()` guard 靜默丟棄所有 click
+  - `news-search.js`: POST SSE begin-nlweb-response handler 加 `startQuery()` + `credentials: 'same-origin'` + 殘留 buffer 處理
+  - `analytics-tracker-sse.js`: fetch 加 `credentials: 'same-origin'` + `console.warn` → `console.error`
+  - `auth.py`: `secure=request.secure` → `secure=True`（nginx proxy 後 request.secure 永遠 False）
+  - `auth middleware`: `/api/analytics/event` + `/event/batch` 加入 PUBLIC_ENDPOINTS
+  - `analytics_handler.py` + `ranking_analytics_handler.py`: 所有 response 加 `Cache-Control: no-store`（防 Cloudflare cache）
+  - `app-file.py`: Windows `WindowsSelectorEventLoopPolicy`（psycopg async 相容）
+  - E2E A11 拆為 A11a-f（Console log + DB 驗證），本地 DevTools 全通過
+  - Cloudflare Cache Rule: `/api/*` → Bypass Cache
 - **Bootstrap Token Onboarding Flow + E2E 第一輪修復**（2026-03-17）：
   - `bootstrap_tokens` 新 table（SQLite + PostgreSQL），register_user 改為需要 valid bootstrap_token（一次性）
   - `GET /setup?token=xxx` 獨立品牌化 setup 頁面（讀豹 logo + 深藍金色風格）

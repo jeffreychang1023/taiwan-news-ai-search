@@ -27,8 +27,8 @@
 | 0-2 | 開有效 bootstrap URL                       | 組織設定頁面：讀豹 logo + 組織名稱（預填）+ 管理員名稱 + Email + 密碼 + 確認密碼 | O     |
 | 0-3 | 填寫表單 → 點「建立組織」                          | 成功訊息 → **2 秒自動跳轉首頁**（E1）                             | O     |
 | 0-4 | 再開同一個 bootstrap URL                     | 錯誤頁面（token 已使用）                                      | O     |
-| 0-5 | 檢查 email 收件匣（含垃圾郵件）                      | **不應收到**驗證信（bootstrap admin 自動驗證）（E2）                 | O     |
-| 0-6 | 用剛註冊的帳密登入                               | 成功，header 顯示名稱 + 組織按鈕（不需要先驗證 email）                 | O     |
+| 0-5 | 檢查 email 收件匣（含垃圾郵件）                     | **不應收到**驗證信（bootstrap admin 自動驗證）（E2）                | O     |
+| 0-6 | 用剛註冊的帳密登入                               | 成功，header 顯示名稱 + 組織按鈕（不需要先驗證 email）                  | O     |
 
 ---
 
@@ -67,7 +67,7 @@
 | 3-2 | 輸入員工姓名 + 真實 email → 點「建立帳號」 | 成功：「帳號已建立，啟用信已寄出」+ email 信箱收到啟用信                | O     |
 | 3-3 | 新成員出現在列表                    | 看到：角色下拉、停用按鈕、強制登出按鈕、刪除按鈕                        | O     |
 | 3-4 | 改角色：下拉選「管理員」                | 角色即時更新                                          | O     |
-| 3-5 | 停用帳號：點停用                    | 反饋「已停用」+ 成員旁顯示「已停用」badge + 按鈕變「啟用」  | O     |
+| 3-5 | 停用帳號：點停用                    | 反饋「已停用」+ 成員旁顯示「已停用」badge + 按鈕變「啟用」              | O     |
 | 3-6 | 強制登出：點強制登出                  | 成功提示                                            | O     |
 | 3-7 | 刪除帳號：點刪除 → 確認               | 成員從列表消失                                         | O     |
 
@@ -98,12 +98,12 @@
 
 ## 6. 忘記密碼
 
-| #   | 操作                    | 預期結果              | Pass? |
-| --- | --------------------- | ----------------- |:-----:|
-| 6-1 | Login modal → 「忘記密碼?」 | 切換到 email 輸入表單    | O     |
-| 6-2 | 輸入 email → submit     | 成功提示「已寄送重設連結」     | O     |
-| 6-3 | 檢查 email 收件匣          | 收到密碼重設 email + 連結 | O     |
-| 6-4 | 點 email 中的連結          | 開啟品牌化重設密碼頁面（讀豹 logo，非 405） | O     |
+| #   | 操作                    | 預期結果                          | Pass? |
+| --- | --------------------- | ----------------------------- |:-----:|
+| 6-1 | Login modal → 「忘記密碼?」 | 切換到 email 輸入表單                | O     |
+| 6-2 | 輸入 email → submit     | 成功提示「已寄送重設連結」                 | O     |
+| 6-3 | 檢查 email 收件匣          | 收到密碼重設 email + 連結             | O     |
+| 6-4 | 點 email 中的連結          | 開啟品牌化重設密碼頁面（讀豹 logo，非 405）    | O     |
 | 6-5 | 設新密碼 → submit         | 成功「密碼已重設」→ 2 秒自動跳轉首頁 → 用新密碼登入 | O     |
 
 ---
@@ -159,19 +159,19 @@
 
 **前端驗證**（A4 點擊前後，DevTools Console 觀察）：
 
-| #    | 操作（瀏覽器）                      | 預期結果                                                                                     | Pass? |
-| ---- | ---------------------------- | ---------------------------------------------------------------------------------------- |:-----:|
-| A11a | A2 搜尋完成後，看 Console           | 有 `[Analytics] Using backend query_id: query_xxx` log（代表 `startQuery` 成功）                |       |
-| A11b | 左鍵點擊一筆結果的「閱讀全文」             | Console 出現 `[Analytics-SSE] Click tracked: <url> position: N` + `Event sent: result_clicked` |       |
-| A11c | 中鍵（滾輪鍵）點擊另一筆結果              | 同 A11b，Console 出現 click tracked log                                                     |       |
-| A11d | 右鍵點擊另一筆結果                   | 同 A11b，Console 出現 click tracked log                                                     |       |
+| #    | 操作（瀏覽器）            | 預期結果                                                                                         | Pass? |
+| ---- | ------------------ | -------------------------------------------------------------------------------------------- |:-----:|
+| A11a | A2 搜尋完成後，看 Console | 有 `[Analytics] Using backend query_id: query_xxx` log（代表 `startQuery` 成功）                    |       |
+| A11b | 左鍵點擊一筆結果的「閱讀全文」    | Console 出現 `[Analytics-SSE] Click tracked: <url> position: N` + `Event sent: result_clicked` |       |
+| A11c | 中鍵（滾輪鍵）點擊另一筆結果     | 同 A11b，Console 出現 click tracked log                                                          |       |
+| A11d | 右鍵點擊另一筆結果          | 同 A11b，Console 出現 click tracked log                                                          |       |
 
 **後端驗證**（A11b-d 點擊後，SSH 進 VPS 查 click 記錄）：
 
-| #    | 驗證項目                     | SQL                                                                                                                                                    | 預期                                                             | Pass? |
-| ---- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------- |:-----:|
-| A11e | click 事件有記錄              | `SELECT interaction_type, user_id, org_id, doc_url, result_position FROM user_interactions WHERE interaction_type = 'click' ORDER BY interaction_timestamp DESC LIMIT 3;` | 3 筆 click 記錄、user_id/org_id = 真實 UUID、doc_url 和 result_position 正確 |       |
-| A11f | query_id 正確關聯            | `SELECT query_id FROM user_interactions WHERE interaction_type = 'click' ORDER BY interaction_timestamp DESC LIMIT 1;`                                  | query_id 非 NULL，且與 A6 的 query_id 一致                            |       |
+| #    | 驗證項目          | SQL                                                                                                                                                                       | 預期                                                                 | Pass? |
+| ---- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |:-----:|
+| A11e | click 事件有記錄   | `SELECT interaction_type, user_id, org_id, doc_url, result_position FROM user_interactions WHERE interaction_type = 'click' ORDER BY interaction_timestamp DESC LIMIT 3;` | 3 筆 click 記錄、user_id/org_id = 真實 UUID、doc_url 和 result_position 正確 |       |
+| A11f | query_id 正確關聯 | `SELECT query_id FROM user_interactions WHERE interaction_type = 'click' ORDER BY interaction_timestamp DESC LIMIT 1;`                                                    | query_id 非 NULL，且與 A6 的 query_id 一致                                |       |
 
 **後端驗證**（A5 按讚/踩後）：
 
@@ -214,6 +214,7 @@
 - **本地測試**：啟動 local server（`cd code/python && python app-file.py`）用 SQLite 即可跑，不需 VPS
 
 ---
+
 ---
 
 # E2E Round 2 補測（人工）
@@ -229,21 +230,21 @@
 
 ## E1: Setup 成功後自動 redirect
 
-| # | 操作 | 預期結果 | Pass? |
-|---|------|---------|:-----:|
-| E1-1 | SSH 進 VPS → 產生新 bootstrap token | 拿到 URL |  |
-| E1-2 | 無痕視窗開 bootstrap URL | 組織設定頁面 |  |
-| E1-3 | 填表單 → 點「建立組織」| 顯示「組織建立成功」訊息 |  |
-| E1-4 | 等 2 秒 | **自動跳轉到首頁**（login modal）|  |
+| #    | 操作                              | 預期結果                     | Pass? |
+| ---- | ------------------------------- | ------------------------ |:-----:|
+| E1-1 | SSH 進 VPS → 產生新 bootstrap token | 拿到 URL                   |       |
+| E1-2 | 無痕視窗開 bootstrap URL             | 組織設定頁面                   |       |
+| E1-3 | 填表單 → 點「建立組織」                   | 顯示「組織建立成功」訊息             |       |
+| E1-4 | 等 2 秒                           | **自動跳轉到首頁**（login modal） |       |
 
 ---
 
 ## E2: Bootstrap 不寄驗證 email
 
-| # | 操作 | 預期結果 | Pass? |
-|---|------|---------|:-----:|
-| E2-1 | 完成 E1 後，檢查 email 收件匣（含垃圾郵件）| **不應收到**「Verify your email」的驗證信 |  |
-| E2-2 | 直接用剛註冊的帳密登入 | 登入成功（不需要先驗證 email）|  |
+| #    | 操作                          | 預期結果                            | Pass? |
+| ---- | --------------------------- | ------------------------------- |:-----:|
+| E2-1 | 完成 E1 後，檢查 email 收件匣（含垃圾郵件） | **不應收到**「Verify your email」的驗證信 |       |
+| E2-2 | 直接用剛註冊的帳密登入                 | 登入成功（不需要先驗證 email）              |       |
 
 ---
 
@@ -251,14 +252,14 @@
 
 > 需要先有一個可刪除的員工帳號。用 admin 在 org modal 建一個。
 
-| # | 操作 | 預期結果 | Pass? |
-|---|------|---------|:-----:|
-| E6-1 | Admin 登入 → 組織 → 建立帳號（員工姓名: "刪除測試", email: "delete-test@test.com"）| 成功 |  |
-| E6-2 | 記下新 user 的 ID：`docker exec nlweb-postgres psql -U nlweb -d nlweb -c "SELECT id FROM users WHERE email = 'delete-test@test.com';"` | 拿到 UUID |  |
-| E6-3 | Org modal → 點該員工的「刪除」→ 確認 | 員工從列表消失 |  |
-| E6-4 | 確認 user row 已刪除：`docker exec nlweb-postgres psql -U nlweb -d nlweb -c "SELECT COUNT(*) FROM users WHERE email = 'delete-test@test.com';"` | **COUNT = 0**（hard delete）|  |
-| E6-5 | 確認 login_attempts 已清除：`docker exec nlweb-postgres psql -U nlweb -d nlweb -c "SELECT COUNT(*) FROM login_attempts WHERE email = 'delete-test@test.com';"` | COUNT = 0 |  |
-| E6-6 | 確認 refresh_tokens 已清除：`docker exec nlweb-postgres psql -U nlweb -d nlweb -c "SELECT COUNT(*) FROM refresh_tokens WHERE user_id = '<E6-2 的 UUID>';"` | COUNT = 0 |  |
+| #    | 操作                                                                                                                                                       | 預期結果                       | Pass? |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------- |:-----:|
+| E6-1 | Admin 登入 → 組織 → 建立帳號（員工姓名: "刪除測試", email: "delete-test@test.com"）                                                                                        | 成功                         |       |
+| E6-2 | 記下新 user 的 ID：`docker exec nlweb-postgres psql -U nlweb -d nlweb -c "SELECT id FROM users WHERE email = 'delete-test@test.com';"`                        | 拿到 UUID                    |       |
+| E6-3 | Org modal → 點該員工的「刪除」→ 確認                                                                                                                                | 員工從列表消失                    |       |
+| E6-4 | 確認 user row 已刪除：`docker exec nlweb-postgres psql -U nlweb -d nlweb -c "SELECT COUNT(*) FROM users WHERE email = 'delete-test@test.com';"`                | **COUNT = 0**（hard delete） |       |
+| E6-5 | 確認 login_attempts 已清除：`docker exec nlweb-postgres psql -U nlweb -d nlweb -c "SELECT COUNT(*) FROM login_attempts WHERE email = 'delete-test@test.com';"` | COUNT = 0                  |       |
+| E6-6 | 確認 refresh_tokens 已清除：`docker exec nlweb-postgres psql -U nlweb -d nlweb -c "SELECT COUNT(*) FROM refresh_tokens WHERE user_id = '<E6-2 的 UUID>';"`      | COUNT = 0                  |       |
 
 ---
 
@@ -266,12 +267,12 @@
 
 > 需要一個有密碼的帳號。用既有 admin@twdubao.com 測。
 
-| # | 操作 | 預期結果 | Pass? |
-|---|------|---------|:-----:|
-| E8-1 | 無痕開 twdubao.com → login modal → 「忘記密碼?」| 切換到 email 輸入表單 |  |
-| E8-2 | 輸入 admin@twdubao.com → submit | 綠字「已寄送重設連結」|  |
-| E8-3 | 檢查 email 收件匣 | 收到 reset password email，含連結 |  |
-| E8-4 | 點 email 中的連結 | 開啟**品牌化重設密碼頁面**（讀豹 logo + 深藍背景，非 405）|  |
-| E8-5 | 輸入新密碼 + 確認密碼 → submit | 顯示「密碼已重設」→ 2 秒後自動跳轉首頁 |  |
-| E8-6 | 用新密碼登入 | 成功 |  |
-| E8-7 | **改回原密碼**（重複忘記密碼流程或用「變更密碼」）| 避免下次測試密碼不對 |  |
+| #    | 操作                                      | 預期結果                                  | Pass? |
+| ---- | --------------------------------------- | ------------------------------------- |:-----:|
+| E8-1 | 無痕開 twdubao.com → login modal → 「忘記密碼?」 | 切換到 email 輸入表單                        |       |
+| E8-2 | 輸入 admin@twdubao.com → submit           | 綠字「已寄送重設連結」                           |       |
+| E8-3 | 檢查 email 收件匣                            | 收到 reset password email，含連結           |       |
+| E8-4 | 點 email 中的連結                            | 開啟**品牌化重設密碼頁面**（讀豹 logo + 深藍背景，非 405） |       |
+| E8-5 | 輸入新密碼 + 確認密碼 → submit                   | 顯示「密碼已重設」→ 2 秒後自動跳轉首頁                 |       |
+| E8-6 | 用新密碼登入                                  | 成功                                    |       |
+| E8-7 | **改回原密碼**（重複忘記密碼流程或用「變更密碼」）             | 避免下次測試密碼不對                            |       |
