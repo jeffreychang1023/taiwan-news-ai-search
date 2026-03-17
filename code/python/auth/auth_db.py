@@ -453,6 +453,17 @@ class AuthDB:
                     ip_address TEXT,
                     created_at REAL NOT NULL
                 )
+            """,
+            'bootstrap_tokens': """
+                CREATE TABLE IF NOT EXISTS bootstrap_tokens (
+                    id TEXT PRIMARY KEY,
+                    token TEXT UNIQUE NOT NULL,
+                    org_name_hint TEXT DEFAULT '',
+                    created_at REAL NOT NULL,
+                    expires_at REAL NOT NULL,
+                    used_at REAL,
+                    used_by_email TEXT
+                )
             """
         }
 
@@ -603,6 +614,17 @@ class AuthDB:
                     ip_address VARCHAR(64),
                     created_at DOUBLE PRECISION NOT NULL
                 )
+            """,
+            'bootstrap_tokens': """
+                CREATE TABLE IF NOT EXISTS bootstrap_tokens (
+                    id TEXT PRIMARY KEY,
+                    token TEXT UNIQUE NOT NULL,
+                    org_name_hint TEXT DEFAULT '',
+                    created_at DOUBLE PRECISION NOT NULL,
+                    expires_at DOUBLE PRECISION NOT NULL,
+                    used_at DOUBLE PRECISION,
+                    used_by_email TEXT
+                )
             """
         }
 
@@ -627,6 +649,7 @@ class AuthDB:
             "CREATE INDEX IF NOT EXISTS idx_audit_org_id ON audit_logs(org_id)",
             "CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_logs(action)",
             "CREATE INDEX IF NOT EXISTS idx_audit_created_at ON audit_logs(created_at)",
+            "CREATE INDEX IF NOT EXISTS idx_bootstrap_tokens_token ON bootstrap_tokens(token)",
         ]
 
     def _init_database(self):

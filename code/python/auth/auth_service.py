@@ -44,15 +44,54 @@ class AuthService:
     def __init__(self):
         self.db = AuthDB.get_instance()
 
-    # ── Registration (Bootstrap — First Admin Only) ─────────────
+    # ── Bootstrap Token Management ────────────────────────────────
+
+    async def create_bootstrap_token(self, org_name_hint: str = '', expires_hours: int = 72) -> Dict[str, str]:
+        """Create a bootstrap token for B2B customer onboarding.
+
+        Returns dict with 'token' and 'url'.
+        """
+        token_id = str(uuid.uuid4())
+        token = secrets.token_urlsafe(32)
+        now = time.time()
+        expires_at = now + expires_hours * 3600
+
+        await self.db.execute(
+            "INSERT INTO bootstrap_tokens (id, token, org_name_hint, created_at, expires_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (token_id, token, org_name_hint, now, expires_at)
+        )
+
+        from auth.email_service import BASE_URL
+        url = f"{BASE_URL}/setup?token={token}"
+
+        logger.info(f"Bootstrap token created (id={token_id}, org_hint={org_name_hint!r}, expires_hours={expires_hours})")
+        return {'token': token, 'url': url}
+
+    async def validate_bootstrap_token(self, token: str) -> Dict[str, Any]:
+        """Validate a bootstrap token. Returns token row or raises ValueError."""
+        row = await self.db.fetchone(
+            "SELECT id, token, org_name_hint, created_at, expires_at, used_at, used_by_email "
+            "FROM bootstrap_tokens WHERE token = ?",
+            (token,)
+        )
+        if not row:
+            raise ValueError("Invalid bootstrap token")
+        if row['used_at'] is not None:
+            raise ValueError("Bootstrap token has already been used")
+        if row['expires_at'] < time.time():
+            raise ValueError("Bootstrap token has expired")
+        return row
+
+    # ── Registration (Bootstrap via Token) ─────────────────────
 
     async def register_user(self, email: str, password: str, name: str,
-                            org_name: str = '') -> Dict[str, Any]:
-        """Register first admin + org. Only works when no organizations exist."""
-        # B2B guard: only allow if no orgs exist (bootstrap)
-        existing_org = await self.db.fetchone("SELECT id FROM organizations LIMIT 1")
-        if existing_org:
-            raise ValueError("System already initialized. Contact your administrator.")
+                            org_name: str = '', bootstrap_token: str = '') -> Dict[str, Any]:
+        """Register admin + org using a bootstrap token."""
+        # B2B guard: require valid bootstrap token
+        if not bootstrap_token:
+            raise ValueError("Bootstrap token is required")
+        token_row = await self.validate_bootstrap_token(bootstrap_token)
 
         email = email.strip().lower()
         if not re.match(r'^[^@\s]+@[^@\s]+\.[^@\s]+$', email):
@@ -76,7 +115,14 @@ class AuthService:
         )
 
         # Create organization with admin as owner
-        await self.create_organization(org_name or f"{name}'s organization", user_id)
+        org_hint = token_row.get('org_name_hint', '')
+        await self.create_organization(org_name or org_hint or f"{name}'s organization", user_id)
+
+        # Mark bootstrap token as used
+        await self.db.execute(
+            "UPDATE bootstrap_tokens SET used_at = ?, used_by_email = ? WHERE token = ?",
+            (time.time(), email, bootstrap_token)
+        )
 
         # BP-4: Non-blocking email (still send for record, but admin is auto-verified)
         from auth.email_service import send_verification_email

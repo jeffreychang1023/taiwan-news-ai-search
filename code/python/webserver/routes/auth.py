@@ -44,7 +44,7 @@ def _get_client_ip(request: web.Request) -> str:
 # ── Auth Routes ───────────────────────────────────────────────────
 
 async def register_handler(request: web.Request) -> web.Response:
-    """POST /api/auth/register — Bootstrap first admin only (B2B)."""
+    """POST /api/auth/register — Bootstrap admin via bootstrap token (B2B)."""
     try:
         body = await request.json()
     except Exception:
@@ -54,12 +54,16 @@ async def register_handler(request: web.Request) -> web.Response:
     password = body.get('password', '')
     name = body.get('name', '')
     org_name = body.get('org_name', '')
+    bootstrap_token = body.get('bootstrap_token', '')
 
     if not email or not password or not name:
         return web.json_response({'error': 'email, password, and name are required'}, status=400)
 
+    if not bootstrap_token:
+        return web.json_response({'error': 'bootstrap_token is required'}, status=400)
+
     try:
-        user = await _get_service().register_user(email, password, name, org_name)
+        user = await _get_service().register_user(email, password, name, org_name, bootstrap_token)
         fire_and_forget(log_action(
             'auth.bootstrap',
             user_id=user.get('id'),
@@ -607,6 +611,278 @@ async def activate_account_handler(request: web.Request) -> web.Response:
         return web.json_response({'error': 'Internal server error'}, status=500)
 
 
+# ── Setup Page (Bootstrap Onboarding) ────────────────────────────
+
+
+async def setup_page_handler(request: web.Request) -> web.Response:
+    """GET /setup?token=xxx — Bootstrap onboarding page for new customer admin."""
+    token = request.query.get('token', '')
+    if not token:
+        return web.Response(
+            text=_setup_error_page('缺少設定 Token'),
+            content_type='text/html', status=400,
+        )
+
+    try:
+        token_row = await _get_service().validate_bootstrap_token(token)
+    except ValueError as e:
+        return web.Response(
+            text=_setup_error_page(str(e)),
+            content_type='text/html', status=400,
+        )
+
+    org_name_hint = _html_escape(token_row.get('org_name_hint', ''), quote=True)
+    safe_token_attr = _html_escape(token, quote=True)
+
+    html = f"""<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>組織設定 - 讀豹</title>
+<style>
+  * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+  body {{
+    font-family: 'Noto Sans TC', -apple-system, BlinkMacSystemFont, sans-serif;
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+  }}
+  .setup-card {{
+    background: #fff;
+    border-radius: 16px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+    padding: 40px;
+    width: 100%;
+    max-width: 440px;
+  }}
+  .setup-logo {{
+    text-align: center;
+    margin-bottom: 24px;
+  }}
+  .setup-logo img {{
+    height: 64px;
+    margin-bottom: 8px;
+  }}
+  .setup-logo h1 {{
+    font-size: 1.5rem;
+    color: #1a1a2e;
+    font-weight: 700;
+  }}
+  .setup-logo p {{
+    color: #666;
+    font-size: 0.9rem;
+    margin-top: 4px;
+  }}
+  .form-group {{
+    margin-bottom: 16px;
+  }}
+  .form-group label {{
+    display: block;
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: #333;
+    margin-bottom: 6px;
+  }}
+  .form-group input {{
+    width: 100%;
+    padding: 10px 14px;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    font-size: 0.95rem;
+    transition: border-color 0.2s;
+  }}
+  .form-group input:focus {{
+    outline: none;
+    border-color: #c8a96e;
+    box-shadow: 0 0 0 3px rgba(200,169,110,0.15);
+  }}
+  .form-hint {{
+    font-size: 0.8rem;
+    color: #888;
+    margin-top: 4px;
+  }}
+  .setup-btn {{
+    width: 100%;
+    padding: 12px;
+    background: linear-gradient(135deg, #c8a96e, #b8963e);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    margin-top: 8px;
+    transition: opacity 0.2s;
+  }}
+  .setup-btn:hover {{ opacity: 0.9; }}
+  .setup-btn:disabled {{ opacity: 0.5; cursor: not-allowed; }}
+  .error-msg {{
+    color: #dc3545;
+    font-size: 0.875rem;
+    margin-top: 8px;
+    display: none;
+  }}
+  .success-msg {{
+    color: #28a745;
+    font-size: 0.875rem;
+    margin-top: 8px;
+    display: none;
+    text-align: center;
+  }}
+</style>
+</head>
+<body>
+<div class="setup-card">
+  <div class="setup-logo">
+    <img src="/static/images/Leopard.png" alt="讀豹" onerror="this.style.display='none'">
+    <h1>組織設定</h1>
+    <p>建立您的組織與管理員帳號</p>
+  </div>
+  <form id="setupForm" onsubmit="return handleSetup()">
+    <input type="hidden" name="token" value="{safe_token_attr}">
+    <div class="form-group">
+      <label for="orgName">組織名稱</label>
+      <input type="text" id="orgName" required placeholder="例：讀豹科技" value="{org_name_hint}">
+    </div>
+    <div class="form-group">
+      <label for="adminName">管理員名稱</label>
+      <input type="text" id="adminName" required placeholder="您的姓名">
+    </div>
+    <div class="form-group">
+      <label for="adminEmail">Email</label>
+      <input type="email" id="adminEmail" required placeholder="you@company.com" autocomplete="email">
+    </div>
+    <div class="form-group">
+      <label for="adminPassword">密碼</label>
+      <input type="password" id="adminPassword" required minlength="8" placeholder="至少 8 字元，含大寫與數字" autocomplete="new-password">
+      <div class="form-hint">至少 8 字元，需包含大寫字母與數字</div>
+    </div>
+    <div class="form-group">
+      <label for="adminPassword2">確認密碼</label>
+      <input type="password" id="adminPassword2" required placeholder="再次輸入密碼" autocomplete="new-password">
+    </div>
+    <div class="error-msg" id="setupError"></div>
+    <div class="success-msg" id="setupSuccess"></div>
+    <button type="submit" class="setup-btn" id="setupBtn">建立組織</button>
+  </form>
+</div>
+<script>
+async function handleSetup() {{
+  event.preventDefault();
+  const errEl = document.getElementById('setupError');
+  const successEl = document.getElementById('setupSuccess');
+  const btn = document.getElementById('setupBtn');
+  errEl.style.display = 'none';
+  successEl.style.display = 'none';
+
+  const pw = document.getElementById('adminPassword').value;
+  const pw2 = document.getElementById('adminPassword2').value;
+  if (pw !== pw2) {{
+    errEl.textContent = '密碼不一致';
+    errEl.style.display = 'block';
+    return;
+  }}
+
+  btn.disabled = true;
+  btn.textContent = '建立中...';
+
+  try {{
+    const token = document.querySelector('input[name="token"]').value;
+    const res = await fetch('/api/auth/register', {{
+      method: 'POST',
+      headers: {{ 'Content-Type': 'application/json' }},
+      body: JSON.stringify({{
+        bootstrap_token: token,
+        org_name: document.getElementById('orgName').value.trim(),
+        name: document.getElementById('adminName').value.trim(),
+        email: document.getElementById('adminEmail').value.trim(),
+        password: pw
+      }})
+    }});
+    const data = await res.json();
+    if (data.success) {{
+      document.getElementById('setupForm').style.display = 'none';
+      successEl.innerHTML = '<h2 style="margin-bottom:12px;color:#1a1a2e;">組織建立成功!</h2>'
+        + '<p>您的管理員帳號已建立。</p>'
+        + '<p style="margin-top:12px;"><a href="/" style="color:#c8a96e;font-weight:600;">前往登入</a></p>';
+      successEl.style.display = 'block';
+    }} else {{
+      errEl.textContent = data.error || '建立失敗';
+      errEl.style.display = 'block';
+    }}
+  }} catch (e) {{
+    errEl.textContent = '網路錯誤，請稍後再試';
+    errEl.style.display = 'block';
+  }}
+  btn.disabled = false;
+  btn.textContent = '建立組織';
+}}
+</script>
+</body>
+</html>"""
+    return web.Response(text=html, content_type='text/html')
+
+
+def _setup_error_page(message: str) -> str:
+    """Return a styled error page for invalid bootstrap tokens."""
+    safe_msg = _html_escape(message, quote=True)
+    return f"""<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>連結無效 - 讀豹</title>
+<style>
+  * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+  body {{
+    font-family: 'Noto Sans TC', -apple-system, BlinkMacSystemFont, sans-serif;
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+  }}
+  .error-card {{
+    background: #fff;
+    border-radius: 16px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+    padding: 40px;
+    width: 100%;
+    max-width: 440px;
+    text-align: center;
+  }}
+  .error-card img {{
+    height: 64px;
+    margin-bottom: 16px;
+  }}
+  .error-card h1 {{
+    font-size: 1.3rem;
+    color: #dc3545;
+    margin-bottom: 12px;
+  }}
+  .error-card p {{
+    color: #666;
+    font-size: 0.95rem;
+    line-height: 1.6;
+  }}
+</style>
+</head>
+<body>
+<div class="error-card">
+  <img src="/static/images/Leopard.png" alt="讀豹" onerror="this.style.display='none'">
+  <h1>此連結無效或已過期</h1>
+  <p>{safe_msg}</p>
+  <p style="margin-top:16px;color:#999;font-size:0.85rem;">如有疑問，請聯繫平台管理員。</p>
+</div>
+</body>
+</html>"""
+
+
 # ── Organization Routes ───────────────────────────────────────────
 
 async def create_org_handler(request: web.Request) -> web.Response:
@@ -746,6 +1022,7 @@ async def accept_invite_handler(request: web.Request) -> web.Response:
 def setup_auth_routes(app: web.Application):
     """Register all auth routes."""
     # Auth routes
+    app.router.add_get('/setup', setup_page_handler)
     app.router.add_post('/api/auth/register', register_handler)
     app.router.add_get('/api/auth/verify-email', verify_email_handler)
     app.router.add_post('/api/auth/login', login_handler)

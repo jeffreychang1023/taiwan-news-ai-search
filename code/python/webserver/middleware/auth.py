@@ -19,6 +19,8 @@ PUBLIC_ENDPOINTS: Set[str] = {
     # Static files
     '/static',
     '/html',
+    # Bootstrap setup page (public — token validated inside handler)
+    '/setup',
     # Auth endpoints (must be public for login/register flow)
     '/api/auth/register',
     '/api/auth/login',

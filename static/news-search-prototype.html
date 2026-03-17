@@ -607,7 +607,7 @@
     <!-- DOMPurify for sanitizing HTML output from marked.js -->
     <script src="https://cdn.jsdelivr.net/npm/dompurify@3.2.4/dist/purify.min.js"></script>
 
-    <script src="/static/news-search.js?v=20260317a"></script>
+    <script src="/static/news-search.js?v=20260317b"></script>
 
     <!-- Org Management Modal -->
     <div class="org-modal-overlay" id="orgModalOverlay" style="display:none;">
@@ -680,7 +680,6 @@
             <button class="auth-modal-close" id="btnCloseAuthModal">&times;</button>
             <div class="auth-tabs">
                 <button class="auth-tab active" id="tabLogin" data-tab="login">登入</button>
-                <button class="auth-tab" id="tabRegister" data-tab="register">註冊</button>
             </div>
             <!-- Login Form -->
             <form class="auth-form" id="loginForm">
@@ -696,24 +695,7 @@
                 <button type="submit" class="auth-submit-btn">登入</button>
                 <a href="#" class="auth-link" id="btnForgotPassword">忘記密碼?</a>
             </form>
-            <!-- Register Form -->
-            <form class="auth-form" id="registerForm" style="display:none;">
-                <div class="auth-form-group">
-                    <label for="registerName">名稱</label>
-                    <input type="text" id="registerName" required placeholder="您的名稱">
-                </div>
-                <div class="auth-form-group">
-                    <label for="registerEmail">Email</label>
-                    <input type="email" id="registerEmail" required autocomplete="email" placeholder="you@example.com">
-                </div>
-                <div class="auth-form-group">
-                    <label for="registerPassword">密碼</label>
-                    <input type="password" id="registerPassword" required autocomplete="new-password" placeholder="至少 8 字元，含大寫與數字">
-                </div>
-                <div class="auth-error" id="registerError" style="display:none;"></div>
-                <div class="auth-success" id="registerSuccess" style="display:none;"></div>
-                <button type="submit" class="auth-submit-btn">註冊</button>
-            </form>
+            <!-- Register removed — B2B onboarding uses /setup?token=xxx -->
             <!-- Forgot Password Form -->
             <form class="auth-form" id="forgotPasswordForm" style="display:none;">
                 <div class="auth-form-group">

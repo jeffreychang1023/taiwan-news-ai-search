@@ -72,12 +72,19 @@ def _no_email(monkeypatch):
     monkeypatch.setattr(es, 'send_lockout_notification', lambda *a, **kw: None)
 
 
+async def _create_bootstrap_token(service: AuthService, org_hint: str = '') -> str:
+    """Helper: create a bootstrap token and return the raw token string."""
+    result = await service.create_bootstrap_token(org_name_hint=org_hint, expires_hours=1)
+    return result['token']
+
+
 async def _register_and_verify(service: AuthService,
                                 email: str = "test@example.com",
                                 password: str = "Password1",
                                 name: str = "Test User") -> dict:
-    """Helper: register a user and mark email as verified. Returns user dict."""
-    user = await service.register_user(email, password, name)
+    """Helper: register a user (with bootstrap token) and mark email as verified. Returns user dict."""
+    token = await _create_bootstrap_token(service)
+    user = await service.register_user(email, password, name, bootstrap_token=token)
     # Directly verify
     db = AuthDB.get_instance()
     await db.execute(
@@ -103,7 +110,8 @@ class TestRegisterUser:
 
     @pytest.mark.asyncio
     async def test_register_success(self, service, _no_email):
-        result = await service.register_user("alice@example.com", "Passw0rd", "Alice")
+        token = await _create_bootstrap_token(service)
+        result = await service.register_user("alice@example.com", "Passw0rd", "Alice", bootstrap_token=token)
         assert result['email'] == "alice@example.com"
         assert result['name'] == "Alice"
         # B2B bootstrap: first admin is auto-verified
@@ -112,32 +120,69 @@ class TestRegisterUser:
 
     @pytest.mark.asyncio
     async def test_register_normalizes_email(self, service, _no_email):
-        result = await service.register_user("  Alice@Example.COM  ", "Passw0rd", "Alice")
+        token = await _create_bootstrap_token(service)
+        result = await service.register_user("  Alice@Example.COM  ", "Passw0rd", "Alice", bootstrap_token=token)
         assert result['email'] == "alice@example.com"
 
     @pytest.mark.asyncio
+    async def test_register_without_token_fails(self, service, _no_email):
+        """Register without bootstrap token should fail."""
+        with pytest.raises(ValueError, match="Bootstrap token is required"):
+            await service.register_user("a@b.com", "Passw0rd", "X")
+
+    @pytest.mark.asyncio
+    async def test_register_invalid_token_fails(self, service, _no_email):
+        """Register with invalid bootstrap token should fail."""
+        with pytest.raises(ValueError, match="Invalid bootstrap token"):
+            await service.register_user("a@b.com", "Passw0rd", "X", bootstrap_token="bogus-token")
+
+    @pytest.mark.asyncio
+    async def test_register_used_token_fails(self, service, _no_email):
+        """A bootstrap token can only be used once."""
+        token = await _create_bootstrap_token(service)
+        await service.register_user("first@example.com", "Passw0rd", "First", bootstrap_token=token)
+        with pytest.raises(ValueError, match="already been used"):
+            await service.register_user("second@example.com", "Passw0rd", "Second", bootstrap_token=token)
+
+    @pytest.mark.asyncio
+    async def test_register_expired_token_fails(self, service, _no_email):
+        """Expired bootstrap token should fail."""
+        result = await service.create_bootstrap_token(org_name_hint='', expires_hours=1)
+        # Force expire it
+        db = AuthDB.get_instance()
+        await db.execute(
+            "UPDATE bootstrap_tokens SET expires_at = ? WHERE token = ?",
+            (time.time() - 1, result['token'])
+        )
+        with pytest.raises(ValueError, match="expired"):
+            await service.register_user("a@b.com", "Passw0rd", "X", bootstrap_token=result['token'])
+
+    @pytest.mark.asyncio
     async def test_register_duplicate_email(self, service, _no_email):
-        # B2B model: register_user is bootstrap-only (first admin + org).
-        # After bootstrap, a second register_user call raises "System already initialized"
-        # because an org now exists — the B2B guard fires before the email-duplicate check.
-        await service.register_user("dup@example.com", "Passw0rd", "First")
-        with pytest.raises(ValueError, match="System already initialized"):
-            await service.register_user("dup@example.com", "Passw0rd", "Second")
+        # First register uses one token, second register with a new token but same email.
+        token1 = await _create_bootstrap_token(service)
+        await service.register_user("dup@example.com", "Passw0rd", "First", bootstrap_token=token1)
+        token2 = await _create_bootstrap_token(service)
+        with pytest.raises(ValueError, match="Email already registered"):
+            await service.register_user("dup@example.com", "Passw0rd", "Second", bootstrap_token=token2)
 
     @pytest.mark.asyncio
     async def test_register_weak_password_too_short(self, service, _no_email):
+        token = await _create_bootstrap_token(service)
         with pytest.raises(ValueError, match="at least 8 characters"):
-            await service.register_user("a@b.com", "Ab1", "X")
+            await service.register_user("a@b.com", "Ab1", "X", bootstrap_token=token)
 
     @pytest.mark.asyncio
     async def test_register_weak_password_no_uppercase(self, service, _no_email):
+        token = await _create_bootstrap_token(service)
         with pytest.raises(ValueError, match="uppercase"):
-            await service.register_user("a@b.com", "password1", "X")
+            await service.register_user("a@b.com", "password1", "X", bootstrap_token=token)
 
     @pytest.mark.asyncio
     async def test_register_weak_password_no_digit(self, service, _no_email):
+        token = await _create_bootstrap_token(service)
         with pytest.raises(ValueError, match="digit"):
-            await service.register_user("a@b.com", "Password", "X")
+            await service.register_user("a@b.com", "Password", "X", bootstrap_token=token)
 
 
 # ── Email Verification Tests ────────────────────────────────────
@@ -147,7 +192,8 @@ class TestVerifyEmail:
 
     @pytest.mark.asyncio
     async def test_verify_email_success(self, service, _no_email):
-        user = await service.register_user("v@e.com", "Passw0rd", "V")
+        bt = await _create_bootstrap_token(service)
+        user = await service.register_user("v@e.com", "Passw0rd", "V", bootstrap_token=bt)
         # Grab the verification token from DB
         db = AuthDB.get_instance()
         row = await db.fetchone("SELECT email_verification_token FROM users WHERE id = ?", (user['id'],))
@@ -165,7 +211,8 @@ class TestVerifyEmail:
     @pytest.mark.asyncio
     async def test_verify_email_token_consumed(self, service, _no_email):
         """After verification, the token is nulled — second call should fail."""
-        user = await service.register_user("v2@e.com", "Passw0rd", "V2")
+        bt = await _create_bootstrap_token(service)
+        user = await service.register_user("v2@e.com", "Passw0rd", "V2", bootstrap_token=bt)
         db = AuthDB.get_instance()
         row = await db.fetchone("SELECT email_verification_token FROM users WHERE id = ?", (user['id'],))
         token = row['email_verification_token']
@@ -205,7 +252,8 @@ class TestLogin:
         """User with password set but email_verified=False -> should fail with Email not verified."""
         # Bootstrap admin (auto-verified), then insert an unverified user directly.
         # This represents a user whose account was manually created without going through activation.
-        await service.register_user("admin@e.com", "Passw0rd", "Admin")
+        bt = await _create_bootstrap_token(service)
+        await service.register_user("admin@e.com", "Passw0rd", "Admin", bootstrap_token=bt)
         db = AuthDB.get_instance()
         password_hash = bcrypt.hashpw(b"Passw0rd", bcrypt.gensalt()).decode('utf-8')
         await db.execute(
@@ -474,7 +522,8 @@ class TestSetUserActive:
 
     async def _setup_admin_and_member(self, service):
         """Helper: bootstrap admin, create a member. Returns (admin_id, org_id, member_id)."""
-        admin = await service.register_user("admin@e.com", "Passw0rd", "Admin")
+        bt = await _create_bootstrap_token(service)
+        admin = await service.register_user("admin@e.com", "Passw0rd", "Admin", bootstrap_token=bt)
         db = AuthDB.get_instance()
         org = await db.fetchone("SELECT id FROM organizations LIMIT 1")
         org_id = org['id']
@@ -533,7 +582,8 @@ class TestSetUserActive:
 class TestDeleteUser:
 
     async def _setup_admin_and_member(self, service):
-        admin = await service.register_user("admin@e.com", "Passw0rd", "Admin")
+        bt = await _create_bootstrap_token(service)
+        admin = await service.register_user("admin@e.com", "Passw0rd", "Admin", bootstrap_token=bt)
         db = AuthDB.get_instance()
         org = await db.fetchone("SELECT id FROM organizations LIMIT 1")
         org_id = org['id']
@@ -592,7 +642,8 @@ class TestDeleteUser:
 class TestChangeMemberRole:
 
     async def _setup_admin_and_member(self, service):
-        admin = await service.register_user("admin@e.com", "Passw0rd", "Admin")
+        bt = await _create_bootstrap_token(service)
+        admin = await service.register_user("admin@e.com", "Passw0rd", "Admin", bootstrap_token=bt)
         db = AuthDB.get_instance()
         org = await db.fetchone("SELECT id FROM organizations LIMIT 1")
         org_id = org['id']

@@ -701,11 +701,9 @@
 
         function switchAuthTab(tab) {
             document.getElementById('loginForm').style.display = tab === 'login' ? 'block' : 'none';
-            document.getElementById('registerForm').style.display = tab === 'register' ? 'block' : 'none';
             document.getElementById('forgotPasswordForm').style.display = tab === 'forgot' ? 'block' : 'none';
 
             document.getElementById('tabLogin').classList.toggle('active', tab === 'login');
-            document.getElementById('tabRegister').classList.toggle('active', tab === 'register');
 
             // Clear messages
             document.querySelectorAll('.auth-error, .auth-success').forEach(el => el.style.display = 'none');
@@ -786,7 +784,6 @@
                 if (e.target === e.currentTarget && authManager.isLoggedIn()) hideAuthModal();
             });
             document.getElementById('tabLogin').addEventListener('click', () => switchAuthTab('login'));
-            document.getElementById('tabRegister').addEventListener('click', () => switchAuthTab('register'));
             document.getElementById('btnForgotPassword').addEventListener('click', (e) => { e.preventDefault(); switchAuthTab('forgot'); });
             document.getElementById('btnBackToLogin').addEventListener('click', (e) => { e.preventDefault(); switchAuthTab('login'); });
 
@@ -870,25 +867,7 @@
                 }
             });
 
-            // Register form
-            document.getElementById('registerForm').addEventListener('submit', async (e) => {
-                e.preventDefault();
-                const errEl = document.getElementById('registerError');
-                const successEl = document.getElementById('registerSuccess');
-                errEl.style.display = 'none';
-                successEl.style.display = 'none';
-                const name = document.getElementById('registerName').value;
-                const email = document.getElementById('registerEmail').value;
-                const password = document.getElementById('registerPassword').value;
-                try {
-                    await authManager.register(email, password, name);
-                    successEl.textContent = 'Registration successful! Please check your email to verify.';
-                    successEl.style.display = 'block';
-                } catch (err) {
-                    errEl.textContent = err.message;
-                    errEl.style.display = 'block';
-                }
-            });
+            // Register form removed — B2B onboarding uses /setup?token=xxx
 
             // Forgot password form
             document.getElementById('forgotPasswordForm').addEventListener('submit', async (e) => {
