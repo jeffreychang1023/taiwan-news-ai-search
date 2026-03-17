@@ -92,19 +92,16 @@
 
 ## 待處理
 
+### BUG: Retrieval 0 結果時仍生成虛假回應
+- **現象**：VPS 無 indexed data，retrieval 回 0 結果，但前端顯示「抱歉，找不到相關資訊」+「基於 7 則報導生成」
+- **原因**：Reasoning pipeline（Writer agent）在 0 結果時不應進入，或至少不應聲稱有來源
+- **影響**：使用者誤以為系統有資料但找不到，實際上是完全沒有資料
+- **優先級**：上線前必修（全量 indexing 後即使部分 query 沒結果也會觸發）
+
 ### Login 系統後續
 - ✅ Email 服務上線（Resend + Cloudflare Email Routing 完成）
 - ✅ Bootstrap token onboarding flow 完成（117/117 tests pass）
-- E2E 第一輪 8 個待修問題：
-  1. Setup 成功後沒有 auto redirect 到 login 頁
-  2. Bootstrap 不應該寄 verification email（admin 已 auto-verify）
-  3. 未登入 login modal 的 X 按鈕應拿掉（而非禁用）
-  4. 停用帳號：無明確反饋 + 沒有「啟用」按鈕恢復
-  5. 被停用帳號登入應顯示「帳號已被停用」而非「密碼錯誤」
-  6. 刪除帳號要完整清除（hard delete user + 清 login_attempts + 保留但斷開 sessions user_id）
-  7. Login modal 密碼欄位在登出/失敗後必須清空
-  8. 忘記密碼 reset link → 405（GET /api/auth/reset-password 沒有 handler，需像 activate 一樣做 HTML 頁面）
-- 前端改動 commit（feature/ui-redesign branch 含 auth guard + admin modal）
+- ✅ E2E 第一輪 8 個問題全部修復 + 第二輪驗證通過（2026-03-17）
 
 ### Analytics E2E 測試（待 indexed data）
 - queries 表驗證通過（user_id, org_id, query_length, embedding_model 皆正確）

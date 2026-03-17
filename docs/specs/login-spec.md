@@ -444,18 +444,18 @@ python -m auth.bootstrap_cli --revoke <token_id>
 
 ### E2E 第一輪發現（2026-03-17）
 
-> 8 個待修問題，來自 E2E 第一輪測試。
+> 8 個問題，來自 E2E 第一輪測試。**全部修復 + 第二輪驗證通過（2026-03-17）。**
 
-| # | 問題 | 嚴重度 |
-|---|------|--------|
-| E1 | Setup 成功後沒有 auto redirect 到 login 頁 | Medium |
-| E2 | Bootstrap 不應該寄 verification email（admin 已 auto-verify） | High |
-| E3 | 未登入 login modal 的 X 按鈕應拿掉（而非禁用） | Low |
-| E4 | 停用帳號：無明確反饋 + 沒有「啟用」按鈕恢復 | Medium |
-| E5 | 被停用帳號登入應顯示「帳號已被停用」而非「密碼錯誤」 | High |
-| E6 | 刪除帳號要完整清除（hard delete user + 清 login_attempts + 保留但斷開 sessions user_id） | High |
-| E7 | Login modal 密碼欄位在登出/失敗後必須清空 | Medium |
-| E8 | 忘記密碼 reset link → 405（GET /api/auth/reset-password 沒有 handler，需像 activate 一樣做 HTML 頁面） | High |
+| # | 問題 | 嚴重度 | 狀態 |
+|---|------|--------|:----:|
+| ~~E1~~ | Setup 成功後 auto redirect | Medium | ✅ |
+| ~~E2~~ | Bootstrap 不寄 verification email | High | ✅ |
+| ~~E3~~ | 未登入 login modal X 按鈕隱藏 | Low | ✅ |
+| ~~E4~~ | 停用反饋 + 啟用按鈕 + 已停用 badge | Medium | ✅ |
+| ~~E5~~ | 被停用帳號登入顯示「帳號已被停用」 | High | ✅ |
+| ~~E6~~ | 刪除帳號 hard delete + 清理關聯資料 | High | ✅ |
+| ~~E7~~ | Login modal 密碼欄位清空 | Medium | ✅ |
+| ~~E8~~ | 忘記密碼 reset password 品牌化頁面 | High | ✅ |
 
 ### Will Be Invalidated by Infra Migration
 
