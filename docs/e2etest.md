@@ -157,11 +157,21 @@
 | A9  | ranking_scores 有記錄      | `SELECT ranking_position, llm_final_score, ranking_method FROM ranking_scores WHERE query_id = '<query_id>' AND ranking_method = 'llm' ORDER BY ranking_position LIMIT 3;` | ranking_position > 0、llm_final_score > 0                                                                         |       |
 | A10 | Schema 乾淨（無舊欄位）         | `SELECT column_name FROM information_schema.columns WHERE table_name = 'ranking_scores' AND column_name LIKE 'llm_%';`                                                     | 只有 `llm_final_score` 和 `llm_snippet`                                                                             |       |
 
-**後端驗證**（A4 點擊後，查 click 記錄）：
+**前端驗證**（A4 點擊前後，DevTools Console 觀察）：
 
-| #   | 驗證項目        | SQL                                                                                                            | 預期                                                  | Pass? |
-| --- | ----------- | -------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |:-----:|
-| A11 | click 事件有記錄 | `SELECT interaction_type, user_id, org_id FROM user_interactions ORDER BY interaction_timestamp DESC LIMIT 1;` | interaction_type = 'click'、user_id/org_id = 真實 UUID |       |
+| #    | 操作（瀏覽器）                      | 預期結果                                                                                     | Pass? |
+| ---- | ---------------------------- | ---------------------------------------------------------------------------------------- |:-----:|
+| A11a | A2 搜尋完成後，看 Console           | 有 `[Analytics] Using backend query_id: query_xxx` log（代表 `startQuery` 成功）                |       |
+| A11b | 左鍵點擊一筆結果的「閱讀全文」             | Console 出現 `[Analytics-SSE] Click tracked: <url> position: N` + `Event sent: result_clicked` |       |
+| A11c | 中鍵（滾輪鍵）點擊另一筆結果              | 同 A11b，Console 出現 click tracked log                                                     |       |
+| A11d | 右鍵點擊另一筆結果                   | 同 A11b，Console 出現 click tracked log                                                     |       |
+
+**後端驗證**（A11b-d 點擊後，SSH 進 VPS 查 click 記錄）：
+
+| #    | 驗證項目                     | SQL                                                                                                                                                    | 預期                                                             | Pass? |
+| ---- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------- |:-----:|
+| A11e | click 事件有記錄              | `SELECT interaction_type, user_id, org_id, doc_url, result_position FROM user_interactions WHERE interaction_type = 'click' ORDER BY interaction_timestamp DESC LIMIT 3;` | 3 筆 click 記錄、user_id/org_id = 真實 UUID、doc_url 和 result_position 正確 |       |
+| A11f | query_id 正確關聯            | `SELECT query_id FROM user_interactions WHERE interaction_type = 'click' ORDER BY interaction_timestamp DESC LIMIT 1;`                                  | query_id 非 NULL，且與 A6 的 query_id 一致                            |       |
 
 **後端驗證**（A5 按讚/踩後）：
 
@@ -198,7 +208,7 @@
 ## 注意事項
 
 - **A7-A9 需要 indexed data**：VPS 沒有 indexed data 時 retrieval 回 0 結果，子表為空是正常的。等全量 indexing 完成後再驗證。
-- **A11 需要真的點擊結果**：前端的 click event handler 才會觸發 POST /api/analytics/event
+- **A11 需要真的點擊結果**：前端的 click event handler 觸發 POST /api/analytics/event。左/中/右鍵都會記錄。Console 必須先有 `[Analytics] Using backend query_id` log，click 才會送出（否則被 guard 擋掉）
 - **A12 需要按讚/踩按鈕**：如果前端沒有這個 UI，此項跳過
 - **B 系列可以用瀏覽器直接開**：登入狀態下 cookie 會自動帶，不需要 curl
 - **本地測試**：啟動 local server（`cd code/python && python app-file.py`）用 SQLite 即可跑，不需 VPS

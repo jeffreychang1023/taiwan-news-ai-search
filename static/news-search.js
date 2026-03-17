@@ -1871,6 +1871,7 @@
                     'Content-Type': 'application/json',
                     'Accept': 'text/event-stream'
                 },
+                credentials: 'same-origin',
                 body: JSON.stringify(body)
             };
             if (abortSignal) fetchOptions.signal = abortSignal;
@@ -1910,6 +1911,7 @@
                                     case 'begin-nlweb-response':
                                         if (data.query_id) {
                                             currentAnalyticsQueryId = data.query_id;
+                                            analyticsTracker.startQuery(currentAnalyticsQueryId, data.query || query);
                                             console.log('[Analytics] Using backend query_id:', currentAnalyticsQueryId);
                                         }
                                         if (data.conversation_id) {
@@ -1969,6 +1971,44 @@
                             } catch (e) {
                                 console.error('Error parsing POST SSE message:', e, line);
                             }
+                        }
+                    }
+                }
+            }
+
+            // Process any remaining content in buffer after stream ends
+            if (buffer.trim()) {
+                const lines = buffer.split('\n');
+                for (const line of lines) {
+                    if (line.startsWith('data: ')) {
+                        try {
+                            const data = JSON.parse(line.slice(6));
+                            console.log('POST SSE final buffer message:', data);
+                            if (data.message_type === 'begin-nlweb-response' && data.query_id) {
+                                currentAnalyticsQueryId = data.query_id;
+                                analyticsTracker.startQuery(currentAnalyticsQueryId, data.query || query);
+                                console.log('[Analytics] Using backend query_id (from final buffer):', currentAnalyticsQueryId);
+                            }
+                            if (data.message_type === 'begin-nlweb-response' && data.conversation_id) {
+                                currentConversationId = data.conversation_id;
+                            }
+                            if (data.message_type === 'complete') {
+                                if (onComplete) onComplete(accumulatedData);
+                            }
+                            if (data.message_type === 'articles') {
+                                accumulatedData.content = data.content || [];
+                                if (onArticles) onArticles(accumulatedData.content);
+                            }
+                            if (data.message_type === 'answer') {
+                                accumulatedData.nlws = data.answer ? { answer: data.answer } : null;
+                                if (onAnswer) onAnswer(accumulatedData.nlws, accumulatedData.content?.length || 0);
+                            }
+                            if (data.message_type === 'summary') {
+                                accumulatedData.summary = { message: data.content };
+                                if (onSummary) onSummary(accumulatedData.summary, accumulatedData.content?.length || 0);
+                            }
+                        } catch (e) {
+                            console.error('Error parsing final buffer SSE message:', e, line);
                         }
                     }
                 }
