@@ -727,9 +727,10 @@ async def setup_page_handler(request: web.Request) -> web.Response:
     display: none;
   }}
   .success-msg {{
-    color: #28a745;
-    font-size: 0.875rem;
-    margin-top: 8px;
+    color: #c8a96e;
+    font-size: 1rem;
+    margin-top: 16px;
+    padding: 20px;
     display: none;
     text-align: center;
   }}
@@ -806,9 +807,9 @@ async function handleSetup() {{
     const data = await res.json();
     if (data.success) {{
       document.getElementById('setupForm').style.display = 'none';
-      successEl.innerHTML = '<h2 style="margin-bottom:12px;color:#1a1a2e;">組織建立成功!</h2>'
-        + '<p>您的管理員帳號已建立。</p>'
-        + '<p style="margin-top:12px;"><a href="/" style="color:#c8a96e;font-weight:600;">前往登入</a></p>';
+      successEl.innerHTML = '<h2 style="margin-bottom:12px;color:#c8a96e;">組織建立成功!</h2>'
+        + '<p style="color:#e0e0e0;">您的管理員帳號已建立。</p>'
+        + '<p style="margin-top:16px;"><a href="/" style="color:#fff;background:#c8a96e;padding:10px 24px;border-radius:8px;text-decoration:none;font-weight:600;">前往登入</a></p>';
       successEl.style.display = 'block';
     }} else {{
       errEl.textContent = data.error || '建立失敗';
