@@ -124,10 +124,11 @@ async def login_handler(request: web.Request) -> web.Response:
         access_token = result.pop('access_token')
         refresh_token = result.pop('refresh_token')
         response = web.json_response({'success': True, **result})
+        # Always Secure: production is HTTPS (nginx terminates SSL, request.secure is always False behind proxy)
         response.set_cookie(
             'access_token', access_token,
             httponly=True,
-            secure=request.secure,
+            secure=True,
             samesite='Lax',
             max_age=15 * 60,  # 15 minutes (match JWT expiry)
             path='/'
@@ -135,7 +136,7 @@ async def login_handler(request: web.Request) -> web.Response:
         response.set_cookie(
             'refresh_token', refresh_token,
             httponly=True,
-            secure=request.secure,
+            secure=True,
             samesite='Lax',
             max_age=7 * 24 * 3600,
             path='/api/auth'
@@ -179,10 +180,11 @@ async def refresh_handler(request: web.Request) -> web.Response:
         new_refresh_token = result.pop('refresh_token')
 
         response = web.json_response({'success': True, **result})
+        # Always Secure: production is HTTPS (nginx terminates SSL, request.secure is always False behind proxy)
         response.set_cookie(
             'access_token', access_token,
             httponly=True,
-            secure=request.secure,
+            secure=True,
             samesite='Lax',
             max_age=15 * 60,
             path='/'
@@ -190,7 +192,7 @@ async def refresh_handler(request: web.Request) -> web.Response:
         response.set_cookie(
             'refresh_token', new_refresh_token,
             httponly=True,
-            secure=request.secure,
+            secure=True,
             samesite='Lax',
             max_age=7 * 24 * 3600,
             path='/api/auth'

@@ -30,6 +30,9 @@ PUBLIC_ENDPOINTS: Set[str] = {
     '/api/auth/refresh',
     '/api/auth/logout',
     '/api/auth/activate',
+    # Analytics events — sent by frontend tracker (may be unauthenticated users)
+    '/api/analytics/event',
+    '/api/analytics/event/batch',
 }
 
 

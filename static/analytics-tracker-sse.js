@@ -312,11 +312,12 @@ class AnalyticsTrackerSSE {
         headers: {
           'Content-Type': 'application/json'
         },
+        credentials: 'same-origin',
         body: JSON.stringify(event)
       });
 
       if (!response.ok) {
-        console.warn('[Analytics-SSE] Failed to send event:', eventType, response.statusText);
+        console.error('[Analytics-SSE] Failed to send event:', eventType, response.statusText);
       } else {
         console.log('[Analytics-SSE] Event sent:', eventType);
       }
@@ -349,13 +350,14 @@ class AnalyticsTrackerSSE {
         headers: {
           'Content-Type': 'application/json'
         },
+        credentials: 'same-origin',
         body: JSON.stringify({
           events: eventsToSend
         })
       });
 
       if (!response.ok) {
-        console.warn('[Analytics-SSE] Failed to flush events:', response.statusText);
+        console.error('[Analytics-SSE] Failed to flush events:', response.statusText);
         // Re-queue failed events
         this.eventQueue.push(...eventsToSend);
       } else {

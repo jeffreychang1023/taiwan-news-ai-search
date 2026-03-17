@@ -62,7 +62,7 @@ class RankingAnalyticsHandler:
             except Exception as e:
                 logger.warning(f"Could not fetch LLM model info: {e}")
 
-            return web.json_response({
+            response = web.json_response({
                 'llm_config': {
                     'system_prompt': ranking_prompt_text,
                     'model': llm_model
@@ -75,6 +75,8 @@ class RankingAnalyticsHandler:
                     'early_send_threshold': Ranking.EARLY_SEND_THRESHOLD
                 }
             })
+            response.headers['Cache-Control'] = 'no-store'
+            return response
         except Exception as e:
             logger.error(f"Error getting ranking config: {e}", exc_info=True)
             return web.json_response({'error': str(e)}, status=500)
@@ -133,7 +135,7 @@ class RankingAnalyticsHandler:
                 (query_id,)
             )
 
-            response = {
+            body = {
                 'query': query_data,
                 'stats': {
                     'retrieved_count': retrieved_count,
@@ -143,7 +145,9 @@ class RankingAnalyticsHandler:
                 'top_results': ranking_scores
             }
 
-            return web.json_response(response)
+            resp = web.json_response(body)
+            resp.headers['Cache-Control'] = 'no-store'
+            return resp
 
         except Exception as e:
             logger.error(f"Error getting pipeline details: {e}")

@@ -120,7 +120,9 @@ class AnalyticsHandler:
                 "days": days
             }
 
-            return web.json_response(stats)
+            response = web.json_response(stats)
+            response.headers['Cache-Control'] = 'no-store'
+            return response
 
         except Exception as e:
             logger.error(f"Error getting stats: {e}")
@@ -179,7 +181,9 @@ class AnalyticsHandler:
                     "ctr": ctr
                 })
 
-            return web.json_response(queries)
+            response = web.json_response(queries)
+            response.headers['Cache-Control'] = 'no-store'
+            return response
 
         except Exception as e:
             logger.error(f"Error getting queries: {e}")
@@ -227,7 +231,9 @@ class AnalyticsHandler:
                     "avg_dwell_time": float(row['avg_dwell_time']) if row['avg_dwell_time'] else None
                 })
 
-            return web.json_response(clicks)
+            response = web.json_response(clicks)
+            response.headers['Cache-Control'] = 'no-store'
+            return response
 
         except Exception as e:
             logger.error(f"Error getting top clicks: {e}")
@@ -317,7 +323,8 @@ class AnalyticsHandler:
                 content_type='text/csv',
                 charset='utf-8',
                 headers={
-                    'Content-Disposition': f'attachment; filename="training_data_{int(time.time())}.csv"'
+                    'Content-Disposition': f'attachment; filename="training_data_{int(time.time())}.csv"',
+                    'Cache-Control': 'no-store'
                 }
             )
 
@@ -388,7 +395,9 @@ class AnalyticsHandler:
                     org_id=req_org_id,
                 )
 
-            return web.json_response({"status": "ok"})
+            response = web.json_response({"status": "ok"})
+            response.headers['Cache-Control'] = 'no-store'
+            return response
 
         except Exception as e:
             logger.error(f"Error handling analytics event: {e}")
@@ -453,10 +462,12 @@ class AnalyticsHandler:
                     logger.error(f"Error processing event in batch: {e}")
                     continue
 
-            return web.json_response({
+            response = web.json_response({
                 "status": "ok",
                 "processed": len(events)
             })
+            response.headers['Cache-Control'] = 'no-store'
+            return response
 
         except Exception as e:
             logger.error(f"Error handling analytics batch: {e}")
