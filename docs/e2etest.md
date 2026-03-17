@@ -122,62 +122,80 @@
 # Analytics 系統 E2E 測試 Checklist
 
 > 人工測試用。Analytics 相關改動後跑一遍。需要 VPS 有 indexed data（全量 indexing 完成後）。
+> 測試分兩部分：**前端操作**（瀏覽器）+ **後端驗證**（SSH 查 DB 確認資料正確寫入）。
 
 **測試 URL**: https://twdubao.com
 **Admin 帳號**: admin@twdubao.com / Twdubao2026!
-**VPS SSH**: `ssh -p 2222 root@95.217.153.63`
-**DB 查詢**: `docker exec nlweb-postgres psql -U nlweb -d nlweb -c "<SQL>"`
+**建議**: 用 Chrome DevTools Network tab 觀察 SSE 和 API 請求
+
+**後端驗證用**（需要時才開）:
+- VPS SSH: `ssh -p 2222 root@95.217.153.63`
+- DB 查詢: `docker exec nlweb-postgres psql -U nlweb -d nlweb -c "<SQL>"`
 
 ---
 
-## 前置：登入取得 auth cookie
+## A. 搜尋 + Analytics 記錄
 
-```bash
-curl -s -X POST https://twdubao.com/api/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"email":"admin@twdubao.com","password":"Twdubao2026!"}' \
-  -c cookies.txt
-```
+| # | 操作（瀏覽器） | 預期結果 | Pass? |
+|---|-------------|---------|:-----:|
+| A1 | 開 twdubao.com → 登入 | 登入成功，右上角顯示名稱 | |
+| A2 | 搜尋框輸入「台灣 AI 產業最新趨勢」→ 按搜尋 | 出現搜尋進度條 → 顯示新聞結果列表 | |
+| A3 | 看結果列表 | 每筆結果有標題、摘要、來源、日期 | |
+| A4 | 點擊第一筆結果的標題連結 | 開啟新聞原文頁面（新分頁） | |
+| A5 | 回到搜尋頁，按讚/踩按鈕（如果有的話） | 按鈕狀態切換 | |
+
+**後端驗證**（A2 完成後，SSH 進 VPS 查）：
+
+| # | 驗證項目 | SQL | 預期 | Pass? |
+|---|---------|-----|------|:-----:|
+| A6 | queries 表有記錄 | `SELECT query_id, query_text, user_id, org_id, query_length_chars, has_temporal_indicator, embedding_model FROM queries ORDER BY timestamp DESC LIMIT 1;` | user_id/org_id = 真實 UUID、query_length_chars > 0、has_temporal_indicator = 1（查詢含「最新」）、embedding_model = 'qwen3-4b' | |
+| A7 | retrieved_documents 有記錄 | `SELECT COUNT(*) FROM retrieved_documents WHERE query_id = '<A6 的 query_id>';` | COUNT > 0 | |
+| A8 | retrieval 細節正確 | `SELECT retrieval_algorithm, doc_length, has_author FROM retrieved_documents WHERE query_id = '<query_id>' LIMIT 3;` | retrieval_algorithm = 'postgres_hybrid'、doc_length > 0 | |
+| A9 | ranking_scores 有記錄 | `SELECT ranking_position, llm_final_score, ranking_method FROM ranking_scores WHERE query_id = '<query_id>' AND ranking_method = 'llm' ORDER BY ranking_position LIMIT 3;` | ranking_position > 0、llm_final_score > 0 | |
+| A10 | Schema 乾淨（無舊欄位） | `SELECT column_name FROM information_schema.columns WHERE table_name = 'ranking_scores' AND column_name LIKE 'llm_%';` | 只有 `llm_final_score` 和 `llm_snippet` | |
+
+**後端驗證**（A4 點擊後，查 click 記錄）：
+
+| # | 驗證項目 | SQL | 預期 | Pass? |
+|---|---------|-----|------|:-----:|
+| A11 | click 事件有記錄 | `SELECT interaction_type, user_id, org_id FROM user_interactions ORDER BY interaction_timestamp DESC LIMIT 1;` | interaction_type = 'click'、user_id/org_id = 真實 UUID | |
+
+**後端驗證**（A5 按讚/踩後）：
+
+| # | 驗證項目 | SQL | 預期 | Pass? |
+|---|---------|-----|------|:-----:|
+| A12 | feedback 有記錄 | `SELECT rating, user_id, org_id, query_id FROM user_feedback ORDER BY created_at DESC LIMIT 1;` | rating = 'positive' 或 'negative'、user_id/org_id 有值 | |
 
 ---
 
-## 搜尋 + Analytics 寫入
+## B. Analytics API（瀏覽器 DevTools 或 curl）
+
+> 登入後在瀏覽器 URL 直接輸入以下網址，或用 DevTools Console 的 `fetch()`。
 
 | # | 操作 | 預期結果 | Pass? |
 |---|------|---------|:-----:|
-| A1 | `curl -s "https://twdubao.com/ask?query=台灣AI產業趨勢&site=cna&mode=search" -b cookies.txt --max-time 60` | SSE streaming 回應，有 `begin-nlweb-response` | |
-| A2 | 查 `queries` 表：`SELECT query_id, query_text, user_id, org_id, query_length_chars, query_length_words, has_temporal_indicator, embedding_model, latency_total_ms FROM queries ORDER BY timestamp DESC LIMIT 1;` | user_id/org_id 為真實 UUID（非 anonymous）、query_length_chars > 0、embedding_model = 'qwen3-4b'、latency_total_ms > 0 | |
-| A3 | 查 `retrieved_documents` 表：`SELECT COUNT(*), MIN(retrieval_position), MAX(retrieval_position) FROM retrieved_documents WHERE query_id = '<A2 的 query_id>';` | COUNT > 0（有文件被 retrieve） | |
-| A4 | 查 `retrieved_documents` 細節：`SELECT doc_url, retrieval_algorithm, doc_length, has_author, vector_similarity_score, bm25_score FROM retrieved_documents WHERE query_id = '<query_id>' LIMIT 3;` | retrieval_algorithm = 'postgres_hybrid'、doc_length > 0 | |
-| A5 | 查 `ranking_scores` 表：`SELECT doc_url, ranking_position, llm_final_score, ranking_method FROM ranking_scores WHERE query_id = '<query_id>' AND ranking_method = 'llm' ORDER BY ranking_position LIMIT 5;` | ranking_position > 0（非全 0）、llm_final_score > 0、ranking_method = 'llm' | |
-| A6 | 確認 ranking_scores 無 LLM 子分數欄位：`SELECT column_name FROM information_schema.columns WHERE table_name = 'ranking_scores' AND column_name LIKE 'llm_%';` | 只有 `llm_final_score` 和 `llm_snippet`，無 `llm_relevance_score` 等 5 個舊欄位 | |
+| B1 | 瀏覽器開 `https://twdubao.com/api/analytics/stats?days=7` | JSON：total_queries > 0、avg_latency_ms > 0 | |
+| B2 | 瀏覽器開 `https://twdubao.com/api/analytics/queries?limit=3` | JSON 陣列：最近 3 筆查詢，含 query_text、latency | |
+| B3 | 瀏覽器開 `https://twdubao.com/api/analytics/export_training_data?days=7` | 下載 CSV 檔。開啟確認：header 有 `bm25_score`（非 `text_search_score`）、`latency_total_ms`（非 `query_latency_ms`） | |
+| B4 | 瀏覽器開 `https://twdubao.com/api/ranking/pipeline/<A6 的 query_id>` | JSON：含 ranking 細節、llm_final_score、ranking_method | |
 
-## Analytics REST API
+---
 
-| # | 操作 | 預期結果 | Pass? |
-|---|------|---------|:-----:|
-| A7 | `curl -s "https://twdubao.com/api/analytics/stats?days=1" -b cookies.txt \| python -m json.tool` | total_queries > 0、avg_latency_ms > 0 | |
-| A8 | `curl -s "https://twdubao.com/api/analytics/queries?limit=3" -b cookies.txt \| python -m json.tool` | 回傳最近查詢列表，含 query_text、latency | |
-| A9 | `curl -s "https://twdubao.com/api/analytics/export_training_data?days=1" -b cookies.txt \| head -2` | CSV 格式。Header 含 `bm25_score`（非 `text_search_score`）、`latency_total_ms`（非 `query_latency_ms`） | |
+## C. B2B 欄位存在性（一次性確認）
 
-## B2B 欄位驗證
+> Schema 檢查，只需在 analytics 改動部署後做一次。
 
-| # | 操作 | 預期結果 | Pass? |
-|---|------|---------|:-----:|
-| A10 | 查 `user_interactions` schema：`SELECT column_name FROM information_schema.columns WHERE table_name = 'user_interactions' AND column_name IN ('user_id', 'org_id');` | 兩個欄位都存在 | |
-| A11 | 查 `user_feedback` schema：`SELECT column_name FROM information_schema.columns WHERE table_name = 'user_feedback' AND column_name IN ('query_id', 'user_id', 'org_id');` | 三個欄位都存在 | |
-| A12 | 在前端點擊搜尋結果（觸發 click event）→ 查 `user_interactions`：`SELECT query_id, user_id, org_id, interaction_type FROM user_interactions ORDER BY interaction_timestamp DESC LIMIT 1;` | user_id/org_id 為真實 UUID、interaction_type = 'click' | |
-
-## Ranking Pipeline API
-
-| # | 操作 | 預期結果 | Pass? |
-|---|------|---------|:-----:|
-| A13 | `curl -s "https://twdubao.com/api/ranking/pipeline/<A2 的 query_id>" -b cookies.txt \| python -m json.tool` | 回傳 pipeline 細節（含 llm_final_score、ranking_method） | |
+| # | 驗證項目 | SQL | 預期 | Pass? |
+|---|---------|-----|------|:-----:|
+| C1 | user_interactions 有 B2B 欄位 | `SELECT column_name FROM information_schema.columns WHERE table_name = 'user_interactions' AND column_name IN ('user_id', 'org_id');` | 兩個都存在 | |
+| C2 | user_feedback 有 B2B 欄位 | `SELECT column_name FROM information_schema.columns WHERE table_name = 'user_feedback' AND column_name IN ('query_id', 'user_id', 'org_id');` | 三個都存在 | |
 
 ---
 
 ## 注意事項
 
-- **A3-A5 需要 indexed data**：VPS 沒有 indexed data 時 retrieval 回 0 結果，子表為空是正常的
-- **A12 需要前端操作**：用瀏覽器登入後點擊搜尋結果，curl 無法觸發 click event
-- **本地測試**：不需要 VPS，啟動 local server（`python app-file.py`）用 SQLite 即可跑全部測試
+- **A7-A9 需要 indexed data**：VPS 沒有 indexed data 時 retrieval 回 0 結果，子表為空是正常的。等全量 indexing 完成後再驗證。
+- **A11 需要真的點擊結果**：前端的 click event handler 才會觸發 POST /api/analytics/event
+- **A12 需要按讚/踩按鈕**：如果前端沒有這個 UI，此項跳過
+- **B 系列可以用瀏覽器直接開**：登入狀態下 cookie 會自動帶，不需要 curl
+- **本地測試**：啟動 local server（`cd code/python && python app-file.py`）用 SQLite 即可跑，不需 VPS
