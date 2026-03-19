@@ -90,6 +90,15 @@ Code 修改 → Unit Test (TDD) → Smoke Test → Agent E2E (DevTools) → 修 
 5. **CEO 人工 E2E**：CEO 跑 `docs/e2etest.md` 的人工 checklist，標記 Pass/Fail。
 6. **全部 Pass → 標記完成**：status.md 改為「已完成」。
 
+### 環境驗證（E2E 前必做）
+
+啟動 server 前：
+1. `netstat -ano | grep ":8000.*LISTENING"` → kill 舊 process
+2. `export POSTGRES_CONNECTION_STRING="postgresql://nlweb:nlweb_dev@localhost:5432/nlweb"`
+3. 啟動 server 後，搜一次 → 查 log 確認無 `qdrant_client` 錯誤
+
+**為什麼**：缺 env var 會 fallback 到 Qdrant，所有 PG 相關修復都不會被測到。
+
 ### 派工 E2E agent 的 prompt 模板
 
 ```

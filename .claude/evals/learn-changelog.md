@@ -31,6 +31,16 @@
 
 **得分**：5/5
 
+## 2026-03-19 — 第五次評估（session 尾聲：env var lesson + e2etest 修正）
+
+- 1. Staleness verification 層級 1 有做嗎？→ **Y**（e2etest.md S5 CoV config 修正 + 注意事項加 env var checklist）
+- 2. 有 lesson 時，寫進了正確的 lessons-*.md？→ **Y**（1 lesson：env var 缺失導致測錯 backend）
+- 3. decisions.md 計數有更新嗎？→ **NA**
+- 4. 跨文件引用有用 indexer 搜確認嗎？→ **Y**（POSTGRES_CONNECTION_STRING）
+- 5. 完成後輸出格式完整？→ **Y**
+
+**得分**：5/5
+
 ## 2026-03-19 — 第四次評估（前端品牌審計 session）
 
 - 1. Staleness verification 層級 1 有做嗎？→ **NA**（本次 session 沒改 code，無受影響 spec 需驗證）

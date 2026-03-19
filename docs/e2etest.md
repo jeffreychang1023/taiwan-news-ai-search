@@ -393,8 +393,8 @@
 
 | #    | 操作                                                                               | 預期結果                          | Pass? |
 | ---- | -------------------------------------------------------------------------------- | ----------------------------- |:-----:|
-| S5-5 | 臨時改 `config/config_reasoning.yaml` 的 `enable_cov: true` + 搜一個資料少的冷門主題 | CoV 更容易 fail → banner 更可能出現    |       |
-| S5-6 | 測完後改回原 config                                                                    | 確認 config 恢復                   |       |
+| S5-5 | CoV 預設已開啟（`cov_lite_enabled: true`），搜一個資料少的冷門主題 | CoV 更容易 fail → banner 更可能出現    |       |
+| S5-6 | ~~測完後改回原 config~~ 不需要（已預設開啟）                                                      |                    |       |
 
 ---
 
@@ -404,8 +404,11 @@
 - **S2 日期測試有時效性**：「最近三天」的結果取決於 indexed data 的日期範圍。如果最新資料是一個月前的，測試結果會不符預期。建議先確認 `SELECT MAX(date_published) FROM articles;`。
 - **S3 MMR 需要多來源**：如果 PG 只有 chinatimes 的資料（目前狀態），MMR 無法展示跨來源多元性。需要等多來源 indexing 完成。
 - **S5 CoV 不一定觸發 fail**：verification_status 的 warning banner 只在 CoV 判定 unverified/partially_verified 時出現。大多數正常查詢會 pass。可用 SSE `final_result` 的 JSON 確認欄位是否存在（S5-4）來驗證管線通了。
-- **本地測試**：`cd code/python && python app-file.py` → `localhost:8000`。需要 PG 有 indexed data。
-- **啟動前必殺舊 process**：`netstat -ano | grep ":8000.*LISTENING"` 確認無殘留。多個 server 搶同一 port 會導致不穩定。
+- **本地測試環境 checklist**（缺任何一項 → 測試結果無效）：
+  1. 殺舊 process：`netstat -ano | grep ":8000.*LISTENING"` → kill 全部
+  2. 設環境變數：`export POSTGRES_CONNECTION_STRING="postgresql://nlweb:nlweb_dev@localhost:5432/nlweb"`
+  3. 啟動：`cd code/python && python app-file.py` → `localhost:8000`
+  4. 驗證 backend：搜一次 → 查 server log **無** `qdrant_client ERROR`（有 → 走錯 backend，測試無效）
 
 ---
 

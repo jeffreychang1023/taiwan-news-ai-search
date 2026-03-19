@@ -328,4 +328,11 @@ type: feedback
 **信心**：高（CEO 直接指正，本次 session 踩坑 3 次）
 **日期**：2026-03-19
 
+### 環境變數缺失 → 整個測試 session 測錯 backend
+**問題**：本地 server 啟動時沒設 `POSTGRES_CONNECTION_STRING`，系統 fallback 到 Qdrant Cloud。Agent E2E 跑了三輪測試（包括 cosine threshold、URL dedup 等），結果全部是在測 Qdrant 而不是 PG — 所有「改善」和「PASS」都是假的。直到 CEO 人工測試發現 server log 有 `qdrant_client ERROR`（dimension mismatch 1536 vs 1024）才揭露。
+**解決方案**：(1) 本地 E2E 測試前必須確認 `POSTGRES_CONNECTION_STRING` 環境變數已設。(2) Server 啟動後第一件事：查 log 確認走哪個 retrieval provider（看到 `qdrant` 還是 `postgres`）。(3) 在 `docs/e2etest.md` 注意事項加環境變數 checklist。
+**通則**：**E2E 測試的前提是環境正確。** 如果環境錯了，所有測試結果都是假的。啟動測試前先驗證環境，再跑測試。
+**信心**：高（本次直接踩坑，3 輪 agent E2E 白跑）
+**日期**：2026-03-19
+
 *最後更新：2026-03-19*
