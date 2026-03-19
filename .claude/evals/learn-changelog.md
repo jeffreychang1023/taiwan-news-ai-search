@@ -20,3 +20,13 @@
 - 5. 完成後輸出格式完整？→ **Y**
 
 **得分**：5/5（含 NA 項）
+
+## 2026-03-19 — 第三次評估（session 後半：yyyy_mm + E2E）
+
+- 1. Staleness verification 層級 1 有做嗎？→ **Y**（搜 time_range_extractor 和 combinedData 引用）
+- 2. 有 lesson 時，寫進了正確的 lessons-*.md？→ **Y**（3 個 lesson 寫入 lessons-general.md）
+- 3. decisions.md 計數有更新嗎？→ **Y**（49→50，E2E Gate 決策）
+- 4. 跨文件引用有用 indexer 搜確認嗎？→ **Y**
+- 5. 完成後輸出格式完整？→ **Y**
+
+**得分**：5/5

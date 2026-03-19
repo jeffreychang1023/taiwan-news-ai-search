@@ -440,13 +440,25 @@ class PgVectorClient(RetrievalClientBase):
         kwargs_filters = kwargs.get('filters', [])
         filter_clauses, filter_params = self._build_filters(sites, query_params, kwargs_filters=kwargs_filters)
 
+        # Read cosine similarity threshold from config (default 0.40)
+        vector_similarity_min = float(
+            CONFIG.retrieval_threshold.get('vector_similarity_min', 0.40)
+        )
+
         async def _search_docs(conn):
             async with conn.cursor(row_factory=dict_row) as cur:
                 await cur.execute("SET ivfflat.probes = 50")
 
                 # --- Vector search ---
-                where_sql = ("WHERE " + " AND ".join(filter_clauses)) if filter_clauses else ""
+                # Build filter WHERE clauses; cosine threshold is added separately below
+                filter_where_sql = ("WHERE " + " AND ".join(filter_clauses)) if filter_clauses else ""
                 embedding_col = ", c.embedding" if include_vectors else ""
+                # Combine filter clauses with cosine threshold filter
+                threshold_clause = "1 - (c.embedding <=> %s::vector) >= %s"
+                if filter_clauses:
+                    where_sql = "WHERE " + " AND ".join(filter_clauses) + f" AND {threshold_clause}"
+                else:
+                    where_sql = f"WHERE {threshold_clause}"
                 vector_sql = f"""
                     SELECT c.id AS chunk_id, c.article_id, c.chunk_text,
                            a.url, a.title, a.author, a.source, a.date_published, a.metadata,
@@ -457,7 +469,9 @@ class PgVectorClient(RetrievalClientBase):
                     ORDER BY c.embedding <=> %s::vector
                     LIMIT %s
                 """
-                vector_params = [query_embedding] + filter_params + [query_embedding, num_results]
+                # Params: score SELECT embedding, filter params, threshold embedding, threshold value,
+                #         ORDER BY embedding, LIMIT
+                vector_params = [query_embedding] + filter_params + [query_embedding, vector_similarity_min, query_embedding, num_results]
                 await cur.execute(vector_sql, vector_params)
                 vector_rows = await cur.fetchall()
 
@@ -510,6 +524,24 @@ class PgVectorClient(RetrievalClientBase):
                     if row["chunk_id"] not in seen_chunk_ids:
                         seen_chunk_ids.add(row["chunk_id"])
                         merged.append(row)
+
+                # --- URL dedup: keep only the highest-score chunk per article URL ---
+                url_best: dict = {}
+                for row in merged:
+                    url = row["url"]
+                    score = float(row.get("vector_score") or row.get("text_score") or 0.0)
+                    if url not in url_best or score > url_best[url]["_best_score"]:
+                        url_best[url] = {"row": row, "_best_score": score}
+                merged = [entry["row"] for entry in url_best.values()]
+
+                # --- Quality gate: filter out results below minimum thresholds ---
+                # Prevents gibberish queries from returning irrelevant results via text search path
+                TEXT_SCORE_MIN = 0.05  # minimum pg_bigm similarity for text-only results
+                merged = [
+                    row for row in merged
+                    if float(row.get("vector_score") or 0.0) >= vector_similarity_min
+                    or float(row.get("text_score") or 0.0) >= TEXT_SCORE_MIN
+                ]
 
                 results = []
                 for row in merged:

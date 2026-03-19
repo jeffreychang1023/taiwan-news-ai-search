@@ -334,6 +334,11 @@ class AppConfig:
         # Get the write endpoint for database modifications
         self.write_endpoint: str = data.get("write_endpoint", None)
 
+        # Load retrieval threshold parameters
+        self.retrieval_threshold: Dict[str, Any] = data.get("retrieval_threshold", {
+            "vector_similarity_min": 0.40
+        })
+
         # Load BM25 parameters
         self.bm25_params: Dict[str, Any] = data.get("bm25_params", {
             "enabled": True,

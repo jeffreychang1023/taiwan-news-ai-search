@@ -448,3 +448,28 @@
 | 2 | S2 前端文章不顯示 | Frontend bug | Medium |
 | 3 | S1 gibberish 仍回結果 | 缺 relevance threshold | Medium（新 issue） |
 | 4 | S5 Deep Research 待重測 | 未測 | — |
+
+---
+
+## 2026-03-19 — 修復後第二輪 E2E（F1-F4 修復驗證）
+
+**環境**：同上（localhost:8000）
+**修復內容**：F1 cosine threshold + F2 URL dedup + F3 title+source dedup（sendAnswers 層） + F4 frontend Array.isArray
+
+### 結果總表
+
+| 場景 | 第一輪 | 第二輪 | 改善 |
+|------|--------|--------|------|
+| S1 零結果 | 10 篇 + AI 摘要 | 2 篇 + AI 摘要 | **80% reduction**，threshold 有效但 gibberish embedding similarity 仍 >=0.40 |
+| S2 日期篩選 | JS crash + 0 篇 | 無 JS crash + 0 篇 | **F4 前端修復成功**，後端 answer.items=[] 是另一個問題 |
+| S3 重複文章 | 10 篇（5 unique x2-3） | **5 篇無重複** | **PASS — dedup 完全生效** |
+| S4 繁中 | PASS | PASS | 維持 |
+
+### 仍有的問題
+
+| # | 問題 | 根因 | 優先級 |
+|---|------|------|--------|
+| 1 | S1 gibberish 仍回 2 篇 | Embedding model 對 gibberish 產出 cosine >=0.40 的向量。threshold 從 0.40 調高可解，但 CEO 指示「最少 40%，之後再調」 | Low（可調 config） |
+| 2 | S2 後端 answer.items=[] | 後端找到 7 篇但 `answer` SSE event 回空 items。可能是 summarize mode 的 response 結構問題 | Medium（待查） |
+| 3 | S5 Deep Research | 未重測（之前 hang 可能是 port 衝突） | Medium（待測） |
+| 4 | S5 Deep Research 待重測 | 未測 | — |

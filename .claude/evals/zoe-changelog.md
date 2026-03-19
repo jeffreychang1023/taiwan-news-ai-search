@@ -34,3 +34,14 @@
 - Pre-Dispatch Checklist 在 /zoe skill 本體中已存在，本次確實有逐項對照（spec 路徑、陷阱、skill 指示）。
 - 關鍵改善：#1 和 #2 上次失敗，本次通過。根因：啟動時完整讀取 delegation-patterns.md + lessons，派工時有上下文可用。
 - 串行化決策（P0→RSN-4、P1→P2）基於 delegation-patterns 的「同檔案禁止平行」原則，執行正確。
+
+## 2026-03-19 — 第三次評估（E2E 測試 + yyyy_mm 修復）
+
+### Eval 結果
+- 1. 派工 prompt 有附 spec 路徑 + superpowers skill 指示嗎？→ **Y**（yyyy_mm fix agent）
+- 2. 派工 prompt 有附模組特定陷阱嗎？→ **Y**（calendar.monthrange、mock handler 需求）
+- 3. 沒有自己寫超過 20 行 code？→ **N**（Array.isArray 一行直接改，合理但 technically N）
+- 4. subagent 結果有 review 後再回報？→ **Y**
+- 5. 回報時有提供技術判斷？→ **Y**（區分 P0 regression vs 新 issue、三層根因分析）
+
+**得分**：4/5（#3 一行改動直接改是合理的邊界 case）

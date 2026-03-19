@@ -25,6 +25,37 @@ from core.query_logger import get_query_logger
 logger = get_configured_logger("ranking_engine")
 
 
+def dedup_by_title_and_source(results: list) -> list:
+    """
+    Remove duplicate results that share the same (title, source) pair.
+
+    Chinatimes (and similar publishers) store the same article under multiple
+    URLs with different category codes (e.g. -260402 vs -260405).  The
+    retrieval-layer URL dedup cannot catch this because the URL strings differ,
+    so the same article can appear 2-3 times in ranked output.
+
+    Strategy:
+    - Key: (result['name'], result['site'])
+    - Keep only the result with the highest ranking score for each key.
+    - Articles from *different* sources with the same title are NOT merged
+      (they may represent different editorial perspectives).
+
+    Should be called after LLM scoring + sort, before MMR.
+    """
+    seen: dict = {}
+    for result in results:
+        key = (result.get('name', ''), result.get('site', ''))
+        score = result.get('ranking', {}).get('score', 0)
+        if key not in seen or score > seen[key].get('ranking', {}).get('score', 0):
+            seen[key] = result
+
+    deduplicated = list(seen.values())
+    removed = len(results) - len(deduplicated)
+    if removed > 0:
+        logger.info(f"Title dedup: removed {removed} duplicates")
+    return deduplicated
+
+
 @dataclass
 class RankingResult:
     """
@@ -112,6 +143,7 @@ The user's question is: {request.query}. The item's description is {item.descrip
         self.num_results_sent = 0
         self.rankedAnswers = []
         self.ranking_type = ranking_type
+        self._sent_title_keys = set()  # Track (name, site) to prevent sending duplicates
 
     async def rankItem(self, item):
 
@@ -260,7 +292,14 @@ The user's question is: {request.query}. The item's description is {item.descrip
             if self.num_results_sent + len(json_results) >= self.NUM_RESULTS_TO_SEND:
                 logger.info(f"Stopping at {len(json_results)} results to avoid exceeding limit of {self.NUM_RESULTS_TO_SEND}")
                 break
-                
+
+            # Title dedup gate: skip if same (name, site) already sent
+            title_key = (result.get("name", ""), result.get("site", ""))
+            if title_key in self._sent_title_keys:
+                logger.info(f"Send dedup: skipping already-sent '{title_key[0]}' from {title_key[1]}")
+                result['sent'] = True  # Mark as sent to prevent re-send
+                continue
+
             if self.shouldSend(result) or force:
                 result_item = {
                     "@type": "Item",
@@ -274,8 +313,9 @@ The user's question is: {request.query}. The item's description is {item.descrip
                 }
 
                 json_results.append(result_item)
-                
+
                 result["sent"] = True
+                self._sent_title_keys.add(title_key)
             
         if (json_results):  # Only attempt to send if there are results
             # Wait for pre checks to be done using event
@@ -418,6 +458,12 @@ The user's question is: {request.query}. The item's description is {item.descrip
                 query_logger.update_ranking_positions(self.handler.query_id, positions)
             except Exception as log_err:
                 logger.warning(f"Failed to update ranking positions: {log_err}")
+
+        # Title+source dedup: remove same-article duplicates from publishers
+        # that index the same content under multiple category-URL paths.
+        # Must run after LLM scoring (needs scores to pick the winner) and
+        # before MMR (MMR needs a clean deduplicated candidate set).
+        ranked = dedup_by_title_and_source(ranked)
 
         # Phase A: Apply XGBoost ML re-ranking (shadow mode - logs predictions without changing rankings)
         from core.config import CONFIG

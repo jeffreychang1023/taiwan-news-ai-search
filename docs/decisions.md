@@ -1,6 +1,6 @@
 # NLWeb 決策日誌
 
-> 從 Notion 決策日誌 DB 導出（2026-03-03）+ 持續更新。共 49 筆。
+> 從 Notion 決策日誌 DB 導出（2026-03-03）+ 持續更新。共 50 筆。
 > 欄位：Decision / Category / Modules / Date / Status / Reason / Tradeoff
 
 ---
@@ -277,6 +277,11 @@
 - **Reason**: 系統需發送 transactional email（帳號啟用、密碼重設、鎖定通知、邀請信）。`email_service.py` 已整合 Resend SDK，零改動可上線。自架 SMTP（Postfix）到達率差（無 IP reputation，企業信箱會進垃圾郵件），維護成本高。Resend 免費額度 3000 封/月，B2B 初期綽綽有餘。官方收信 email 用 Cloudflare Email Routing 免費轉寄到 Gmail。
 - **需要設定**：(1) Resend 帳號 + API key → VPS env var `RESEND_API_KEY` (2) Cloudflare DNS 加 SPF/DKIM/DMARC records（Resend 提供）(3) `RESEND_FROM_EMAIL=noreply@twdubao.com` (4) Cloudflare Email Routing 設 `support@twdubao.com` 轉寄
 - **Tradeoff**: 依賴第三方 SaaS（但 transactional email 量極小，免費額度足夠；到達率遠優於自架）
+
+### E2E Gate：程式碼改動在 E2E 測試通過前不算完成
+- **Category**: process | **Modules**: All | **Date**: 2026-03-19 | **Status**: active
+- **Reason**: 52 個 unit test 全過、smoke 17/17 PASSED，但 agent E2E 發現 3 個 unit test 無法抓到的問題（重複文章、前端 JS crash、日期篩選前端渲染失敗）。Unit test 只驗證模組內部邏輯，E2E 才能驗證端到端行為。
+- **Tradeoff**: 增加每次改動的驗證時間（agent E2E 10-20 分鐘 + CEO 人工 E2E），但避免「unit test 全過但 production 壞掉」的風險。Pipeline: Unit Test → Smoke → Agent E2E → fix → write e2etest.md → CEO 人工 E2E → Pass = 完成。
 
 ### Skill 策略：優化現有 skills，不新增。用 autoresearch 方法論迭代
 - **Category**: process | **Modules**: Claude Code Skills | **Date**: 2026-03-18 | **Status**: active

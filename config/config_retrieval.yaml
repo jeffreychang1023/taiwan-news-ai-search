@@ -1,5 +1,9 @@
 write_endpoint: postgres
 
+# Retrieval quality thresholds
+retrieval_threshold:
+  vector_similarity_min: 0.40  # Minimum cosine similarity for vector search results
+
 # BM25 keyword scoring parameters
 bm25_params:
   enabled: true           # Enable BM25 scoring (set to false to use old keyword boosting)

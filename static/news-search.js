@@ -1942,10 +1942,17 @@
                                         break;
 
                                     // Unified mode message types
-                                    case 'articles':
-                                        accumulatedData.content = data.content || [];
+                                    case 'articles': {
+                                        // Guard: data.content may arrive as a JSON string instead of a parsed array
+                                        let content = data.content;
+                                        if (typeof content === 'string') {
+                                            try { content = JSON.parse(content); } catch(e) { content = []; }
+                                        }
+                                        if (!Array.isArray(content)) content = [];
+                                        accumulatedData.content = content;
                                         if (onArticles) onArticles(accumulatedData.content);
                                         break;
+                                    }
                                     case 'summary':
                                         accumulatedData.summary = { message: data.content };
                                         if (onSummary) onSummary(accumulatedData.summary, accumulatedData.content?.length || 0);
@@ -2493,9 +2500,9 @@
             listView.innerHTML = '';
             if (timelineView) timelineView.innerHTML = '';
 
-            if (!articles || articles.length === 0) {
+            if (!Array.isArray(articles) || articles.length === 0) {
                 listView.innerHTML = '<div class="news-card"><div class="news-title">沒有找到相關文章</div></div>';
-                console.warn('[Progressive] No articles to render');
+                console.warn('[Progressive] No articles to render (articles is not an array or is empty):', typeof articles);
                 return;
             }
 
@@ -2877,8 +2884,9 @@
                     },
                     onArticles: (articles) => {
                         if (mySearchGeneration !== searchGenerationId) return;
-                        console.log('[Progressive] Articles received:', articles.length);
-                        renderArticlesProgressive(articles);
+                        const safeArticles = Array.isArray(articles) ? articles : [];
+                        console.log('[Progressive] Articles received:', safeArticles.length);
+                        renderArticlesProgressive(safeArticles);
                         loadingState.classList.remove('active');
                     },
                     onAnswer: (answerData, articleCount) => {

@@ -298,4 +298,25 @@ type: feedback
 **檔案**：`config/prompts.xml`
 **日期**：2026-03-19
 
+### Regex pattern 定義了但 handler 沒寫 — 同一個 silent fail pattern 的第四次
+**問題**：`time_range_extractor.py` L111 定義了 `'yyyy_mm': r'\d{4}年\d{1,2}月'` regex，匹配「2025年12月」沒問題。但 `_try_regex_parsing` 的 if/elif chain 沒有 `yyyy_mm` 的 handler。Regex match 了 → 進入 try block → 沒有 elif 匹配 → 靜默 fall through → 日期篩選無效。這是本次 session 的第四個 silent fail（前三個是 P0/P1/P2 的 Qdrant→PG 介面缺失）。
+**解決方案**：(1) 加 `yyyy_mm` handler（用 `calendar.monthrange()` 計算正確月末）。(2) 在 for loop 尾部加 `else` 分支：regex match 了但無 handler → `logger.warning("pattern matched but has no handler - this is a bug")`。**通則：定義功能接口（regex、API route、config key）時，必須同時寫 handler。如果做不到，至少要有 fall-through warning 讓問題浮現。**
+**信心**：高（E2E 驗證 + 8 tests）
+**檔案**：`core/query_analysis/time_range_extractor.py`
+**日期**：2026-03-19
+
+## E2E 測試流程（2026-03-19）
+
+### 背景 server 啟動必須先殺舊 process — port 累積導致不穩定
+**問題**：每次用 `run_in_background` 啟動 server 都沒有先 kill 舊的。結果 4 個 Python process 同時 LISTEN 在 port 8000，互相搶連線，server 行為不穩定（有時正常、有時 hang、有時立刻停止）。E2E agent 跑測試時 server 隨機掛掉。
+**解決方案**：啟動 server 前必須先 `netstat -ano | grep ":8000.*LISTENING"` + kill 所有舊 PID。**通則：背景 process 管理需要 kill-before-start 紀律。`run_in_background` 不等於「fire and forget」。**
+**信心**：高（修正後 server 穩定）
+**日期**：2026-03-19
+
+### E2E agent 測試發現 unit test 測不到的問題 — 重複文章 + 前端 JS crash
+**問題**：52 個 unit test 全過、smoke 17/17 PASSED，但 agent E2E 發現：(1) 同一篇文章以不同 URL 變體出現 2-3 次（indexing dedup 問題）。(2) `combinedData.content.filter is not a function`（前端 JS 把 string 當 array）。(3) 日期篩選後端正確回 7 篇但前端顯示 0 篇。這三個問題都是 unit test 的盲區 — 只有跑完整 E2E 才能抓到。
+**解決方案**：建立 E2E Gate 規則（寫入 delegation-patterns.md）：程式碼改動在 Agent E2E + CEO 人工 E2E 通過前不算完成。**通則：Unit test 驗證模組內部邏輯正確，E2E 驗證端到端行為正確。兩者不可互相替代。**
+**信心**：高（本次直接驗證）
+**日期**：2026-03-19
+
 *最後更新：2026-03-19*
