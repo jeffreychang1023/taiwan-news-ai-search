@@ -255,4 +255,17 @@ type: feedback
 **信心**：高（本次實際操作驗證）
 **日期**：2026-03-19
 
+### `.claude/commands/` 下的 .md 會被自動註冊為 slash commands
+**問題**：把 eval.md 放在 `.claude/commands/` 下（如 `learn-eval.md`、`zoe-eval.md`），結果 Claude Code 自動把它們當作 slash commands 註冊：`/eval`、`/zoe-eval`。這不是預期行為 — eval 檔案是評分標準，不是指令。
+**解決方案**：把 eval 檔案移到 `.claude/evals/` 目錄（不在 `commands/` 下）。`commands/` 目錄只放真正的 slash command 定義（/learn、/zoe 等），不放 helper 文件、eval 標準或參考資料。
+**信心**：高（本次直接踩坑後驗證）
+**日期**：2026-03-19
+
+### Binary Eval 設計原則 — 避免表面症狀與模糊標準
+**問題**：設計 /zoe-eval 時，初版包含「有沒有簽名」（表面症狀）和「有沒有跟 CEO 討論」（模糊）兩項 eval。實際測試時：(1) context rot 讓 AI 忘了簽名但核心行為正確 → 表面症狀 pass/fail 不代表 skill 品質。(2) 「有沒有討論」取決於任務性質 → 無法明確判斷 Y/N。
+**解決方案**：Binary eval 的設計標準：每項必須可明確判斷 Y/N，且與 skill 的核心行為直接相關（不是副產品）。好的 eval 問「做了什麼」（派工 prompt 附了 spec 路徑嗎？），壞的 eval 問「有沒有這個特徵」（有簽名嗎？）。刪除「簽名檢查」，改為「技術判斷品質」和「subagent review」。
+**通則**：**Eval 衡量的是核心行為，不是表面症狀。** 可觀察行為 > 間接指標。
+**信心**：高（CEO 直接確認修訂方向）
+**日期**：2026-03-19
+
 *最後更新：2026-03-19*

@@ -20,6 +20,7 @@ description: |
 - **直接調用 Skill tool**：Zoe 本人不調用 Skill tool（會覆蓋 Zoe 人格）。技術工作透過 Agent tool 派 subagent，subagent 內部才調用 skill。
 - **忘記跟 CEO 討論 best practice**：涉及技術方向、新方法論、架構選擇時，先跟 CEO 討論再派工，不要自己判斷就直接派。
 - **派工缺少 coding/testing context**：subagent 是全新 context，CLAUDE.md 裡的規則（smoke test、indexer 搜尋、不可 silent fail）subagent 會讀到。但模組特定陷阱、架構決策背景、該用哪個 superpowers skill，這些 CLAUDE.md 沒有，必須寫進 prompt。
+- **/learn 不要派 subagent**：subagent 沒有對話 context，會遺漏 nuance 和隱性 lessons。/learn 由 Zoe 自己做。
 
 ---
 
@@ -66,6 +67,7 @@ description: |
 | 回答問題、討論、解釋架構 | 直接回答，引用 decisions.md / spec |
 | 查狀態、查進度 | 讀 status.md 摘要回報 |
 | 記錄決策 | 直接寫 docs/decisions.md |
+| **/learn** | **自己做**（需要完整對話 context，subagent 會遺漏 nuance） |
 | 簡單單檔案修改（< 20 行） | 直接用 Edit tool |
 | 讀程式碼、讀文件 | 直接用 Read tool |
 | 技術判斷、方向建議 | 直接回答 |

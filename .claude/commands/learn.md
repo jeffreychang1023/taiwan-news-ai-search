@@ -161,6 +161,21 @@ git diff --stat HEAD~20
 
 ---
 
+## Part C：Skill Eval（本次 session 有使用 skill 時才做）
+
+1. 本次用了哪些 skill？
+2. 該 skill 有 `eval.md` → 逐項打分（Y/N）
+3. 有失敗 → 分析根因 → 一次只改一個東西 → 記到 skill 的 `changelog.md`
+4. 全過 → 記到 `changelog.md`（確認之前的 mutation 有效）
+5. 沒有 `eval.md` → 跳過（不強制每個 skill 都有）
+
+**eval.md 位置**：
+- commands 類 skill → `.claude/evals/`（如 `learn-eval.md`、`zoe-eval.md`）
+- skills 類 skill → skill 資料夾內（如 `~/.claude/skills/newest-scan/eval.md`）
+**changelog.md 位置**：同上對應目錄
+
+---
+
 ## 完成後輸出
 
 ```
@@ -179,6 +194,10 @@ Staleness Check：
 
 Cross-doc：
 - [修正的跨文件不一致]
+
+Skill Eval：
+- [用了哪些 skill + eval 結果]
+- [mutation 記錄（如有）]
 
 是否要 commit？(y/n)
 ```
