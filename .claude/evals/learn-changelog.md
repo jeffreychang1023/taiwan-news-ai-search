@@ -30,3 +30,13 @@
 - 5. 完成後輸出格式完整？→ **Y**
 
 **得分**：5/5
+
+## 2026-03-19 — 第四次評估（前端品牌審計 session）
+
+- 1. Staleness verification 層級 1 有做嗎？→ **NA**（本次 session 沒改 code，無受影響 spec 需驗證）
+- 2. 有 lesson 時，寫進了正確的 lessons-*.md？→ **NA**（無技術 lesson，品牌審計結果寫入 reference_brand_spec.md）
+- 3. decisions.md 計數有更新嗎？→ **NA**（無新決策）
+- 4. 跨文件引用有用 indexer 搜確認嗎？→ **NA**（新建 reference 檔案，無跨文件引用需更新）
+- 5. 完成後輸出格式完整？→ **Y**
+
+**得分**：5/5（含 NA 項）

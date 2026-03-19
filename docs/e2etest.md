@@ -472,4 +472,35 @@
 | 1 | S1 gibberish 仍回 2 篇 | Embedding model 對 gibberish 產出 cosine >=0.40 的向量。threshold 從 0.40 調高可解，但 CEO 指示「最少 40%，之後再調」 | Low（可調 config） |
 | 2 | S2 後端 answer.items=[] | 後端找到 7 篇但 `answer` SSE event 回空 items。可能是 summarize mode 的 response 結構問題 | Medium（待查） |
 | 3 | S5 Deep Research | 未重測（之前 hang 可能是 port 衝突） | Medium（待測） |
+
+---
+
+## 2026-03-19 — 第三輪 E2E（DB 清理 + S2 修復 + Deep Research）
+
+**環境**：同上。DB 已清理重複（325K→163K articles, 1.1M→561K chunks）
+**修復內容**：DB dedup cleanup + indexing title+source pre-check + S2 frontend TDZ fix + fallback rendering
+
+### 結果總表
+
+| 場景 | 結果 | 備註 |
+|------|------|------|
+| S1 零結果 | 邊界 PASS | 2 篇（threshold 0.40 內），無重複 |
+| S2 日期篩選 | **N/A** | DB 無 2025-12 資料（2025-11 直接跳 2026-02）。前端 JS 修好（無 ReferenceError），需用有資料的月份重測 |
+| S3 重複 | **PASS** | 10 篇全唯一，DB 清理生效 |
+| S4 繁中 | **PASS** | 全繁中，無重複 |
+| S5 Deep Research | **PASS** | 完整 5 章報告 + 42 來源 + 審查警告正常顯示。之前 hang 確認是 port 衝突 |
+
+### DB 清理結果
+
+| | Before | After |
+|---|--------|-------|
+| Articles | 325,548 | 163,145 |
+| Chunks | 1,112,405 | 560,905 |
+| Duplicates | 162,403 rows | 0 |
+
+### Indexing 防護
+`postgresql_uploader.py` 新增 title+source pre-check：同 title+source 的文章不重複 insert。
+
+### S2 注意事項
+DB 日期分佈不連續（2025-12 無資料）。人工 E2E 建議用「2025年11月 台灣」或「2024年8月 經濟」等有資料的月份測試。
 | 4 | S5 Deep Research 待重測 | 未測 | — |

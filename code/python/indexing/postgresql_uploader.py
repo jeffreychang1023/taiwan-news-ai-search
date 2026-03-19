@@ -216,6 +216,17 @@ class PostgreSQLUploader:
         }
 
         try:
+            # Title+source dedup: skip if same article already exists under a different URL
+            title = article.headline or ""
+            if title:
+                existing = conn.execute(
+                    "SELECT id FROM articles WHERE title = %(title)s AND source = %(source)s LIMIT 1",
+                    {"title": title, "source": site},
+                ).fetchone()
+                if existing:
+                    logger.info(f"Title dedup: '{title}' already exists (id={existing['id']}), skipping URL {article.url}")
+                    return existing["id"]
+
             result = conn.execute(
                 """
                 INSERT INTO articles (url, title, author, source, date_published, content, metadata)

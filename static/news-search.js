@@ -2877,20 +2877,29 @@
                 }
 
                 // Phase 4: Progressive rendering callbacks
+                let lastReceivedArticles = [];  // Shared between onArticles and onAnswer for fallback rendering
                 const callbacks = {
                     onProgress: (stage, message, percent) => {
                         if (mySearchGeneration !== searchGenerationId) return;
                         updateProgressMessage(message);
                     },
                     onArticles: (articles) => {
-                        if (mySearchGeneration !== searchGenerationId) return;
                         const safeArticles = Array.isArray(articles) ? articles : [];
+                        lastReceivedArticles = safeArticles;  // Store for fallback in onAnswer
+                        if (mySearchGeneration !== searchGenerationId) return;
                         console.log('[Progressive] Articles received:', safeArticles.length);
                         renderArticlesProgressive(safeArticles);
                         loadingState.classList.remove('active');
                     },
                     onAnswer: (answerData, articleCount) => {
                         if (mySearchGeneration !== searchGenerationId) return;
+                        // Fallback: if articles arrived but weren't rendered (stale-guard race), render now
+                        const listView = document.getElementById('listView');
+                        const hasCards = listView && listView.querySelectorAll('.news-card:not(.skeleton-card)').length > 0;
+                        if (!hasCards && lastReceivedArticles.length > 0) {
+                            console.log('[Progressive] Fallback: rendering articles missed by onArticles guard');
+                            renderArticlesProgressive(lastReceivedArticles);
+                        }
                         if (answerData?.answer) {
                             console.log('[Progressive] Answer received');
                             renderAnswerProgressive(answerData, articleCount);
