@@ -276,3 +276,121 @@
 | E8-5 | 輸入新密碼 + 確認密碼 → submit                   | 顯示「密碼已重設」→ 2 秒後自動跳轉首頁                 |       |
 | E8-6 | 用新密碼登入                                  | 成功                                    |       |
 | E8-7 | **改回原密碼**（重複忘記密碼流程或用「變更密碼」）             | 避免下次測試密碼不對                            |       |
+
+---
+
+---
+
+# 搜尋品質 E2E 測試 Checklist
+
+> 人工測試用。搜尋/排序/Reasoning 相關改動後跑一遍。
+> **前提**：VPS 必須有 indexed data（全量 indexing 完成後）。本地測試需啟動 server + PG 有資料。
+
+**測試 URL**: https://twdubao.com（或 `localhost:8080`）
+**Admin 帳號**: admin@twdubao.com / Twdubao2026!
+**建議**: 用 Chrome DevTools Console + Network tab 觀察
+
+---
+
+## S1. 零結果不 hallucinate（P0 修復驗證）
+
+> 驗證 retrieval 0 結果時不會生成虛假回應。
+> 需要一個保證搜不到結果的查詢。
+
+| #    | 操作（瀏覽器）                             | 預期結果                                                      | Pass? |
+| ---- | ------------------------------------- | ----------------------------------------------------------- |:-----:|
+| S1-1 | 搜尋完全無關的 gibberish：「xyzzy12345 qwrtp」 | **不應顯示**「基於 N 則報導生成」的研究報告                                  |       |
+| S1-2 | 觀察回應內容                               | 應顯示「找不到相關結果」或類似空結果提示，**不應有 hallucinated 內容**                |       |
+| S1-3 | DevTools Console                       | 無 Writer/Analyst agent 錯誤 log（pipeline 應在 guard 階段就返回）      |       |
+
+**Deep Research 版本**：
+
+| #    | 操作（瀏覽器）                                     | 預期結果                                                             | Pass? |
+| ---- | --------------------------------------------- | ------------------------------------------------------------------ |:-----:|
+| S1-4 | 切換到 Deep Research 模式 → 搜「xyzzy12345 qwrtp」   | 應顯示無法找到相關資料的訊息，**不應有虛假研究報告**                                      |       |
+| S1-5 | 觀察 SSE stream（DevTools Network → EventStream） | 應收到 `no_results` 或 error 類型 event，**不應收到 `final_result` + 假來源清單** |       |
+
+---
+
+## S2. 日期篩選有效（P1 修復驗證）
+
+> 驗證時間相關查詢確實做日期篩選。
+> 需要 PG 有不同日期的文章。
+
+| #    | 操作（瀏覽器）                    | 預期結果                                              | Pass? |
+| ---- | ---------------------------- | --------------------------------------------------- |:-----:|
+| S2-1 | 搜「台灣 AI 最近三天」              | 結果列表中的文章日期都在最近 3 天內                                 |       |
+| S2-2 | 搜「2025 年 12 月 台積電」         | 結果主要集中在 2025-12 月                                   |       |
+| S2-3 | 搜不帶日期的通用查詢「半導體產業趨勢」        | 結果不限特定日期範圍（跟 S2-1/S2-2 對比，確認 filter 只在有時間意圖時啟動）   |       |
+
+**後端驗證**（S2-1 完成後，SSH 查 analytics）：
+
+| #    | 驗證項目                   | SQL                                                                                                              | 預期                                              | Pass? |
+| ---- | ---------------------- | ---------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- |:-----:|
+| S2-4 | 時間意圖被正確偵測              | `SELECT has_temporal_indicator FROM queries ORDER BY timestamp DESC LIMIT 1;`                                     | has_temporal_indicator = true（S2-1）或 1           |       |
+| S2-5 | retrieved_documents 日期正確 | `SELECT doc_url, doc_date FROM retrieved_documents WHERE query_id = '<S2-1 的 query_id>' ORDER BY doc_date DESC;` | doc_date 都在最近 3 天內                              |       |
+
+---
+
+## S3. MMR 多元性（P2 修復驗證）
+
+> 驗證搜尋結果不全來自同一來源。
+> 需要 PG 有多個來源的 indexed data。
+
+| #    | 操作（瀏覽器）                  | 預期結果                                                | Pass? |
+| ---- | -------------------------- | ----------------------------------------------------- |:-----:|
+| S3-1 | 搜廣泛主題「台灣經濟」              | 結果列表中有 **2 個以上不同來源**（如 CNA + LTN + UDN）             |       |
+| S3-2 | 觀察結果卡片的來源標籤              | 不應全部是同一家媒體                                           |       |
+| S3-3 | 搜另一個廣泛主題「能源政策」           | 同上，至少 2 個不同來源                                        |       |
+
+**後端驗證**（S3-1 完成後）：
+
+| #    | 驗證項目               | SQL                                                                                                                                         | 預期                                              | Pass? |
+| ---- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- |:-----:|
+| S3-4 | MMR 有執行            | `SELECT ranking_method FROM ranking_scores WHERE query_id = '<query_id>' AND ranking_method = 'mmr' LIMIT 1;`                                | 有記錄（代表 MMR 有跑，不是 skip）                          |       |
+| S3-5 | 來源多元               | `SELECT DISTINCT source FROM retrieved_documents WHERE query_id = '<query_id>';`                                                             | 2 個以上不同 source                                  |       |
+| S3-6 | MMR diversity score | `SELECT ranking_position, mmr_diversity_score FROM ranking_scores WHERE query_id = '<query_id>' AND ranking_method = 'mmr' ORDER BY ranking_position;` | mmr_diversity_score 有值（非 NULL）                  |       |
+
+---
+
+## S4. 繁體中文回應（P3 修復驗證）
+
+> 驗證所有搜尋回應都是繁體中文。
+
+| #    | 操作（瀏覽器）                 | 預期結果                                             | Pass? |
+| ---- | ----------------------- | -------------------------------------------------- |:-----:|
+| S4-1 | 搜「semiconductor trends」 | 結果的摘要/描述是**繁體中文**，不是英文                             |       |
+| S4-2 | 搜「ESG carbon neutral」   | 結果摘要是繁中（即使查詢是英文）                                  |       |
+| S4-3 | 搜「台積電」                  | 結果摘要是繁中（確認中文查詢也正常）                                |       |
+| S4-4 | 切 Deep Research → 搜任意主題  | 研究報告全文是繁體中文，**無英文段落混入**                            |       |
+
+---
+
+## S5. Verification Status 提示（RSN-4 驗證）
+
+> 驗證 CoV 未驗證時前端顯示 warning banner。
+> **注意**：CoV 只在 Deep Research 模式觸發。不一定每次都 fail，需要一個容易觸發 unverified 的查詢。
+
+| #    | 操作（瀏覽器）                                | 預期結果                                                               | Pass? |
+| ---- | ---------------------------------------- | -------------------------------------------------------------------- |:-----:|
+| S5-1 | Deep Research → 搜一個有爭議性的主題（如「核電爭議」）    | 等研究報告完成                                                             |       |
+| S5-2 | 觀察報告上方                                  | 如果 CoV 判定 unverified → 應出現**黃色 warning banner**「本報告未經完整事實驗證」         |       |
+| S5-3 | 如果 CoV pass（verified）                   | 不應出現 warning banner（這是正常情況）                                          |       |
+| S5-4 | DevTools Network → 找 SSE `final_result` event | 檢查 JSON 中有 `verification_status` 欄位（"verified" 或 "unverified"）       |       |
+
+**強制測試法**（如果自然觸發困難）：
+
+| #    | 操作                                                                               | 預期結果                          | Pass? |
+| ---- | -------------------------------------------------------------------------------- | ----------------------------- |:-----:|
+| S5-5 | 臨時改 `config/config_reasoning.yaml` 的 `enable_cov: true` + 搜一個資料少的冷門主題 | CoV 更容易 fail → banner 更可能出現    |       |
+| S5-6 | 測完後改回原 config                                                                    | 確認 config 恢復                   |       |
+
+---
+
+## 注意事項
+
+- **S1-S5 全部需要 indexed data**：VPS 全量 indexing 完成前，只能用本地 server + 本地 PG 測試。
+- **S2 日期測試有時效性**：「最近三天」的結果取決於 indexed data 的日期範圍。如果最新資料是一個月前的，測試結果會不符預期。建議先確認 `SELECT MAX(date_published) FROM articles;`。
+- **S3 MMR 需要多來源**：如果 PG 只有 chinatimes 的資料（目前狀態），MMR 無法展示跨來源多元性。需要等多來源 indexing 完成。
+- **S5 CoV 不一定觸發 fail**：verification_status 的 warning banner 只在 CoV 判定 unverified/partially_verified 時出現。大多數正常查詢會 pass。可用 SSE `final_result` 的 JSON 確認欄位是否存在（S5-4）來驗證管線通了。
+- **本地測試**：`cd code/python && python app-file.py` → `localhost:8080`。需要 PG 有 indexed data。
