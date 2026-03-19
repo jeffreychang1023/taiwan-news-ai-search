@@ -2,7 +2,7 @@
 
 > 合併自 CONTEXT.md + NEXT_STEPS.md。單一狀態檔案。
 
-**最後更新**：2026-03-17
+**最後更新**：2026-03-19
 
 ---
 
@@ -12,74 +12,11 @@
 
 ### 最近完成
 
-- **Login Code Review 修復 + Session 切換**（2026-03-13）
-  - Code Review: CRITICAL(3) + HIGH(5) + MEDIUM(5) + LOW(2) 全部修復
-  - Deep Research 401 fix: 加入 PUBLIC_ENDPOINTS
-  - Session cleanup type error fix: time.time() → datetime
-  - Session 切換: cancel + retry button（三種 mode 都支援）
-- **UI Redesign Phase 1-4**（2026-03-13）
-  - 純視覺換皮：藍灰工具風 → 金炭品牌化（讀豹/雲豹主題）
-  - Phase 1: CSS 變數換色盤 + Noto Sans TC 字體
-  - Phase 2: 首頁主視覺（Banner + 雲豹吉祥物 + 報紙背景）
-  - Phase 3: 左側欄 icon 替換 + 右側 tab 深色底 + session B_Black.png 背景
-  - Phase 4: 全站硬編碼顏色掃描 + CSS 變數統一
-  - 檔案：`static/news-search.css`、`static/news-search-prototype.html`
-  - 素材：`static/images/`（12 張品牌素材）
-  - 計畫文件：`docs/plans/ui-redesign-plan.md`
-  - Branch: `feature/ui-redesign`（未 commit）
-- **GitHub Actions CI/CD Pipeline**（2026-03-13）
-  - Push to `main` → GitHub Actions → SSH deploy to VPS → Docker rebuild → Health check → LINE 通知
-  - 檔案：`.github/workflows/deploy.yml`
-  - Deploy SSH key（ed25519）+ VPS git repo 初始化（原為 SCP）
-  - LINE Bot push message 通知 success/failure
-  - 6 次迭代修復：SSH key 格式、health check port/retry、commit message shell escaping、YAML newline
-- **GCP Daily Cron**（2026-03-11）：每天 05:00 台灣時間自動 newest scan
-- **Analytics 系統完整清理**（2026-03-16）：
-  - Phase 0: schema 統一 — `schema_definitions.py` 作為 single source of truth（刪除 ~586 行重複）
-  - Phase 1: 3 Critical + 3 High + 2 Medium bugs 修復（export 壞掉、JOIN 膨脹、event loop blocking）
-  - Phase 2: 16 個幽靈欄位清理、`postgres_client.py` 補 analytics logging、ranking_position 修正
-  - Phase 3: B2B 欄位對齊（user_interactions + user_feedback 加 user_id/org_id）、feature_vectors 重建
-  - Phase 4: AnalyticsDB singleton 統一、Worker busy-wait 修正
-  - Phase 5: VPS migration（DROP + RECREATE 7 表）+ 線上驗證通過
-  - Code review x2（21 + 8 issues 全部修復）
-  - 新建 `docs/specs/analytics-spec.md`
-  - 待做：E2E 測試（VPS 需有 indexed data 才能驗證子表寫入）
-- **Analytics DB Async Migration**（2026-03-16）：
-  - `analytics_db.py` sync → async `AsyncConnectionPool`
-  - 環境變數統一至 `POSTGRES_CONNECTION_STRING`
-  - VPS 部署驗證通過（login + search + analytics 記錄）
-  - 途中修 3 個 production bug：bcrypt/resend 缺套件、UUID stringify
-- **Analytics Click Event 修復 + E2E 驗證**（2026-03-17）：
-  - Root cause: POST SSE handler 漏呼叫 `analyticsTracker.startQuery()` → `trackClick()` guard 靜默丟棄所有 click
-  - `news-search.js`: POST SSE begin-nlweb-response handler 加 `startQuery()` + `credentials: 'same-origin'` + 殘留 buffer 處理
-  - `analytics-tracker-sse.js`: fetch 加 `credentials: 'same-origin'` + `console.warn` → `console.error`
-  - `auth.py`: `secure=request.secure` → `secure=True`（nginx proxy 後 request.secure 永遠 False）
-  - `auth middleware`: `/api/analytics/event` + `/event/batch` 加入 PUBLIC_ENDPOINTS
-  - `analytics_handler.py` + `ranking_analytics_handler.py`: 所有 response 加 `Cache-Control: no-store`（防 Cloudflare cache）
-  - `app-file.py`: Windows `WindowsSelectorEventLoopPolicy`（psycopg async 相容）
-  - E2E A11 拆為 A11a-f（Console log + DB 驗證），本地 DevTools 全通過
-  - Cloudflare Cache Rule: `/api/*` → Bypass Cache
-- **Bootstrap Token Onboarding Flow + E2E 第一輪修復**（2026-03-17）：
-  - `bootstrap_tokens` 新 table（SQLite + PostgreSQL），register_user 改為需要 valid bootstrap_token（一次性）
-  - `GET /setup?token=xxx` 獨立品牌化 setup 頁面（讀豹 logo + 深藍金色風格）
-  - CLI 工具：`python -m auth.bootstrap_cli --org "Company" --expires 72`
-  - Login modal 移除「註冊」tab（B2B 用 /setup，不自助註冊）
-  - `/setup` 加入 PUBLIC_ENDPOINTS
-  - 117/117 tests pass
-  - E2E 3 個 bugs 修復：invite → admin_create_user、modal close guard、date format
-  - Setup 成功訊息 visibility 修復
-- **Login 系統 B2B Production Ready**（2026-03-16）：
-  - Bug fixes（SQLite boolean compat、datetime fix、PUBLIC_ENDPOINTS、route ordering）
-  - 113/113 tests pass（適配 B2B bootstrap model）
-  - 6 個新後端 API：`change-password`、`logout-all`、admin `logout-user`、`user/active`、`user` DELETE、`user/role`
-  - 強制登入：`/ask`、`/api/deep_research`、`/api/feedback` 從 PUBLIC_ENDPOINTS 移除
-  - Multi-org session 隔離確認（org_id filter 已有）
-  - 前端：auth guard、改密碼 modal、登出 dropdown、admin org modal 擴充（角色切換、停用/啟用、強制登出、刪除）
-  - 決策記錄：Transactional email 用 Resend + Cloudflare Email Routing（decisions.md #42）
-- **Login B2B + Best Practice**（2026-03-11）：B2B bootstrap + httpOnly cookie + token rotation + async email + XFF validation
-- **Login 系統合併**（2026-03-09）：Email/Password + JWT + Session + Audit
-- **Infra Migration Phase 2**：PostgreSQL hybrid search + BM25 清理 + Reranking 4-stage pipeline
-- **Phase 3 Hetzner VPS 部署**：twdubao.com + HTTPS + Cloudflare
+- **Infra Migration**（2026-03）：PostgreSQL hybrid search（pgvector + pg_bigm）+ Hetzner VPS 部署（twdubao.com + HTTPS + Cloudflare）+ CI/CD（GitHub Actions → SSH deploy → LINE 通知）
+- **Login 系統 B2B**（2026-03）：Email/Password + JWT + Session + Audit + B2B bootstrap token onboarding + 強制登入 + 117 tests pass + E2E 兩輪驗證通過
+- **Analytics 系統重整**（2026-03）：schema 統一（`schema_definitions.py`）+ async migration + 29 bugs 修復 + B2B 欄位對齊 + click event 修復 + VPS 驗證通過
+- **UI Redesign Phase 1-4**（2026-03-16）：藍灰工具風 → 金炭品牌化（讀豹主題），CSS 變數 + 主視覺 + icon + 全站顏色統一
+- **GCP Daily Cron**（2026-03-11）：每天 05:00 台灣時間自動 newest scan，第一輪 backfill 完成
 
 **詳細歷史**：見 `docs/archive/completed-work.md`
 
@@ -88,8 +25,10 @@
 ## 進行中
 
 ### 全量 Indexing（上線 blocker）
-- **來源**: `data/crawler/articles/`（451 TSV 檔案，6.1GB，~2,058,683 篇）
-- **進度**: 222,460 / ~2,058,683 篇（~10.8%），31/451 檔案完成
+- **來源**: `data/crawler/articles/`（463 TSV 檔案，~2M+ 篇）
+- **進度**: ~236,744 / ~2M 篇（~11.5%），幾乎只有 chinatimes 完成
+- **⚠️ 重要**: 舊 `.indexing_done` 是 Qdrant 時代殘留（標 458/463 完成，不反映 PG 狀態）。ltn、cna、udn、einfo、esg 皆未 indexed 進 PG，需重建 `.indexing_done` 後重跑。
+- **已修復**: 2 個截斷 checkpoint（LTN）+ 1 個 DB timeout checkpoint（chinatimes）已清除
 - **速度**: ~5.6 chunks/sec（GPU 溫控頻繁暫停）
 - **腳本**: `run_indexing.sh`（從 `code/python/` 目錄執行）
 - **完成後**: pg_dump → scp → VPS pg_restore → 上線
@@ -108,7 +47,7 @@
 - **影響**：使用者誤以為系統有資料但找不到，實際上是完全沒有資料
 - **優先級**：上線前必修（全量 indexing 後即使部分 query 沒結果也會觸發）
 
-### Login 系統後續
+### ~~Login 系統後續~~ → 已完成
 - ✅ Email 服務上線（Resend + Cloudflare Email Routing 完成）
 - ✅ Bootstrap token onboarding flow 完成（117/117 tests pass）
 - ✅ E2E 第一輪 8 個問題全部修復 + 第二輪驗證通過（2026-03-17）
@@ -124,9 +63,8 @@
 ### SEC-6 後續
 - Phase 2：Extracted Knowledge（LLM 結構化輸出，Phase 1 驗證有效後）
 
-### UI Redesign 收尾
-- 細節微調（Phase 4 後 CEO 目視檢查待修項目）
-- Branch `feature/ui-redesign` 尚未 commit
+### ~~UI Redesign 收尾~~ → 已 commit 至 main（2026-03-16）
+- 細節微調待 CEO 目視檢查確認
 
 ### Session 切換穩定性 ✅（2026-03-13 完成）
 - **問題**：搜尋中切換 session → 原 session 結果空白

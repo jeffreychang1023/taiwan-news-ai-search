@@ -1,65 +1,61 @@
 ---
 description: |
-  記錄 lessons + 更新專案文件。整合了 /learn 和 /update-docs。
-  觸發：(1) 用戶輸入 /learn，(2) 完成功能開發後，(3) 架構變更後，(4) 用戶說「更新文件」「記一下」。
-  支援參數：all（全部）、lessons（只記 lessons）、docs（只更新 docs/）、progress、specs、decisions、patterns。
+  觸發：/learn、完成功能開發後、架構變更後、「更新文件」「記一下」「記錄教訓」。
+  不觸發：只問問題、只讀文件、沒有新知識產生的對話。
+  參數：all（預設）、lessons、docs、progress、specs、decisions、patterns。
 ---
 
 # /learn
 
-記錄教訓 + 更新專案文件。一個指令做完所有持久化工作。
+記錄教訓 + 更新專案文件。兩邊都要做，不能只做一邊。
+
+---
+
+## Gotchas
+
+- **staleness verification 被跳過**：最常見的失誤。層級 1 每次都做，沒有例外。
+- **只更新 docs/ 忘了 memory/**：「更新文件」= docs/ + memory/ 兩邊都要。
+- **MEMORY.md 寫了實質內容**：`memory/MEMORY.md` 是純索引（只放指標）。教訓寫 `lessons-*.md`。
+- **lessons 重複記錄**：已有類似 lesson → 更新信心等級，不要新增重複條目。
+- **decisions.md 計數沒更新**：追加新決策後，更新「共 N 筆」。
+- **status.md「最近完成」粒度太細**：只記大功能，不記個別 bugfix。超 10 項移 completed-work.md。
+- **跨文件引用漏更新**：一個事實出現在 3-4 份文件，改一份時 indexer 搜全部。
+- **CLAUDE.md 塞了流水帳**：每個 session 都 load CLAUDE.md。已完成的項目不要留在「目前工作」，移除或指向 status.md。不放 bugfix 細節、commit hash、日期。
+- **memory/ 路徑混淆**：專案 memory 在 `C:/users/user/nlweb/memory/`（git 內），不是 `~/.claude/projects/.../memory/`。
 
 ---
 
 ## 兩大職責
 
-| 職責 | 更新什麼 | 檔案位置 |
-|------|---------|---------|
-| **Lessons** | 技術教訓、踩坑記錄 | `memory/lessons-*.md` |
-| **Docs** | 專案狀態、規格、決策、完成工作 | `docs/` 目錄 |
-
-**原則**：「更新文件」= docs/ + memory/，兩邊都要做。
+| 職責 | 目標檔案 |
+|------|---------|
+| **Lessons** | `memory/lessons-*.md`（技術陷阱、踩坑記錄） |
+| **Docs** | `docs/`（狀態、規格、決策、完成工作） |
 
 ---
 
-## 參數
+## Part A：Lessons
 
-| 參數 | 範圍 |
-|------|------|
-| `all` 或無參數 | Lessons + Docs 全部 |
-| `lessons` | 只記 lessons（memory/ 檔案） |
-| `docs` | 只更新 docs/ 目錄 |
-| `progress` | `docs/status.md`, `docs/archive/completed-work.md`, `CLAUDE.md` |
-| `specs` | `docs/specs/*-spec.md` |
-| `decisions` | `docs/decisions.md` |
-| `patterns` | `memory/delegation-patterns.md` |
+### A1. 分析對話，找值得記錄的內容
 
----
-
-## 執行流程
-
-### Part A：Lessons（memory/）
-
-#### A1. 分析對話
-
-回顧本次對話，找：
 - 解決了非顯而易見的 bug
-- 發現框架/套件的陷阱或限制
-- 踩過的坑（避免下次再犯）
+- 框架/套件的陷阱或限制
 - 新的 pattern 或 best practice
-- 派工經驗（delegation patterns 更新）
+- 派工經驗（→ `delegation-patterns.md`）
 
 **不記錄**：瑣碎修復、一次性問題、尚未驗證的假設。
 
-#### A2. 分類到正確的 lessons 檔案
+### A2. 寫入正確的 lessons 檔案
 
-| 問題領域 | 寫入檔案 |
-|---------|---------|
+| 問題領域 | 檔案 |
+|---------|------|
 | Crawler / Dashboard | `memory/lessons-crawler.md` |
 | VPS / Docker / 部署 / 資安 | `memory/lessons-infra-deploy.md` |
-| 其他（前端、後端、DB、工具） | `memory/lessons-general.md` |
+| 其他 | `memory/lessons-general.md` |
 
-#### A3. 寫入格式
+**memory/ 路徑**：永遠用 `C:/users/user/nlweb/memory/`（git repo 內），不是 `~/.claude/projects/.../memory/`。
+
+### A3. 格式
 
 ```markdown
 ### [簡短標題]
@@ -70,41 +66,98 @@ description: |
 **日期**：YYYY-MM-DD
 ```
 
-#### A4. 更新 delegation-patterns.md（如果有派工經驗）
-
-- 新增的模組指引
-- 發現的陷阱或依賴關係
-- 新的 spec 檔案
-
 ---
 
-### Part B：Docs（docs/）
+## Part B：Docs
 
-#### B1. 收集資訊
+### B1. 收集 git history（看足夠廣）
 
 ```bash
-git diff --stat HEAD~10
-git log --oneline -20
+git log --oneline -30
+git diff --stat HEAD~20
 ```
 
-#### B2. 更新文件（依參數決定範圍）
+### B2. 判斷受影響文件
 
-| 優先順序 | 文件 | 更新策略 |
-|---------|------|---------|
-| 1 | `docs/specs/*-spec.md` | 根據程式碼變更更新規格 |
-| 2 | `docs/status.md` | 從對話 + git log 更新狀態 |
-| 3 | `docs/archive/completed-work.md` | 追加完成項目 |
-| 4 | `docs/decisions.md` | 追加新決策 |
-| 5 | `CLAUDE.md` | 更新模組狀態表與開發重點 |
-| 6 | `memory/delegation-patterns.md` | 更新派工經驗 |
+| 修改的模組 | 可能受影響的文件 |
+|-----------|---------------|
+| Analytics | `docs/specs/analytics-spec.md`, `CLAUDE.md` |
+| Ranking | `docs/specs/xgboost-spec.md`, `docs/specs/mmr-spec.md` |
+| Auth / Login | `docs/specs/login-spec.md` |
+| Crawler | `docs/specs/gcp-crawler-spec.md`, `docs/specs/crawler-dashboard-spec.md` |
+| Infra / Deploy | `docs/reference/docker-deployment.md`, `CLAUDE.md` |
+| 任何模組 | `docs/status.md`, `docs/archive/completed-work.md` |
 
-#### B3. Source of Truth 優先順序
+一個事實可能出現在多份文件中。修改一處時用 indexer 搜尋關鍵詞，確認所有引用處。
+
+### B3. Staleness Verification（不可跳過）
+
+**層級 1（每次強制）**：對受影響 spec，讀取「已知限制」「待做」「未完成」段落，逐項驗證：
+- 已完成 → 加刪除線 + 完成日期
+- 部分完成 → 更新描述
+- 仍存在 → 保留
+- 描述過時 → 修正
+
+**層級 2（本次 session 有改 code 時強制）**：對受影響 spec 全文檢查：
+
+| 檢查項目 | 怎麼驗證 |
+|---------|---------|
+| 檔案路徑引用 | Glob 確認存在 |
+| API 表格 | 對照 config YAML 或程式碼 |
+| 程式碼範例（CSS 變數、config） | 讀實際檔案前 30 行比對 |
+| 行號引用（`ranking.py:546`） | 確認不超出檔案總行數 |
+| 測試狀態宣稱（"All tests passing ✅"） | 確認測試檔案存在 |
+| 環境變數 / 外部服務名稱 | indexer 搜尋確認 |
+
+例外：本次 session 只修改文件（docs/、memory/），不做層級 2。
+
+**`/learn specs`**：對 `docs/specs/` 所有 spec 做層級 2 全文驗證（每月或大 milestone 後用）。
+
+### B4. 更新文件（依優先順序 + 格式規則）
+
+**1. `docs/specs/*-spec.md`**（staleness verification）
+- 已完成的待做項目：`~~原文~~ → 已完成（YYYY-MM）` 格式
+
+**2. `docs/status.md`**
+- 「最近完成」只記大功能層級（Infra Migration、Login 系統、Analytics 重整），不記個別 bugfix
+- 超過 5 項就移到 `completed-work.md`
+
+**3. `docs/archive/completed-work.md`**
+- Track 編號遞增（A, B, ... AG, AH）
+
+**4. `docs/decisions.md`**
+- 固定格式，每條必須有：
+```markdown
+### [Decision 標題]
+- **Category**: [product/technical/business/process] | **Modules**: [M0-M6, Auth, etc.] | **Date**: YYYY-MM | **Status**: [active/superseded/pending]
+- **Reason**: [為什麼做這個決定]
+- **Tradeoff**: [取捨了什麼]
+```
+- 追加後更新檔案開頭的「共 N 筆」計數
+
+**5. `CLAUDE.md`**
+- **保持乾淨**：每個 session 都 load，不放歷史流水帳
+- 「目前工作」只放進行中的項目，已完成的移除（指向 status.md）
+- 不放個別 bugfix、commit hash、日期細節
+- 模組狀態表只在模組整體狀態改變時才更新
+
+**6. `memory/delegation-patterns.md`**
+
+### B5. Cross-doc 一致性
+
+| 事實 | 出現位置 |
+|------|---------|
+| DB 環境變數名稱 | `CLAUDE.md`, `analytics-spec.md`, `login-spec.md`, `decisions.md` |
+| Production DB 位置 | `CLAUDE.md`, `analytics-spec.md`, `status.md` |
+| 模組完成狀態 | `CLAUDE.md` 模組表, `status.md`, `completed-work.md` |
+
+用 indexer 搜尋關鍵詞確認沒有殘留過時引用。
+
+### B6. Source of Truth 順序
 
 ```
 程式碼 → Spec → Docs 指南 → Systemmap → Progress
 ```
-
-高層級文件根據低層級文件更新，不是反過來。
 
 ---
 
@@ -120,20 +173,19 @@ Lessons：
 Docs：
 - [列出更新的檔案]
 
+Staleness Check：
+- [驗證過的 spec + 修正了幾項過時描述]
+- [無法確認的項目列待確認清單]
+
+Cross-doc：
+- [修正的跨文件不一致]
+
 是否要 commit？(y/n)
 ```
 
-若用戶同意：
+若同意：
 ```bash
 git add docs/ memory/ CLAUDE.md
 git commit -m "docs: update documentation and lessons learned"
 ```
 
----
-
-## 注意事項
-
-- 如果已存在類似 lesson，更新信心等級而非新增
-- `docs/status.md` 的「最近完成」不要無限增長，超過 10 項就移到 `completed-work.md`
-- 決策記錄要更新 decisions.md 的計數（共 N 筆）
-- **MEMORY.md 是純索引**：不寫實質內容，只放指標

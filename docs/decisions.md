@@ -1,6 +1,6 @@
 # NLWeb 決策日誌
 
-> 從 Notion 決策日誌 DB 導出（2026-03-03）+ 持續更新。共 43 筆。
+> 從 Notion 決策日誌 DB 導出（2026-03-03）+ 持續更新。共 49 筆。
 > 欄位：Decision / Category / Modules / Date / Status / Reason / Tradeoff
 
 ---
@@ -175,20 +175,20 @@
 - **Reason**: 簡單問題（query 分析、意圖偵測、基本排序）用 gpt-4o-mini 控制成本。Reasoning module（Analyst/Critic/Writer 多輪迭代）用 gpt-5.1 確保分析品質。每次查詢 2-5 次 LLM call，混合使用平衡成本與品質。
 - **Tradeoff**: 雙模型需管理路由邏輯，但比全用大模型省成本，比全用小模型品質更好
 
-### Vector DB: Qdrant（本地 Docker + Cloud）
-- **Category**: technical | **Modules**: M6-Infra | **Date**: 2025-11 | **Status**: active
-- **Reason**: Qdrant 提供語意搜尋核心能力。本地用 Docker 運行（開發 + 測試），Production 用 Qdrant Cloud Free (1GB)。目前 5K vectors 測試中，production 需 40-60GB。將被 PostgreSQL + pgvector 取代（見 infra migration 計畫）。
-- **Tradeoff**: Qdrant 專注向量搜尋效能佳，但多一個 DB 增加架構複雜度
+### ~~Vector DB: Qdrant~~ → 已被 PostgreSQL + pgvector 取代
+- **Category**: technical | **Modules**: M6-Infra | **Date**: 2025-11 | **Status**: superseded (2026-03)
+- **Reason**: 原：Qdrant 提供語意搜尋核心能力。已由 PostgreSQL + pgvector + pg_bigm hybrid search 取代（`retrieval_providers/postgres_client.py`）。Qdrant 相關檔案（`qdrant.py`、`qdrant_uploader.py`）仍保留供參考但不再用於 production retrieval。
+- **Tradeoff**: 放棄 Qdrant 專業向量 DB 進階功能，換取 PostgreSQL 一體化架構
 
 ### Analytics: 雙 DB（本地 SQLite / Production PostgreSQL）
 - **Category**: technical | **Modules**: M6-Infra | **Date**: 2025-12 | **Status**: active
-- **Reason**: 透過 ANALYTICS_DATABASE_URL 環境變數自動偵測切換。本地開發用 SQLite（免設定），Production 用 Neon.tech PostgreSQL Free (512MB)。查詢日誌、效能監控、使用者行為追蹤。將隨 infra migration 整合到同一 PostgreSQL。
+- **Reason**: 透過 `POSTGRES_CONNECTION_STRING` 環境變數自動偵測切換（fallback: `DATABASE_URL` → `ANALYTICS_DATABASE_URL`）。本地開發用 SQLite（免設定），Production 用 VPS PostgreSQL（與 Auth / Search 共用 `nlweb` database）。查詢日誌、效能監控、使用者行為追蹤。~~將隨 infra migration 整合~~ → 已整合完成。
 - **Tradeoff**: 雙 DB 需維護相容性，但本地開發零設定成本
 
-### Embedding: 雙模型 Profile Switching（OpenAI 1536D / bge-m3 1024D）
-- **Category**: technical | **Modules**: M6-Infra, M2-Retrieval | **Date**: 2026-01 | **Status**: active
-- **Reason**: QDRANT_PROFILE env var 控制 online/offline 模式。online: OpenAI 1536D + nlweb_collection，offline: bge-m3 1024D + nlweb collection。YAML profile + env var 切換。bge-m3 中文品質更好但需 GPU。將被 Qwen3-Embedding-4B 取代（繁中 benchmark #6）。
-- **Tradeoff**: Profile 機制增加複雜度，但允許彈性切換不同環境
+### ~~Embedding: 雙模型 Profile Switching（OpenAI 1536D / bge-m3 1024D）~~ → 已被 Qwen3-4B 取代
+- **Category**: technical | **Modules**: M6-Infra, M2-Retrieval | **Date**: 2026-01 | **Status**: superseded (2026-02)
+- **Reason**: 原：QDRANT_PROFILE env var 控制 online/offline 模式。已由 Qwen3-Embedding-4B 取代（`embedding_providers/qwen3_embedding.py`）。詳見 Qwen3-4B 決策條目。
+- **Tradeoff**: 原 Profile 機制已不再使用
 
 ### 資料庫架構：從 3DB（Qdrant+SQLite+Neon PG）整合至 PostgreSQL 一體化
 - **Category**: technical | **Modules**: M2-Retrieval, M6-Infra | **Date**: 2026-02 | **Status**: active
@@ -277,3 +277,8 @@
 - **Reason**: 系統需發送 transactional email（帳號啟用、密碼重設、鎖定通知、邀請信）。`email_service.py` 已整合 Resend SDK，零改動可上線。自架 SMTP（Postfix）到達率差（無 IP reputation，企業信箱會進垃圾郵件），維護成本高。Resend 免費額度 3000 封/月，B2B 初期綽綽有餘。官方收信 email 用 Cloudflare Email Routing 免費轉寄到 Gmail。
 - **需要設定**：(1) Resend 帳號 + API key → VPS env var `RESEND_API_KEY` (2) Cloudflare DNS 加 SPF/DKIM/DMARC records（Resend 提供）(3) `RESEND_FROM_EMAIL=noreply@twdubao.com` (4) Cloudflare Email Routing 設 `support@twdubao.com` 轉寄
 - **Tradeoff**: 依賴第三方 SaaS（但 transactional email 量極小，免費額度足夠；到達率遠優於自架）
+
+### Skill 策略：優化現有 skills，不新增。用 autoresearch 方法論迭代
+- **Category**: process | **Modules**: Claude Code Skills | **Date**: 2026-03-18 | **Status**: active
+- **Reason**: Anthropic 官方文章核心觀點是「好 skill 只做好一件事」，不是追求覆蓋率。現有 14 個 skill 已覆蓋日常需求，問題在品質（缺 Gotchas、大型單檔浪費 context、description 不精準）不在數量。優化順序：/learn → /zoe → newest-scan 拆檔 → crawler-monitor → 其餘。後續用 autoresearch 方法論（binary eval + 單變數 mutation）針對性迭代。
+- **Tradeoff**: 放棄 nlweb-verify、crawler-runbook 等新 skill 提案（至少目前）。接受現有覆蓋缺口，換取既有 skill 的品質提升。Autoresearch 的具體執行方式待定。
