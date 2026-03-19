@@ -71,6 +71,19 @@
 - **歷程**：嘗試過 auto re-search（無限迴圈）→ 背景 stream 繼續（stale reference + 跨 session 污染）→ 加 single-stream-per-mode 限制（還是卡住）→ 全部拆掉改 cancel + retry
 - **檔案**：`static/news-search.js`
 
+### 前端 UX 修復（待排）
+- 空結果 session 可點擊但顯示「此搜尋無結果」（目前點不進去）
+- 「搜尋失敗」文字太 vague，應改為更具體的訊息
+
+### 日期搜尋 UX 改善（待排）
+- 指定時間範圍無直接結果時，應告知使用者「指定時間範圍內無結果，但有其他文章提到相關內容」（目前直接顯示跨日期結果，沒有說明）
+- 不是 bug — 2024 年底文章提到 2025 年展望是正確的相關結果
+
+### 條件搜尋功能（待排）
+- 支援 date range、author 等結構化篩選條件
+- 前端需要篩選 UI（日期選擇器、作者欄位等）
+- 後端 `_build_filters` 已支援 gte/lte operator，需擴充 field 支援
+
 ### Prompt 語言改造（待排）
 - 所有 `config/prompts.xml` 的 prompt 主體改為繁體中文（目前是英文 + 結尾加繁中指示，LLM 容易忽略）
 - 分批改 + 測試：SummarizeResultsPrompt → RankingPrompt → 其他

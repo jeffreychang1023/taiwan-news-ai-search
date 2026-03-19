@@ -3308,18 +3308,12 @@
             };
             console.log('[Deep Research] Stored report for follow-up:', currentResearchReport.report.substring(0, 100) + '...');
 
-            // Extract schema_object from content (Deep Research sends results in content array)
+            // Extract schema_object from content (backward compatibility path)
             let schemaObj = null;
-            console.log('[Deep Research] metadata.content:', metadata?.content);
             if (metadata?.content && Array.isArray(metadata.content) && metadata.content.length > 0) {
-                console.log('[Deep Research] First content item:', metadata.content[0]);
                 schemaObj = metadata.content[0].schema_object;
-                console.log('[Deep Research] Extracted schema_object:', schemaObj);
             } else {
-                console.log('[Deep Research] No content array found, trying direct access');
-                // Try direct access for backward compatibility
                 schemaObj = metadata?.schema_object;
-                console.log('[Deep Research] Direct schema_object:', schemaObj);
             }
 
             // Show results section
