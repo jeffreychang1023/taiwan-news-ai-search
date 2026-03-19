@@ -17,7 +17,7 @@
 - **Analytics 系統重整**（2026-03）：schema 統一（`schema_definitions.py`）+ async migration + 29 bugs 修復 + B2B 欄位對齊 + click event 修復 + VPS 驗證通過
 - **UI Redesign Phase 1-4**（2026-03-16）：藍灰工具風 → 金炭品牌化（讀豹主題），CSS 變數 + 主視覺 + icon + 全站顏色統一
 - **GCP Daily Cron**（2026-03-11）：每天 05:00 台灣時間自動 newest scan，第一輪 backfill 完成
-- **搜尋品質修復 5 項**（2026-03-19）：虛假回應 guard、PG 日期 filter、MMR 向量、繁中 prompt、verification_status SSE — 52 個新測試
+- **搜尋品質修復 5 項**（2026-03-19）：虛假回應 guard、PG 日期 filter、MMR 向量、繁中 prompt、verification_status SSE — 52 個新測試（**待 E2E 驗證**）
 
 **詳細歷史**：見 `docs/archive/completed-work.md`
 
