@@ -27,12 +27,13 @@
 
 ### 全量 Indexing（上線 blocker）
 - **來源**: `data/crawler/articles/`（463 TSV 檔案，~2M+ 篇）
-- **進度**: ~236,744 / ~2M 篇（~11.5%），幾乎只有 chinatimes 完成
+- **桌機進度**: ~236,744 / ~2M 篇（~11.5%），幾乎只有 chinatimes 完成
+- **VPS 測試資料**: 500 articles / 1,841 chunks（chinatimes 258 + udn 213 + cna 29）— 可做基本 E2E 測試
 - **⚠️ 重要**: 舊 `.indexing_done` 是 Qdrant 時代殘留（標 458/463 完成，不反映 PG 狀態）。ltn、cna、udn、einfo、esg 皆未 indexed 進 PG，需重建 `.indexing_done` 後重跑。
 - **已修復**: 2 個截斷 checkpoint（LTN）+ 1 個 DB timeout checkpoint（chinatimes）已清除
 - **速度**: ~5.6 chunks/sec（GPU 溫控頻繁暫停）
 - **腳本**: `run_indexing.sh`（從 `code/python/` 目錄執行）
-- **完成後**: pg_dump → scp → VPS pg_restore → 上線
+- **完成後**: 全量 pg_dump → scp → VPS pg_restore → 上線
 
 ### GCP Crawler
 - **Daily Cron**: 每天 05:00 台灣時間自動 newest scan（6 sources）

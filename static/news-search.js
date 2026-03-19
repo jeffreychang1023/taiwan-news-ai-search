@@ -2918,7 +2918,7 @@
                 });
 
                 // Accumulate articles from this search for chat mode
-                if (combinedData.content && combinedData.content.length > 0) {
+                if (Array.isArray(combinedData.content) && combinedData.content.length > 0) {
                     const existingUrls = new Set(accumulatedArticles.map(art => art.url || art.schema_object?.url));
                     const newArticles = combinedData.content.filter(art => {
                         const url = art.url || art.schema_object?.url;

@@ -404,4 +404,47 @@
 - **S2 日期測試有時效性**：「最近三天」的結果取決於 indexed data 的日期範圍。如果最新資料是一個月前的，測試結果會不符預期。建議先確認 `SELECT MAX(date_published) FROM articles;`。
 - **S3 MMR 需要多來源**：如果 PG 只有 chinatimes 的資料（目前狀態），MMR 無法展示跨來源多元性。需要等多來源 indexing 完成。
 - **S5 CoV 不一定觸發 fail**：verification_status 的 warning banner 只在 CoV 判定 unverified/partially_verified 時出現。大多數正常查詢會 pass。可用 SSE `final_result` 的 JSON 確認欄位是否存在（S5-4）來驗證管線通了。
-- **本地測試**：`cd code/python && python app-file.py` → `localhost:8080`。需要 PG 有 indexed data。
+- **本地測試**：`cd code/python && python app-file.py` → `localhost:8000`。需要 PG 有 indexed data。
+- **啟動前必殺舊 process**：`netstat -ano | grep ":8000.*LISTENING"` 確認無殘留。多個 server 搶同一 port 會導致不穩定。
+
+---
+
+---
+
+# Agent E2E 測試記錄
+
+> Agent 用 Chrome DevTools MCP 跑的自動化測試結果。每次 E2E 測試 session 追加在此。
+
+---
+
+## 2026-03-19 — 搜尋品質修復 E2E（本地 localhost:8000）
+
+**環境**：本地 PG（325K articles, 1.1M chunks, 5 來源），localhost:8000
+**測試項目**：S1-S4（S5 Deep Research 跳過 — port 衝突已修，待重測）
+
+### 結果總表
+
+| 場景 | 結果 | 問題摘要 |
+|------|------|---------|
+| S1 零結果 hallucinate | **FAIL** | 亂碼查詢仍回 10 篇 + AI 摘要（vector search 永遠回 top-k，非 P0 regression） |
+| S2 日期篩選 | **FAIL** | 後端找到 7 篇但前端顯示 0 篇 + 「找不到」矛盾訊息 |
+| S3 MMR 多元性 | **FAIL** | 全 chinatimes（資料不均）+ 嚴重重複文章 |
+| S4 繁體中文 | **PASS** | 英文查詢 → 繁中摘要，正確 |
+
+### 跨場景共通問題
+
+**重複文章（Critical）**：每個測試都出現。同一篇文章以不同 URL 變體出現 2-3 次：
+- S1：「台灣人最愛用的爛密碼」x2、「面試官問 3,4,5」x2
+- S3：「童子賢：電力求穩」x3、「核管法擇期再審」x2
+- S4：幾乎每篇都 x2
+
+**S2 前端 bug**：`combinedData.content.filter is not a function`（已修 Array.isArray check，但仍顯示 0 篇文章 — 可能有更深層問題）
+
+### 待修項目
+
+| # | 問題 | 類型 | 嚴重度 |
+|---|------|------|--------|
+| 1 | 重複文章（indexing dedup） | Indexing bug | High |
+| 2 | S2 前端文章不顯示 | Frontend bug | Medium |
+| 3 | S1 gibberish 仍回結果 | 缺 relevance threshold | Medium（新 issue） |
+| 4 | S5 Deep Research 待重測 | 未測 | — |

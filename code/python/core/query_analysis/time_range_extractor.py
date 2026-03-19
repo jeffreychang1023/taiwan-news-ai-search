@@ -17,6 +17,7 @@ Examples:
 """
 
 import re
+import calendar
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional
 from misc.logger.logging_config_helper import get_configured_logger
@@ -307,6 +308,28 @@ class TimeRangeExtractor:
                         end_date = parsed_date + timedelta(days=1)
                         return self._build_result('regex', True, parsed_date, end_date, 1,
                                                  date_str, confidence=1.0)
+
+                    elif 'yyyy_mm' in pattern_name:
+                        # Absolute year+month: "2025年12月" → 2025-12-01 to 2025-12-31
+                        matched_text = match.group(0)
+                        year_match = re.search(r'(\d{4})年(\d{1,2})月', matched_text)
+                        if year_match:
+                            year = int(year_match.group(1))
+                            month = int(year_match.group(2))
+                            _, last_day = calendar.monthrange(year, month)
+                            start_date = datetime(year, month, 1, tzinfo=timezone.utc)
+                            end_date = datetime(year, month, last_day, tzinfo=timezone.utc)
+                            days = last_day
+                            return self._build_result('regex', True, start_date, end_date, days,
+                                                     matched_text, confidence=1.0)
+
+                    else:
+                        # Pattern matched but no handler exists — this is a bug
+                        logger.warning(
+                            f"[TIME-EXTRACTOR] Regex pattern '{pattern_name}' matched but has no handler"
+                            f" - this is a bug"
+                        )
+                        continue
 
                 except (ValueError, IndexError) as e:
                     logger.warning(f"[TIME-EXTRACTOR] Failed to parse match for {pattern_name}: {e}")
