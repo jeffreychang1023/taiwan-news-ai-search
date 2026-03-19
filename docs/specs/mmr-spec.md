@@ -83,7 +83,7 @@ Example: "Best kitchen gadgets 2025" → λ=0.5 (show diverse product types)
 |------|---------|
 | `code/python/core/mmr.py` | MMR algorithm implementation |
 | `code/python/core/ranking.py` | Integration into ranking pipeline |
-| `code/python/retrieval_providers/qdrant.py` | Vector retrieval with `with_vectors=True` |
+| `code/python/retrieval_providers/postgres_client.py` | Vector retrieval with `include_vectors=True` (PG) |
 | `code/python/core/baseHandler.py` | Requests vectors when MMR enabled |
 | `config/config_retrieval.yaml` | MMR configuration parameters |
 
@@ -92,8 +92,8 @@ Example: "Best kitchen gadgets 2025" → λ=0.5 (show diverse product types)
 ```
 1. User Query
    ↓
-2. Retrieval (qdrant.py)
-   - Vector search with with_vectors=True (if MMR enabled)
+2. Retrieval (postgres_client.py)
+   - Vector search with include_vectors=True (if MMR enabled)
    - Returns: [url, schema_json, name, site, vector]
    ↓
 3. Ranking (ranking.py:370-520)
@@ -338,7 +338,7 @@ Replace rule-based intent detection with **XGBoost Regressor** for continuous λ
 
 **Rollback**: `mmr_params.use_ml_lambda: false` in config
 
-**See**: `algo/Week4_ML_Enhancements.md` for complete implementation plan
+**See**: `docs/archive/algo-reviews/Week4_ML_Enhancements.md` for complete implementation plan
 
 ### Cascading MMR + XGBoost Ranking
 
@@ -369,7 +369,7 @@ Final Results
 
 **Timeline**: Week 5-8 (after collecting 50,000+ query-document pairs)
 
-**See**: `algo/Week4_ML_Enhancements.md` for complete XGBoost implementation plan
+**See**: `docs/archive/algo-reviews/Week4_ML_Enhancements.md` for complete XGBoost implementation plan
 
 ---
 
@@ -384,8 +384,14 @@ Final Results
 - ✅ Added analytics logging `query_logger.log_mmr_score()`
 - ✅ Intent-based λ tuning (SPECIFIC, EXPLORATORY, BALANCED)
 
-### Pending (Week 3)
-- ⏳ Unit tests for MMR algorithm
-- ⏳ A/B testing (MMR vs LLM diversity)
+### 2026-03-19 - PostgreSQL Vector Retrieval Fix
+- ✅ `postgres_client.py` now returns 5-tuple `[url, schema, title, source, vector]` when `include_vectors=True`
+- ✅ pgvector results normalised to `list[float]` for `cosine_similarity()` compatibility
+- ✅ Backward compatible: 4-tuple returned without `include_vectors` kwarg
+- ✅ 19 unit tests in `tests/unit/test_mmr_vector_retrieval.py`
+- ✅ MMR no longer silently skipped on PostgreSQL
+
+### Pending
+- ⏳ A/B testing (MMR vs no diversity)
 - ⏳ Parameter tuning based on user feedback
 - ⏳ Production monitoring and validation

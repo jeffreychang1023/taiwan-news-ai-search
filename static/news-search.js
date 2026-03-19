@@ -3310,6 +3310,16 @@
             // Clear research view
             researchViewEl.innerHTML = '';
 
+            // RSN-4: Show verification warning banner if CoV found unverified/partially_verified claims
+            const verificationStatus = metadata?.verification_status;
+            if (verificationStatus === 'unverified' || verificationStatus === 'partially_verified') {
+                const verificationMessage = metadata?.verification_message || '本報告未經完整事實驗證';
+                const warningBanner = document.createElement('div');
+                warningBanner.className = 'verification-warning';
+                warningBanner.innerHTML = `<span class="verification-warning-icon">⚠</span> ${DOMPurify.sanitize(verificationMessage)}`;
+                researchViewEl.appendChild(warningBanner);
+            }
+
             // Create report container
             const reportContainer = document.createElement('div');
             reportContainer.className = 'deep-research-report';

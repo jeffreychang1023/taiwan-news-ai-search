@@ -296,12 +296,13 @@ COV_PROMPT = """
 | API ID | 名稱 | 用途 | 檔案 |
 |--------|------|------|------|
 | `llm_knowledge` | LLM 內建知識 | 一般知識問答 | - |
-| `web_search` | Web Search | Bing/Google 搜尋 | `retrieval_providers/bing_search_client.py` |
-| `stock_tw` | Yahoo Finance TW | 台股資訊 | `retrieval_providers/yfinance_client.py` |
-| `stock_global` | Yahoo Finance | 美股/全球股票 | `retrieval_providers/yfinance_client.py` |
+| `google` | Google Custom Search | Web 搜尋 | `retrieval_providers/google_search_client.py` |
+| `yfinance` | Yahoo Finance | 股票資訊 | `retrieval_providers/yfinance_client.py` |
+| `twse` | 台灣證交所 | 台股資訊 | `retrieval_providers/twse_client.py` |
 | `wikipedia` | Wikipedia | 百科知識 | `retrieval_providers/wikipedia_client.py` |
-| `weather_tw` | 中央氣象局 | 台灣天氣 | `retrieval_providers/cwb_weather_client.py` |
-| `weather_global` | OpenWeatherMap | 全球天氣 | `retrieval_providers/global_weather_client.py` |
+| `wikidata` | Wikidata | 結構化知識 | `retrieval_providers/wikidata_client.py` |
+| `cwb_weather` | 中央氣象局 | 台灣天氣 | `retrieval_providers/cwb_weather_client.py` |
+| `openweathermap` | OpenWeatherMap | 全球天氣 | `retrieval_providers/global_weather_client.py` |
 
 ### Gap Resolution 流程
 
@@ -496,4 +497,22 @@ orchestrator = DeepResearchOrchestrator(logger=logger)
 
 ---
 
-*更新：2026-02-04*
+## 11. Changelog
+
+### 2026-03-19 — RSN-11 Guard Fix + Verification Status SSE
+
+**RSN-11 Guard Fix（P0 Bug）**：
+- `orchestrator.py` L604 的空結果 guard 從 `if not self.formatted_context` 改為 `if not self.source_map`
+- 原因：`_get_current_time_header()` 永遠回傳非空字串，讓 formatted_context 永不為空，即使 retrieval 回傳 0 結果
+- `source_map` 只有真正的 retrieval 結果才會填入，不受 header 影響
+- 測試：`tests/unit/test_zero_results_guard.py`（8 tests）
+
+**RSN-4 Verification Status SSE Propagation**：
+- Critic agent 的 `verification_status` / `verification_message`（CoV 查核結果）現在傳到前端
+- 資料流：`critic.py __dict__` → `orchestrator._format_result` → `api.py final_result SSE` → `news-search.js warning banner`
+- 前端在 unverified / partially_verified 時顯示黃色 warning banner
+- 測試：`tests/unit/test_verification_status_sse.py`（6 tests）
+
+---
+
+*更新：2026-03-19*

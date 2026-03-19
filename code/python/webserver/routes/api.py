@@ -445,6 +445,11 @@ async def deep_research_handler(request: web.Request) -> web.Response:
                     final_message['reasoning_chain_analysis'] = schema_obj['reasoning_chain_analysis']
                 if schema_obj.get('knowledge_graph'):
                     final_message['knowledge_graph'] = schema_obj['knowledge_graph']
+                # RSN-4: Include verification status for frontend warning banner
+                if schema_obj.get('verification_status'):
+                    final_message['verification_status'] = schema_obj['verification_status']
+                if schema_obj.get('verification_message'):
+                    final_message['verification_message'] = schema_obj['verification_message']
 
             await wrapper.write_stream(final_message)
 

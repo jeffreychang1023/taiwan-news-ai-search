@@ -6179,3 +6179,27 @@
             padding: 6px 10px;
             margin-top: 6px;
         }
+
+        /* RSN-4: Verification warning banner */
+        .verification-warning {
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+            background: var(--color-primary-light);
+            border: 1px solid var(--color-primary);
+            border-left: 4px solid var(--color-warning);
+            border-radius: var(--radius-md);
+            color: var(--color-text);
+            font-size: 13px;
+            padding: 10px 14px;
+            margin: 0 0 12px 0;
+            max-width: 900px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        .verification-warning-icon {
+            flex-shrink: 0;
+            font-size: 14px;
+            color: var(--color-warning);
+        }

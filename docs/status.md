@@ -17,6 +17,7 @@
 - **Analytics 系統重整**（2026-03）：schema 統一（`schema_definitions.py`）+ async migration + 29 bugs 修復 + B2B 欄位對齊 + click event 修復 + VPS 驗證通過
 - **UI Redesign Phase 1-4**（2026-03-16）：藍灰工具風 → 金炭品牌化（讀豹主題），CSS 變數 + 主視覺 + icon + 全站顏色統一
 - **GCP Daily Cron**（2026-03-11）：每天 05:00 台灣時間自動 newest scan，第一輪 backfill 完成
+- **搜尋品質修復 5 項**（2026-03-19）：虛假回應 guard、PG 日期 filter、MMR 向量、繁中 prompt、verification_status SSE — 52 個新測試
 
 **詳細歷史**：見 `docs/archive/completed-work.md`
 
@@ -41,11 +42,8 @@
 
 ## 待處理
 
-### BUG: Retrieval 0 結果時仍生成虛假回應
-- **現象**：VPS 無 indexed data，retrieval 回 0 結果，但前端顯示「抱歉，找不到相關資訊」+「基於 7 則報導生成」
-- **原因**：Reasoning pipeline（Writer agent）在 0 結果時不應進入，或至少不應聲稱有來源
-- **影響**：使用者誤以為系統有資料但找不到，實際上是完全沒有資料
-- **優先級**：上線前必修（全量 indexing 後即使部分 query 沒結果也會觸發）
+### ~~BUG: Retrieval 0 結果時仍生成虛假回應~~ → 已修復（2026-03-19）
+- Guard 改為 `if not self.source_map`，8 tests
 
 ### ~~Login 系統後續~~ → 已完成
 - ✅ Email 服務上線（Resend + Cloudflare Email Routing 完成）
@@ -57,8 +55,8 @@
 - 子表驗證待做：VPS 無 indexed data → retrieval 0 結果 → retrieved_documents / ranking_scores 空
 - 待全量 indexing 完成後自然驗證，或本地用 SQLite 跑 E2E
 
-### Code Review 後續
-- RSN-4 前端：讀取 verification_status 顯示未驗證提示
+### ~~Code Review 後續~~ → RSN-4 已完成（2026-03-19）
+- verification_status 從 Critic → Orchestrator → SSE → 前端 warning banner，6 tests
 
 ### SEC-6 後續
 - Phase 2：Extracted Knowledge（LLM 結構化輸出，Phase 1 驗證有效後）
@@ -72,8 +70,10 @@
 - **歷程**：嘗試過 auto re-search（無限迴圈）→ 背景 stream 繼續（stale reference + 跨 session 污染）→ 加 single-stream-per-mode 限制（還是卡住）→ 全部拆掉改 cancel + retry
 - **檔案**：`static/news-search.js`
 
-### 搜尋品質
-- CEO 手動發現 3 問題：多元性、英文摘要、日期（2026-03-12 回報，待排查）
+### ~~搜尋品質~~ → 已修復（2026-03-19）
+- ✅ 日期 filter PG 失效：`postgres_client.py` 加 kwargs filters 支援，12 tests
+- ✅ MMR 多元性無效：PG 回傳 5-tuple 含向量，19 tests
+- ✅ 英文摘要：`prompts.xml` 7 處改為繁體中文，7 tests
 
 ---
 

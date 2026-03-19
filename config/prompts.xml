@@ -228,8 +228,8 @@
         Provide a short description of the item that is relevant to the user's question, without mentioning the user's question.
         Provide an explanation of the relevance of the item to the user's question, without mentioning the user's question or the score or explicitly mentioning the term relevance.
         If the score is below 75, in the description, include the reason why it is still relevant.
-        The description you generate should be in the same language as the item's description.
-          
+        IMPORTANT: The description you generate must be in Traditional Chinese (繁體中文), unless the user explicitly requests English or another language.
+
         The user's question is: {request.query}. The item's description is {item.description}
       </promptString>
       <returnStruc>
@@ -253,7 +253,7 @@
         - Example GOOD: "Target使用AI模擬未來訂單情況，協助供應鏈管理和門市人力配置。系統能預測需求並提前調整資源。"
         - Example BAD: "該文章探討了零售業如何利用AI技術改善供應鏈管理，與台灣零售科技業的發展有一定的相關性，且來源於可信的新聞網站。"
 
-        The description you generate should be in the same language as the item's description.
+        IMPORTANT: The description you generate must be in Traditional Chinese (繁體中文), unless the user explicitly requests English or another language.
 
         The user's question is: \"{request.query}\". The item's description in schema.org format is \"{item.description}\".
       </promptString>
@@ -321,7 +321,7 @@
 
         Calculate the **Final Score** using the appropriate weighting based on whether temporal keywords are detected.
 
-        IMPORTANT: Write the description in the same language as the user's question.
+        IMPORTANT: Write the description in Traditional Chinese (繁體中文), unless the user explicitly requests English or another language.
 
         CRITICAL: For the description field, focus ONLY on factual content from the article:
         - Extract 2-3 key facts with specific details (company names, statistics, technologies)
@@ -462,7 +462,7 @@
       </promptString>
       <returnStruc>
         {
-          "summary" : "string in the same language as the user's question (MUST be 100-200+ characters for Chinese, 2-3 paragraphs)"
+          "summary" : "string in Traditional Chinese (繁體中文), unless the user explicitly requests English or another language (MUST be 100-200+ characters, 2-3 paragraphs)"
         }
       </returnStruc>
     </Prompt>
@@ -1076,7 +1076,7 @@
           - Example GOOD: "Target使用AI模擬未來訂單情況，協助供應鏈管理和門市人力配置。系統能預測需求並提前調整資源。"
           - Example BAD: "該文章探討了零售業如何利用AI技術改善供應鏈管理，與台灣零售科技業的發展有一定的相關性，且來源於可信的新聞網站。"
 
-          The description you generate should be in the same language as the item's description.
+          IMPORTANT: The description you generate must be in Traditional Chinese (繁體中文), unless the user explicitly requests English or another language.
 
           The user's question is: "{request.query}".
           The item's description is: "{item.description}".
@@ -1146,7 +1146,7 @@
 
           Calculate the **Final Score** using the appropriate weighting based on whether temporal keywords are detected.
 
-          IMPORTANT: Write the description in the same language as the user's question.
+          IMPORTANT: Write the description in Traditional Chinese (繁體中文), unless the user explicitly requests English or another language.
 
           CRITICAL: For the description field, focus ONLY on factual content from the article:
           - Extract 2-3 key facts with specific details (company names, statistics, technologies)
@@ -1362,7 +1362,7 @@
 
           Calculate the **Final Score** using the appropriate weighting based on whether temporal keywords are detected.
 
-          IMPORTANT: Write the description in the same language as the user's question.
+          IMPORTANT: Write the description in Traditional Chinese (繁體中文), unless the user explicitly requests English or another language.
         </promptString>
         <returnStruc>
           {
@@ -1371,7 +1371,7 @@
             "freshness_score": "integer 0-100",
             "authority_score": "integer 0-100",
             "final_score": "integer 0-100 (weighted average)",
-            "description": "short description in same language as query"
+            "description": "short description in Traditional Chinese (繁體中文)"
           }
         </returnStruc>
       </Prompt>

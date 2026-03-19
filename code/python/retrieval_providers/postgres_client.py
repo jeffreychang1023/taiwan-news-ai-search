@@ -339,7 +339,21 @@ class PgVectorClient(RetrievalClientBase):
         logger.info(f"Successfully uploaded {inserted_count} documents")
         return inserted_count
     
-    def _build_filters(self, sites, query_params=None):
+    def _build_filters(self, sites, query_params=None, kwargs_filters=None):
+        """Build SQL WHERE clauses and parameters from filter inputs.
+
+        Args:
+            sites: List of site/source names to filter by.
+            query_params: Legacy dict with keys like date_from, date_to, author.
+            kwargs_filters: Generic filter list passed via kwargs['filters'], e.g.
+                [{"field": "datePublished", "operator": "gte", "value": "2026-01-01"}]
+                Supported fields: datePublished
+                Supported operators: gte (>=), lte (<=)
+                Unknown fields or operators are silently ignored to prevent SQL injection.
+
+        Returns:
+            Tuple of (clauses: List[str], params: List[Any])
+        """
         clauses = []
         params = []
 
@@ -358,6 +372,27 @@ class PgVectorClient(RetrievalClientBase):
             if query_params.get("date_to"):
                 clauses.append("a.date_published <= %s")
                 params.append(query_params["date_to"])
+
+        # Handle generic kwargs filters (from baseHandler search_filters)
+        _FIELD_MAP = {
+            "datePublished": "a.date_published",
+        }
+        _OP_MAP = {
+            "gte": ">=",
+            "lte": "<=",
+        }
+        if kwargs_filters:
+            for f in kwargs_filters:
+                field = f.get("field")
+                operator = f.get("operator")
+                value = f.get("value")
+                if field not in _FIELD_MAP or operator not in _OP_MAP:
+                    logger.debug(f"Ignoring unknown filter field/operator: {field}/{operator}")
+                    continue
+                sql_col = _FIELD_MAP[field]
+                sql_op = _OP_MAP[operator]
+                clauses.append(f"{sql_col} {sql_op} %s")
+                params.append(value)
 
         return clauses, params
 
@@ -386,6 +421,8 @@ class PgVectorClient(RetrievalClientBase):
         start_time = time.time()
         logger.info(f"Searching for '{query[:50]}...' in site: {site}, num_results: {num_results}")
 
+        include_vectors = kwargs.get('include_vectors', False)
+
         try:
             query_embedding = await get_embedding(query, query_params=query_params)
             # Ensure all values are float — psycopg rejects mixed int/float lists
@@ -400,7 +437,8 @@ class PgVectorClient(RetrievalClientBase):
         elif isinstance(site, str) and site != "all":
             sites = [site]
 
-        filter_clauses, filter_params = self._build_filters(sites, query_params)
+        kwargs_filters = kwargs.get('filters', [])
+        filter_clauses, filter_params = self._build_filters(sites, query_params, kwargs_filters=kwargs_filters)
 
         async def _search_docs(conn):
             async with conn.cursor(row_factory=dict_row) as cur:
@@ -408,10 +446,11 @@ class PgVectorClient(RetrievalClientBase):
 
                 # --- Vector search ---
                 where_sql = ("WHERE " + " AND ".join(filter_clauses)) if filter_clauses else ""
+                embedding_col = ", c.embedding" if include_vectors else ""
                 vector_sql = f"""
                     SELECT c.id AS chunk_id, c.article_id, c.chunk_text,
                            a.url, a.title, a.author, a.source, a.date_published, a.metadata,
-                           1 - (c.embedding <=> %s::vector) AS vector_score
+                           1 - (c.embedding <=> %s::vector) AS vector_score{embedding_col}
                     FROM chunks c
                     JOIN articles a ON a.id = c.article_id
                     {where_sql}
@@ -425,6 +464,8 @@ class PgVectorClient(RetrievalClientBase):
                 # --- Text search (pg_bigm) ---
                 text_where_parts = ["c.tsv LIKE '%%' || likequery(%s) || '%%'"] + filter_clauses
                 text_where_sql = "WHERE " + " AND ".join(text_where_parts)
+                # Text search does not select embedding to avoid double retrieval;
+                # vectors from vector_rows are merged in below.
                 text_sql = f"""
                     SELECT c.id AS chunk_id, c.article_id, c.chunk_text,
                            a.url, a.title, a.author, a.source, a.date_published, a.metadata,
@@ -445,6 +486,20 @@ class PgVectorClient(RetrievalClientBase):
                     text_rows = []
 
                 # --- Union merge (deduplicate by chunk_id) ---
+                # Build lookup: chunk_id → embedding for vector-searched rows
+                vector_row_embeddings: dict = {}
+                if include_vectors:
+                    for row in vector_rows:
+                        cid = row["chunk_id"]
+                        emb = row.get("embedding")
+                        if emb is not None:
+                            # pgvector returns numpy arrays or lists; normalise to list[float]
+                            if hasattr(emb, 'tolist'):
+                                emb = emb.tolist()
+                            else:
+                                emb = [float(v) for v in emb]
+                            vector_row_embeddings[cid] = emb
+
                 seen_chunk_ids = set()
                 merged = []
                 for row in vector_rows:
@@ -459,7 +514,7 @@ class PgVectorClient(RetrievalClientBase):
                 results = []
                 for row in merged:
                     schema_str = self._build_schema_json(row)
-                    results.append({
+                    item = {
                         'url': row["url"],
                         'schema_str': schema_str,
                         'title': row["title"],
@@ -468,7 +523,15 @@ class PgVectorClient(RetrievalClientBase):
                         'date_published': row["date_published"].isoformat() if row.get("date_published") else "",
                         'vector_score': float(row.get("vector_score") or 0.0),
                         'text_score': float(row.get("text_score") or 0.0),
-                    })
+                    }
+                    if include_vectors:
+                        cid = row["chunk_id"]
+                        emb = vector_row_embeddings.get(cid)
+                        if emb is None:
+                            # Row came from text-only path; embedding not fetched
+                            emb = None
+                        item['vector'] = emb
+                    results.append(item)
 
                 return results
 
@@ -528,8 +591,15 @@ class PgVectorClient(RetrievalClientBase):
                 except Exception as log_err:
                     logger.warning(f"Failed to log retrieved documents: {log_err}")
 
-            # Convert back to list-of-lists format expected by downstream code
-            results = [[item['url'], item['schema_str'], item['title'], item['source']] for item in raw_results]
+            # Convert back to list-of-lists format expected by downstream code.
+            # When include_vectors=True, emit 5-tuples so ranking.py can extract
+            # vectors for MMR: [url, schema_str, title, source, vector]
+            results = []
+            for item in raw_results:
+                row = [item['url'], item['schema_str'], item['title'], item['source']]
+                if include_vectors and 'vector' in item and item['vector'] is not None:
+                    row.append(item['vector'])
+                results.append(row)
             return results
         except Exception as e:
             logger.exception(f"Error in search: {e}")

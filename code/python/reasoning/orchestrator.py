@@ -600,9 +600,16 @@ class DeepResearchOrchestrator:
                 tracer=tracer,
             )
 
-            # RSN-11: Early return if context is empty to prevent hallucination
-            if not self.formatted_context or not self.formatted_context.strip():
-                self.logger.warning("Empty context - no relevant documents found")
+            # RSN-11: Early return if there are no real sources to prevent hallucination.
+            # Use source_map (not formatted_context) as the authoritative signal:
+            # _get_current_time_header() always produces a non-empty string so
+            # formatted_context is non-empty even when items=[], which would bypass
+            # the old guard and allow the Writer to hallucinate a response.
+            if not self.source_map:
+                self.logger.warning(
+                    "RSN-11: source_map is empty — no real sources retrieved. "
+                    "Returning no-results response to prevent hallucination."
+                )
                 return self._create_no_results_response(query)
 
             # Phase 2: Actor-Critic Loop
@@ -1293,6 +1300,19 @@ class DeepResearchOrchestrator:
                 except Exception as e:
                     self.logger.error(f"Failed to analyze reasoning chain: {e}", exc_info=True)
 
+            # RSN-4: Transfer verification_status from critic review to final_report
+            # critic.py sets these fields dynamically on review.__dict__ when CoV fails.
+            # _format_result reads them from final_report.__dict__ to include in schema_obj.
+            if review and review.__dict__.get("verification_status"):
+                final_report.__dict__["verification_status"] = review.__dict__["verification_status"]
+                final_report.__dict__["verification_message"] = review.__dict__.get(
+                    "verification_message", "本報告未經完整事實驗證"
+                )
+                self.logger.info(
+                    f"RSN-4: Transferred verification_status='{review.__dict__['verification_status']}' "
+                    "from critic review to final_report"
+                )
+
             # Phase 4: Format as NLWeb result (⚠️ pass context for source extraction)
             result = self._format_result(query, mode, final_report, iteration + 1, current_context, analyst_output=response)
             self.logger.info(f"Research completed: {iteration + 1} iterations")
@@ -1451,6 +1471,14 @@ class DeepResearchOrchestrator:
 
             if hasattr(analyst_output, 'reasoning_chain_analysis') and analyst_output.reasoning_chain_analysis:
                 schema_obj["reasoning_chain_analysis"] = analyst_output.reasoning_chain_analysis.model_dump()
+
+        # RSN-4: Add verification status if CoV failed (set dynamically on final_report by orchestrator)
+        verification_status = final_report.__dict__.get("verification_status")
+        if verification_status:
+            schema_obj["verification_status"] = verification_status
+            verification_message = final_report.__dict__.get("verification_message")
+            if verification_message:
+                schema_obj["verification_message"] = verification_message
 
         return [{
             "@type": "Item",

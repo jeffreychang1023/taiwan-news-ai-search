@@ -4,6 +4,36 @@
 
 ---
 
+## ✅ Track AH：搜尋品質修復 + Verification Status SSE（2026-03-19）
+
+**目標**：修復 5 個搜尋品質 / Reasoning pipeline bug，全部 TDD。
+
+### 修復項目
+
+| ID | 問題 | 修改檔案 | 測試數 |
+|----|------|---------|--------|
+| P0 | Retrieval 0 結果時 Writer hallucinate | `reasoning/orchestrator.py` | 8 |
+| P1 | PG 日期 filter 被靜默忽略 | `retrieval_providers/postgres_client.py` | 12 |
+| P2 | MMR 無法取得向量，多元性完全無效 | `retrieval_providers/postgres_client.py`, `core/ranking.py` | 19 |
+| P3 | prompts.xml 7 處讓 LLM 輸出英文 | `config/prompts.xml` | 7 |
+| RSN-4 | verification_status 未傳到前端 | `reasoning/orchestrator.py`, `webserver/routes/api.py`, `static/news-search.js`, `static/news-search.css` | 6 |
+
+**總計**：52 個新測試，17/17 smoke test PASSED。
+
+### 根因分析
+
+P0/P1/P2 共同 pattern：Qdrant → PostgreSQL 遷移後，postgres_client.py 未完整實作 Qdrant client 的介面（向量回傳、filter 讀取），且全部 silent fail。
+
+### 新增檔案
+
+- `tests/unit/test_zero_results_guard.py`
+- `tests/unit/test_pg_date_filter.py`
+- `tests/unit/test_mmr_vector_retrieval.py`
+- `tests/unit/test_prompt_language.py`
+- `tests/unit/test_verification_status_sse.py`
+
+---
+
 ## ✅ Track AG：Bootstrap Token Onboarding Flow + E2E 第一輪修復（2026-03-17）
 
 **目標**：B2B 封閉式用戶引導流程（非自助註冊）+ Login 系統 E2E 第一輪測試修復。

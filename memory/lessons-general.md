@@ -268,4 +268,34 @@ type: feedback
 **信心**：高（CEO 直接確認修訂方向）
 **日期**：2026-03-19
 
+## DB 遷移 / 介面契約（2026-03-19）
+
+### Qdrant→PG 遷移留下三個 silent fail — 介面契約未完整實作
+**問題**：從 Qdrant 遷移到 PostgreSQL 後，`postgres_client.py` 有三個介面未實作但 silent fail：(1) P0：RSN-11 guard 檢查 `formatted_context` 字串，但 `_get_current_time_header()` 永遠非空 → 0 結果時 Writer hallucinate。(2) P1：`search()` 完全不讀 `kwargs['filters']`（日期 filter）→ 所有時間搜尋無效。(3) P2：回傳結果不含 embedding 向量 → MMR 多元性永遠 skip。三個 bug 共同 pattern：Qdrant client 有的功能，PG client 沒實作，且全部 silent fail。
+**解決方案**：(1) Guard 改為 `if not self.source_map`（語意檢查，不靠字串）。(2) `_build_filters()` 加 `kwargs_filters` 支援。(3) `search()` 加 `include_vectors` 回傳 5-tuple。**通則：DB/storage 遷移後，必須逐一驗證舊 client 的所有介面在新 client 中有等效實作。Silent fail 是遷移 bug 的最大殺手 — 功能看起來在跑但實際沒有。**
+**信心**：高（三個 bug 同一 pattern，52 個測試驗證修復）
+**檔案**：`reasoning/orchestrator.py`, `retrieval_providers/postgres_client.py`, `core/ranking.py`
+**日期**：2026-03-19
+
+### Guard 條件應檢查語意實體，不是衍生字串
+**問題**：RSN-11 guard 用 `if not self.formatted_context` 判斷「有沒有資料」，但 `formatted_context` 除了來源資料還包含 time header。time header 永遠非空 → guard 永遠不觸發 → 0 結果時 reasoning pipeline 繼續跑。
+**解決方案**：改為 `if not self.source_map`。`source_map` 是真正的來源字典，只有實際 retrieval 結果才會填入。**通則：guard/branch 條件應該檢查 business logic 的核心實體（source_map），不是衍生表示（formatted_context string）。衍生表示會被其他邏輯（如 header prepend）汙染。**
+**信心**：高
+**檔案**：`reasoning/orchestrator.py`
+**日期**：2026-03-19
+
+### 動態 __dict__ 屬性不會自動 propagate — 需要顯式傳遞
+**問題**：RSN-4 的 Critic agent 把 `verification_status` 塞進 `result.__dict__`，但 orchestrator 不知道要讀它，SSE 不知道要送它，前端不知道要收它。用 `__dict__` 塞動態屬性雖然方便，但下游 code 除非明確寫 `getattr(result, 'verification_status', None)`，否則完全看不到。
+**解決方案**：在 orchestrator 的 `_format_result` 中顯式讀取並傳入 SSE payload。**通則：pipeline 中的資料傳遞要走顯式路徑（schema 欄位、函式參數），不要靠動態 __dict__。如果必須用 __dict__，下游必須有對應的 getattr 邏輯。**
+**信心**：高
+**檔案**：`reasoning/orchestrator.py`, `webserver/routes/api.py`
+**日期**：2026-03-19
+
+### Prompt 語言指示散佈 7 處 — 改一處漏六處
+**問題**：`prompts.xml` 有 7 個位置寫「用跟文章相同語言回應」（RankingPrompt ×2、RankingPromptForGenerate ×3、SummarizeResultsPrompt ×2）。之前修了 SummarizeResultsPrompt 的主文但漏了 returnStruc，其餘 6 處完全沒動。
+**解決方案**：用 indexer 搜 "same language" 找到全部 7 處，統一改為「必須用繁體中文」。**通則：config/prompt 檔案的修改必須用全文搜尋確認所有相同 pattern 的位置，不要只改「看到的那一個」。**
+**信心**：高（7 個測試覆蓋全部位置）
+**檔案**：`config/prompts.xml`
+**日期**：2026-03-19
+
 *最後更新：2026-03-19*
