@@ -2572,10 +2572,8 @@
                 return;
             }
 
-            // Use actual rendered article count instead of backend count
-            const listView = document.getElementById('listView');
-            const renderedCards = listView ? listView.querySelectorAll('.news-card:not(.skeleton-card)').length : 0;
-            const displayCount = renderedCards > 0 ? renderedCards : articleCount;
+            // Use articleCount from current search's accumulatedData (not DOM which may have stale cards)
+            const displayCount = articleCount || 0;
 
             const formattedAnswer = convertMarkdownToHtml(answerData.answer);
             const isUpdate = aiSummaryContent.querySelector('.summary-content') !== null &&
@@ -2909,6 +2907,19 @@
                         if (mySearchGeneration !== searchGenerationId) return;
                         console.log('[Progressive] Stream complete');
                         clearLoadingStates();
+
+                        // Fix source-info count: recalculate from actual rendered cards
+                        const listViewFinal = document.getElementById('listView');
+                        const actualCount = listViewFinal
+                            ? listViewFinal.querySelectorAll('.news-card:not(.skeleton-card)').length
+                            : 0;
+                        const sourceInfoEl = document.querySelector('#aiSummaryContent .source-info');
+                        if (sourceInfoEl) {
+                            sourceInfoEl.textContent = actualCount > 0
+                                ? `⚠️ 資料來源：基於 ${actualCount} 則報導生成`
+                                : `⚠️ AI 生成回答（未找到直接相關報導）`;
+                            console.log(`[Progressive] source-info updated to ${actualCount} articles`);
+                        }
                     }
                 };
 

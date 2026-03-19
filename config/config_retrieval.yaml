@@ -2,7 +2,7 @@ write_endpoint: postgres
 
 # Retrieval quality thresholds
 retrieval_threshold:
-  vector_similarity_min: 0.40  # Minimum cosine similarity for vector search results
+  vector_similarity_min: 0.50  # Minimum cosine similarity for vector search results
 
 # BM25 keyword scoring parameters
 bm25_params:

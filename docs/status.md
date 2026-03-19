@@ -71,6 +71,11 @@
 - **歷程**：嘗試過 auto re-search（無限迴圈）→ 背景 stream 繼續（stale reference + 跨 session 污染）→ 加 single-stream-per-mode 限制（還是卡住）→ 全部拆掉改 cancel + retry
 - **檔案**：`static/news-search.js`
 
+### Prompt 語言改造（待排）
+- 所有 `config/prompts.xml` 的 prompt 主體改為繁體中文（目前是英文 + 結尾加繁中指示，LLM 容易忽略）
+- 分批改 + 測試：SummarizeResultsPrompt → RankingPrompt → 其他
+- **優先級**：Medium（影響摘要語言品質）
+
 ### ~~搜尋品質~~ → 已修復（2026-03-19）
 - ✅ 日期 filter PG 失效：`postgres_client.py` 加 kwargs filters 支援，12 tests
 - ✅ MMR 多元性無效：PG 回傳 5-tuple 含向量，19 tests
