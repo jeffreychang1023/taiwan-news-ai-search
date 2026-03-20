@@ -557,30 +557,170 @@ async def activate_page_handler(request: web.Request) -> web.Response:
     safe_token_js = json.dumps(token)  # produces "\"...\""  with all special chars escaped
 
     html = f"""<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>Activate Account</title></head>
-<body style="max-width:400px;margin:60px auto;font-family:sans-serif">
-<h2>Set Your Password</h2>
-<form id="f" onsubmit="return go()">
-<input type="hidden" id="tokenField" name="token" value="{safe_token_attr}">
-<p><label>Password<br><input type="password" id="pw" required minlength="8" style="width:100%;padding:8px"></label></p>
-<p><label>Confirm<br><input type="password" id="pw2" required style="width:100%;padding:8px"></label></p>
-<p id="err" style="color:red"></p>
-<button type="submit" style="padding:8px 24px">Activate</button>
-</form>
+<html lang="zh-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>啟用帳號 - 讀豹</title>
+<style>
+  * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+  body {{
+    font-family: 'Noto Sans TC', -apple-system, BlinkMacSystemFont, sans-serif;
+    background: #FBF5E6;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+  }}
+  .activate-card {{
+    background: #FFFFFF;
+    border-radius: 10px;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+    padding: 40px;
+    width: 100%;
+    max-width: 440px;
+  }}
+  .activate-logo {{
+    text-align: center;
+    margin-bottom: 24px;
+  }}
+  .activate-logo img {{
+    height: 64px;
+    margin-bottom: 8px;
+  }}
+  .activate-logo h1 {{
+    font-size: 1.5rem;
+    color: #2D3436;
+    font-weight: 700;
+  }}
+  .activate-logo p {{
+    color: #B2BEC3;
+    font-size: 0.9rem;
+    margin-top: 4px;
+  }}
+  .form-group {{
+    margin-bottom: 16px;
+  }}
+  .form-group label {{
+    display: block;
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: #2D3436;
+    margin-bottom: 6px;
+  }}
+  .form-group input {{
+    width: 100%;
+    padding: 10px 14px;
+    border: 1px solid #B2BEC3;
+    border-radius: 8px;
+    font-size: 0.95rem;
+    transition: border-color 0.2s;
+  }}
+  .form-group input:focus {{
+    outline: none;
+    border-color: #FDCB6E;
+    box-shadow: 0 0 0 3px rgba(253,203,110,0.15);
+  }}
+  .form-hint {{
+    font-size: 0.8rem;
+    color: #B2BEC3;
+    margin-top: 4px;
+  }}
+  .activate-btn {{
+    width: 100%;
+    padding: 12px;
+    background: #FDCB6E;
+    color: #2D3436;
+    border: none;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    margin-top: 8px;
+    transition: opacity 0.2s;
+  }}
+  .activate-btn:hover {{ opacity: 0.9; }}
+  .activate-btn:disabled {{ opacity: 0.5; cursor: not-allowed; }}
+  .error-msg {{
+    color: #dc2626;
+    font-size: 0.875rem;
+    margin-top: 8px;
+    display: none;
+  }}
+  .success-msg {{
+    color: #059669;
+    font-size: 1rem;
+    margin-top: 16px;
+    padding: 20px;
+    display: none;
+    text-align: center;
+  }}
+</style>
+</head>
+<body>
+<div class="activate-card">
+  <div class="activate-logo">
+    <img src="/static/images/Leopard.png" alt="讀豹" onerror="this.style.display='none'">
+    <h1>啟用帳號</h1>
+    <p>設定您的登入密碼</p>
+  </div>
+  <form id="f" onsubmit="return go()">
+    <input type="hidden" id="tokenField" name="token" value="{safe_token_attr}">
+    <div class="form-group">
+      <label for="pw">密碼</label>
+      <input type="password" id="pw" required minlength="8" placeholder="至少 8 字元，含大寫與數字" autocomplete="new-password">
+      <div class="form-hint">至少 8 字元，需包含大寫字母與數字</div>
+    </div>
+    <div class="form-group">
+      <label for="pw2">確認密碼</label>
+      <input type="password" id="pw2" required placeholder="再次輸入密碼" autocomplete="new-password">
+    </div>
+    <div class="error-msg" id="err"></div>
+    <div class="success-msg" id="successEl"></div>
+    <button type="submit" class="activate-btn" id="activateBtn">啟用帳號</button>
+  </form>
+</div>
 <script>
 async function go(){{
   event.preventDefault();
+  const errEl = document.getElementById('err');
+  const successEl = document.getElementById('successEl');
+  const btn = document.getElementById('activateBtn');
+  errEl.style.display = 'none';
+  successEl.style.display = 'none';
   const pw=document.getElementById('pw').value, pw2=document.getElementById('pw2').value;
-  if(pw!==pw2){{document.getElementById('err').textContent='Passwords do not match';return}}
+  if(pw!==pw2){{errEl.textContent='密碼不一致';errEl.style.display='block';return}}
+  btn.disabled = true;
+  btn.textContent = '啟用中...';
   const token=document.getElementById('tokenField').value;
-  const r=await fetch('/api/auth/activate',{{method:'POST',headers:{{'Content-Type':'application/json'}},
-    body:JSON.stringify({{token:token,password:pw}})}});
-  const d=await r.json();
-  if(d.success){{document.body.innerHTML='<h2>Account activated!</h2><p><a href="/">Go to login</a></p>'}}
-  else{{document.getElementById('err').textContent=d.error||'Activation failed'}}
+  try {{
+    const r=await fetch('/api/auth/activate',{{method:'POST',headers:{{'Content-Type':'application/json'}},
+      body:JSON.stringify({{token:token,password:pw}})}});
+    const d=await r.json();
+    if(d.success){{
+      document.getElementById('f').style.display='none';
+      successEl.innerHTML='<h2 style="margin-bottom:12px;">帳號已啟用!</h2>'
+        +'<p>您的帳號已成功啟用。</p>'
+        +'<p style="margin-top:16px;"><a href="/" style="color:#FDCB6E;font-weight:600;">前往登入</a></p>';
+      successEl.style.display='block';
+      setTimeout(() => {{ window.location.href = '/'; }}, 2000);
+    }} else {{
+      errEl.textContent=d.error||'啟用失敗';
+      errEl.style.display='block';
+      btn.disabled=false;
+      btn.textContent='啟用帳號';
+    }}
+  }} catch(e) {{
+    errEl.textContent='網路錯誤，請稍後再試';
+    errEl.style.display='block';
+    btn.disabled=false;
+    btn.textContent='啟用帳號';
+  }}
 }}
 </script>
-</body></html>"""
+</body>
+</html>"""
     return web.Response(text=html, content_type='text/html')
 
 
@@ -635,7 +775,7 @@ async def reset_password_page_handler(request: web.Request) -> web.Response:
   * {{ margin: 0; padding: 0; box-sizing: border-box; }}
   body {{
     font-family: 'Noto Sans TC', -apple-system, BlinkMacSystemFont, sans-serif;
-    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+    background: #FBF5E6;
     min-height: 100vh;
     display: flex;
     align-items: center;
@@ -643,9 +783,9 @@ async def reset_password_page_handler(request: web.Request) -> web.Response:
     padding: 20px;
   }}
   .reset-card {{
-    background: #fff;
-    border-radius: 16px;
-    box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+    background: #FFFFFF;
+    border-radius: 10px;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.08);
     padding: 40px;
     width: 100%;
     max-width: 440px;
@@ -660,11 +800,11 @@ async def reset_password_page_handler(request: web.Request) -> web.Response:
   }}
   .reset-logo h1 {{
     font-size: 1.5rem;
-    color: #1a1a2e;
+    color: #2D3436;
     font-weight: 700;
   }}
   .reset-logo p {{
-    color: #666;
+    color: #B2BEC3;
     font-size: 0.9rem;
     margin-top: 4px;
   }}
@@ -675,32 +815,32 @@ async def reset_password_page_handler(request: web.Request) -> web.Response:
     display: block;
     font-size: 0.875rem;
     font-weight: 600;
-    color: #333;
+    color: #2D3436;
     margin-bottom: 6px;
   }}
   .form-group input {{
     width: 100%;
     padding: 10px 14px;
-    border: 1px solid #ddd;
+    border: 1px solid #B2BEC3;
     border-radius: 8px;
     font-size: 0.95rem;
     transition: border-color 0.2s;
   }}
   .form-group input:focus {{
     outline: none;
-    border-color: #c8a96e;
-    box-shadow: 0 0 0 3px rgba(200,169,110,0.15);
+    border-color: #FDCB6E;
+    box-shadow: 0 0 0 3px rgba(253,203,110,0.15);
   }}
   .form-hint {{
     font-size: 0.8rem;
-    color: #888;
+    color: #B2BEC3;
     margin-top: 4px;
   }}
   .reset-btn {{
     width: 100%;
     padding: 12px;
-    background: linear-gradient(135deg, #c8a96e, #b8963e);
-    color: #fff;
+    background: #FDCB6E;
+    color: #2D3436;
     border: none;
     border-radius: 8px;
     font-size: 1rem;
@@ -712,13 +852,13 @@ async def reset_password_page_handler(request: web.Request) -> web.Response:
   .reset-btn:hover {{ opacity: 0.9; }}
   .reset-btn:disabled {{ opacity: 0.5; cursor: not-allowed; }}
   .error-msg {{
-    color: #dc3545;
+    color: #dc2626;
     font-size: 0.875rem;
     margin-top: 8px;
     display: none;
   }}
   .success-msg {{
-    color: #28a745;
+    color: #059669;
     font-size: 1rem;
     margin-top: 16px;
     padding: 20px;
@@ -782,7 +922,7 @@ async function handleReset() {{
       document.getElementById('resetForm').style.display = 'none';
       successEl.innerHTML = '<h2 style="margin-bottom:12px;">密碼已重設!</h2>'
         + '<p>您的密碼已成功更新。即將跳轉至首頁...</p>'
-        + '<p style="margin-top:16px;"><a href="/" style="color:#c8a96e;font-weight:600;">前往登入</a></p>';
+        + '<p style="margin-top:16px;"><a href="/" style="color:#FDCB6E;font-weight:600;">前往登入</a></p>';
       successEl.style.display = 'block';
       setTimeout(() => {{ window.location.href = '/'; }}, 2000);
     }} else {{
@@ -837,7 +977,7 @@ async def setup_page_handler(request: web.Request) -> web.Response:
   * {{ margin: 0; padding: 0; box-sizing: border-box; }}
   body {{
     font-family: 'Noto Sans TC', -apple-system, BlinkMacSystemFont, sans-serif;
-    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+    background: #FBF5E6;
     min-height: 100vh;
     display: flex;
     align-items: center;
@@ -845,9 +985,9 @@ async def setup_page_handler(request: web.Request) -> web.Response:
     padding: 20px;
   }}
   .setup-card {{
-    background: #fff;
-    border-radius: 16px;
-    box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+    background: #FFFFFF;
+    border-radius: 10px;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.08);
     padding: 40px;
     width: 100%;
     max-width: 440px;
@@ -862,11 +1002,11 @@ async def setup_page_handler(request: web.Request) -> web.Response:
   }}
   .setup-logo h1 {{
     font-size: 1.5rem;
-    color: #1a1a2e;
+    color: #2D3436;
     font-weight: 700;
   }}
   .setup-logo p {{
-    color: #666;
+    color: #B2BEC3;
     font-size: 0.9rem;
     margin-top: 4px;
   }}
@@ -877,32 +1017,32 @@ async def setup_page_handler(request: web.Request) -> web.Response:
     display: block;
     font-size: 0.875rem;
     font-weight: 600;
-    color: #333;
+    color: #2D3436;
     margin-bottom: 6px;
   }}
   .form-group input {{
     width: 100%;
     padding: 10px 14px;
-    border: 1px solid #ddd;
+    border: 1px solid #B2BEC3;
     border-radius: 8px;
     font-size: 0.95rem;
     transition: border-color 0.2s;
   }}
   .form-group input:focus {{
     outline: none;
-    border-color: #c8a96e;
-    box-shadow: 0 0 0 3px rgba(200,169,110,0.15);
+    border-color: #FDCB6E;
+    box-shadow: 0 0 0 3px rgba(253,203,110,0.15);
   }}
   .form-hint {{
     font-size: 0.8rem;
-    color: #888;
+    color: #B2BEC3;
     margin-top: 4px;
   }}
   .setup-btn {{
     width: 100%;
     padding: 12px;
-    background: linear-gradient(135deg, #c8a96e, #b8963e);
-    color: #fff;
+    background: #FDCB6E;
+    color: #2D3436;
     border: none;
     border-radius: 8px;
     font-size: 1rem;
@@ -914,13 +1054,13 @@ async def setup_page_handler(request: web.Request) -> web.Response:
   .setup-btn:hover {{ opacity: 0.9; }}
   .setup-btn:disabled {{ opacity: 0.5; cursor: not-allowed; }}
   .error-msg {{
-    color: #dc3545;
+    color: #dc2626;
     font-size: 0.875rem;
     margin-top: 8px;
     display: none;
   }}
   .success-msg {{
-    color: #c8a96e;
+    color: #059669;
     font-size: 1rem;
     margin-top: 16px;
     padding: 20px;
@@ -1000,9 +1140,9 @@ async function handleSetup() {{
     const data = await res.json();
     if (data.success) {{
       document.getElementById('setupForm').style.display = 'none';
-      successEl.innerHTML = '<h2 style="margin-bottom:12px;color:#c8a96e;">組織建立成功!</h2>'
-        + '<p style="color:#666;">您的管理員帳號已建立。</p>'
-        + '<p style="margin-top:16px;"><a href="/" style="color:#fff;background:#c8a96e;padding:10px 24px;border-radius:8px;text-decoration:none;font-weight:600;">前往登入</a></p>';
+      successEl.innerHTML = '<h2 style="margin-bottom:12px;color:#059669;">組織建立成功!</h2>'
+        + '<p style="color:#2D3436;">您的管理員帳號已建立。</p>'
+        + '<p style="margin-top:16px;"><a href="/" style="color:#2D3436;background:#FDCB6E;padding:10px 24px;border-radius:8px;text-decoration:none;font-weight:600;">前往登入</a></p>';
       successEl.style.display = 'block';
       setTimeout(() => {{ window.location.href = '/'; }}, 2000);
     }} else {{
@@ -1035,7 +1175,7 @@ def _setup_error_page(message: str) -> str:
   * {{ margin: 0; padding: 0; box-sizing: border-box; }}
   body {{
     font-family: 'Noto Sans TC', -apple-system, BlinkMacSystemFont, sans-serif;
-    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+    background: #FBF5E6;
     min-height: 100vh;
     display: flex;
     align-items: center;
@@ -1043,9 +1183,9 @@ def _setup_error_page(message: str) -> str:
     padding: 20px;
   }}
   .error-card {{
-    background: #fff;
-    border-radius: 16px;
-    box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+    background: #FFFFFF;
+    border-radius: 10px;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.08);
     padding: 40px;
     width: 100%;
     max-width: 440px;
@@ -1057,11 +1197,11 @@ def _setup_error_page(message: str) -> str:
   }}
   .error-card h1 {{
     font-size: 1.3rem;
-    color: #dc3545;
+    color: #dc2626;
     margin-bottom: 12px;
   }}
   .error-card p {{
-    color: #666;
+    color: #2D3436;
     font-size: 0.95rem;
     line-height: 1.6;
   }}
@@ -1072,7 +1212,7 @@ def _setup_error_page(message: str) -> str:
   <img src="/static/images/Leopard.png" alt="讀豹" onerror="this.style.display='none'">
   <h1>此連結無效或已過期</h1>
   <p>{safe_msg}</p>
-  <p style="margin-top:16px;color:#999;font-size:0.85rem;">如有疑問，請聯繫平台管理員。</p>
+  <p style="margin-top:16px;color:#B2BEC3;font-size:0.85rem;">如有疑問，請聯繫平台管理員。</p>
 </div>
 </body>
 </html>"""

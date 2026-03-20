@@ -1075,12 +1075,12 @@
         }
 
         .chat-message-pin:hover {
-            color: #f59e0b !important;
+            color: #FDCB6E !important;
             opacity: 1 !important;
         }
 
         .chat-message-pin.pinned {
-            color: #f59e0b;
+            color: #FDCB6E;
             opacity: 1;
         }
 
@@ -1091,8 +1091,8 @@
 
         @keyframes highlightPulse {
             0%, 15% {
-                background-color: #fef3c7;
-                box-shadow: 0 0 0 4px rgba(251, 191, 36, 0.3);
+                background-color: #FFEAA7;
+                box-shadow: 0 0 0 4px rgba(253, 203, 110, 0.3);
             }
             100% {
                 background-color: transparent;
@@ -1102,8 +1102,8 @@
 
         /* Pinned Messages Banner (Line-style) */
         .pinned-banner {
-            background: #fffbeb;
-            border-bottom: 1px solid #fcd34d;
+            background: #FFFDF5;
+            border-bottom: 1px solid #FDCB6E;
             padding: 0;
             position: sticky;
             top: 0;
@@ -1119,7 +1119,7 @@
         }
 
         .pinned-banner-current:hover {
-            background: #fef3c7;
+            background: #FFEAA7;
         }
 
         .pinned-banner-icon {
@@ -1130,7 +1130,7 @@
         .pinned-banner-text {
             flex: 1;
             font-size: 13px;
-            color: #92400e;
+            color: #2D3436;
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
@@ -1153,7 +1153,7 @@
         }
 
         .pinned-banner-count {
-            background: #f59e0b;
+            background: #FDCB6E;
             color: white;
             font-size: 11px;
             font-weight: 600;
@@ -1165,7 +1165,7 @@
 
         .pinned-banner-arrow {
             font-size: 10px;
-            color: #92400e;
+            color: #2D3436;
             transition: transform 0.2s;
         }
 
@@ -1175,7 +1175,7 @@
 
         .pinned-banner-dropdown {
             display: none;
-            border-top: 1px solid #fcd34d;
+            border-top: 1px solid #FDCB6E;
             max-height: 200px;
             overflow-y: auto;
         }
@@ -1190,7 +1190,7 @@
             padding: 10px 16px;
             cursor: pointer;
             transition: background 0.15s;
-            border-bottom: 1px solid #fef3c7;
+            border-bottom: 1px solid #FFEAA7;
         }
 
         .pinned-dropdown-item:last-child {
@@ -1198,19 +1198,19 @@
         }
 
         .pinned-dropdown-item:hover {
-            background: #fef3c7;
+            background: #FFEAA7;
         }
 
         .pinned-dropdown-item-icon {
             font-size: 12px;
             margin-right: 10px;
-            color: #f59e0b;
+            color: #FDCB6E;
         }
 
         .pinned-dropdown-item-text {
             flex: 1;
             font-size: 13px;
-            color: #78350f;
+            color: #2D3436;
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
@@ -1218,10 +1218,10 @@
 
         .pinned-dropdown-item-role {
             font-size: 11px;
-            color: #b45309;
+            color: #2D3436;
             margin-left: 8px;
             padding: 2px 6px;
-            background: rgba(245, 158, 11, 0.15);
+            background: rgba(253, 203, 110, 0.2);
             border-radius: 4px;
         }
 
@@ -1361,8 +1361,8 @@
         }
 
         .clarification-card {
-            background: #fffbeb;
-            border: 2px solid #fbbf24;
+            background: #FFFDF5;
+            border: 2px solid #FDCB6E;
             border-radius: 12px;
             padding: 20px;
             margin: 0;
@@ -1371,7 +1371,7 @@
         .clarification-header {
             font-size: 16px;
             font-weight: 600;
-            color: #92400e;
+            color: #2D3436;
             margin-bottom: 20px;
             line-height: 1.5;
         }
@@ -2378,12 +2378,13 @@
 
         /* Deep Research Progress Display - Log Style */
         .reasoning-progress-container {
-            background: #1e293b;
-            border-radius: 12px;
+            background: #FFFDF5;
+            border-radius: 10px;
             padding: 16px 20px;
             margin: 20px 0;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-            font-family: 'SF Mono', 'Consolas', 'Monaco', monospace;
+            border: 1px solid #B2BEC3;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+            font-family: 'Noto Sans TC', -apple-system, BlinkMacSystemFont, sans-serif;
             max-height: 300px;
             overflow-y: auto;
         }
@@ -2392,11 +2393,11 @@
             font-weight: 600;
             font-size: 13px;
             margin-bottom: 12px;
-            color: #94a3b8;
+            color: #2D3436;
             display: flex;
             align-items: center;
             gap: 8px;
-            border-bottom: 1px solid #334155;
+            border-bottom: 1px solid #B2BEC3;
             padding-bottom: 10px;
         }
 
@@ -2404,7 +2405,7 @@
             content: '';
             width: 8px;
             height: 8px;
-            background: #22c55e;
+            background: #FDCB6E;
             border-radius: 50%;
             animation: blink 1s infinite;
         }
@@ -2441,23 +2442,24 @@
         }
 
         .log-entry .log-text {
-            color: #e2e8f0;
+            color: #2D3436;
         }
 
         .log-entry .log-detail {
-            color: #64748b;
+            color: #B2BEC3;
             font-size: 12px;
             margin-left: 28px;
             margin-top: 2px;
         }
 
-        .log-entry.complete .log-icon { color: #22c55e; }
+        .log-entry.complete .log-icon { color: #059669; }
         .log-entry.active .log-icon { color: #FDCB6E; }
-        .log-entry.warning .log-icon { color: #f59e0b; }
-        .log-entry.error .log-icon { color: #ef4444; }
+        .log-entry.warning .log-icon { color: #FDCB6E; }
+        .log-entry.error .log-icon { color: #dc2626; }
 
         .log-entry.active .log-text {
-            color: #FFEAA7;
+            color: #2D3436;
+            font-weight: 600;
         }
 
         .log-entry.active .log-icon {
@@ -2466,11 +2468,11 @@
 
         /* Log entry types */
         .log-entry.gap-search .log-text {
-            color: #fbbf24;
+            color: #2D3436;
         }
 
         .log-entry.cov .log-text {
-            color: #a78bfa;
+            color: #2D3436;
         }
 
         .log-entry .log-stats {
@@ -2483,12 +2485,13 @@
         .log-entry .log-stats .stat {
             padding: 2px 6px;
             border-radius: 4px;
-            background: rgba(255,255,255,0.1);
+            background: #FFEAA7;
+            color: #2D3436;
         }
 
-        .log-entry .log-stats .stat.success { background: rgba(34, 197, 94, 0.2); color: #86efac; }
-        .log-entry .log-stats .stat.warning { background: rgba(251, 191, 36, 0.2); color: #fde047; }
-        .log-entry .log-stats .stat.error { background: rgba(239, 68, 68, 0.2); color: #fca5a5; }
+        .log-entry .log-stats .stat.success { background: rgba(5, 150, 105, 0.15); color: #059669; }
+        .log-entry .log-stats .stat.warning { background: #FFEAA7; color: #2D3436; }
+        .log-entry .log-stats .stat.error { background: rgba(220, 38, 38, 0.1); color: #dc2626; }
 
         /* Citation Links */
         .citation-link {
@@ -2508,16 +2511,16 @@
 
         /* Stage 5: URN Citation Styling (LLM Knowledge) */
         .citation-urn {
-            color: #8b5cf6;
+            color: #3498db;
             font-weight: 600;
             padding: 0 2px;
             cursor: help;
-            border-bottom: 1px dashed #8b5cf6;
+            border-bottom: 1px dashed #3498db;
         }
 
         .citation-urn sup {
             font-size: 9px;
-            color: #6d28d9;
+            color: #2980b9;
             margin-left: 1px;
         }
 
@@ -2537,11 +2540,11 @@
 
         /* Bug #25: Citation without link (out-of-range or missing URL) */
         .citation-no-link {
-            color: #9ca3af;
+            color: #B2BEC3;
             font-weight: 600;
             padding: 0 2px;
             cursor: help;
-            border-bottom: 1px dashed #9ca3af;
+            border-bottom: 1px dashed #B2BEC3;
         }
 
         /* Citation Reference Section (appended at end of report) */
@@ -5479,9 +5482,10 @@
             color: #FDCB6E !important;
         }
 
-        /* log-entry active text: replace old blue #93c5fd */
+        /* log-entry active text: brand charcoal on cream bg */
         .log-entry.active .log-text {
-            color: #FFEAA7 !important;
+            color: #2D3436 !important;
+            font-weight: 600 !important;
         }
 
         /* kg-item tag: replace #4338ca indigo / old --color-primary-bg */

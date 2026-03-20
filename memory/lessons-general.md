@@ -97,85 +97,14 @@ type: feedback
 **檔案**：`static/news-search.css`
 **日期**：2026-03
 
-## httpOnly Cookie Auth — Unit Test 全過但 Production 全壞
-
-### SQLite vs PostgreSQL boolean 不相容 — 硬編碼 `success = 0`
-**問題**：`_record_login_attempt` 的 lockout check 用 `success = 0`（integer literal），PostgreSQL 的 `success` column 是 boolean，不能跟 integer 比較。SQLite 不在乎型別所以 unit test 全過。
-**解決方案**：改用 parameterized `success = ?` 傳 Python `False`，psycopg 自動轉換。**通則：永遠用 parameterized query，不要硬編碼 boolean/integer literal。**
-**日期**：2026-03-16
-
-### PostgreSQL UUID object 不能 JSON 序列化
-**問題**：PostgreSQL 回傳 UUID 欄位時是 Python `uuid.UUID` object，`aiohttp.json_response` 無法序列化。SQLite 回傳 string 所以 unit test 全過。
-**解決方案**：在 `auth_db.py` 的 `_pg_fetchone` / `_pg_fetchall` 加 `_serialize_row()` 統一轉換。**通則：DB abstraction layer 應該在最底層統一處理型別轉換，不要讓每個 caller 自己處理。**
-**日期**：2026-03-16
-
-### httpOnly cookie 模式下 JS 拿不到 access_token — 5 個連環 bug
-**問題**：BP-1 把 access_token 從 response body 移到 httpOnly cookie，但前端 JS 多處假設 access_token 在 JS 可用：
-1. `login()` 存 `data.access_token`（undefined）到 localStorage → 字串 `"undefined"`
-2. `refreshToken()` 同上
-3. `isLoggedIn()` 檢查 `!!this._accessToken` → 永遠 false
-4. `authenticatedFetch` 只在 `_accessToken` 存在時嘗試 refresh → httpOnly 模式永不 refresh
-5. 發送 `Authorization: Bearer undefined` header → 401
-**解決方案**：(1) `isLoggedIn()` 只檢查 `_user` (2) 不存 undefined 到 localStorage (3) `authenticatedFetch` 永遠嘗試 refresh on 401 (4) `refreshToken` 只在有值時存 localStorage
-**教訓**：**httpOnly cookie 是破壞性變更 — 改了 token 存放位置後，所有讀取 token 的地方都要更新。Unit test 用 SQLite + mock 完全測不到這類問題。Production E2E 是唯一能抓到的方式。**
-**日期**：2026-03-16
-
-### Auth guard race condition — async 不 await
-**問題**：`checkAuthOnLoad()` 是 async function 但 `DOMContentLoaded` handler 沒有 await，導致後續 code 在 auth check 完成前就跑。
-**解決方案**：`DOMContentLoaded` handler 改為 `async () =>` 並 `await checkAuthOnLoad()`。
-**教訓**：**async function 如果不 await，它的 side effects（顯示/隱藏 modal）可能被後續 synchronous code 覆蓋。**
-**日期**：2026-03-16
-
-### Cloudflare CDN cache 讓部署看不到效果
-**問題**：push + deploy 後前端 JS/HTML 被 Cloudflare cache，新版 code 沒生效。即使 `ignoreCache` reload 也不行（nginx 沒設 Cache-Control header）。
-**解決方案**：(1) HTML 的 script src 加 cache buster `?v=20260316` (2) nginx 加 `Cache-Control: no-cache, must-revalidate` for `.html` 和 `.js` (3) 每次改前端都 bump cache buster + purge Cloudflare。
-**教訓**：**有 CDN 的環境，靜態資源必須有 cache busting 策略。否則部署 = 沒部署。**
-**日期**：2026-03-16
-
-## B2B Login E2E（2026-03-17）
-
-### SQL SELECT 漏欄位 → 前端功能壞掉但 unit test 全過
-**問題**：`list_org_members` SQL 沒有 SELECT `u.is_active`，前端 `renderOrgMembers` 檢查 `m.is_active === false` 永遠拿不到值，「已停用」badge 和「啟用」按鈕不顯示。Unit test 沒測 response 欄位完整性。
-**解決方案**：SQL 加 `u.is_active`。**通則：DB query 的 SELECT 欄位是前後端契約的一部分。改前端 render 邏輯時要同時確認後端有回傳對應欄位。**
-**日期**：2026-03-17
-
-### B2B 純 org-bound model — 沒有個人用戶、跨 org 不歸戶
-**問題**：原始 login 系統有 `invite_member`（邀請已有帳號加入 org），假設 user 可以跨 org。B2B 場景不適用：user 永遠屬於 org，換公司 = 新帳號，不帶走資料。
-**解決方案**：(1) 移除前端 invite flow，改用 `admin_create_user` (2) 刪除帳號時 hard delete + 保留但斷開 session（user_id = NULL）(3) Bootstrap 走 token-based 獨立頁面，不走 login modal 的「註冊」tab。**通則：B2B SaaS 的 user model 跟 C2C 完全不同，不要沿用 self-service registration 的假設。**
-**日期**：2026-03-17
+> Auth / Login 相關教訓已移至 `lessons-auth.md`
 
 ### 文件更新必須包含 memory — 不只 docs/
 **問題**：CEO 說「更新文件」時，只更新了 docs/ 目錄（status, specs, completed-work），沒有同步 memory/ 檔案（lessons-learned, project status）。導致 lessons 遺漏、下個 session 踩同樣坑。
 **解決方案**：「更新文件」= docs/ + memory/lessons + memory/project，三個都要做。已整合 /update-docs 和 /learn 為單一 /learn skill。
 **日期**：2026-03-17
 
-### Analytics click event 靜默丟棄 — GET/POST SSE 雙路徑不同步
-**問題**：前端搜尋走 POST SSE 路徑（`handlePostStreamingRequest`），收到 `begin-nlweb-response` 時只設了 `currentAnalyticsQueryId`，但漏呼叫 `analyticsTracker.startQuery()`。GET SSE 路徑（舊 EventSource code）兩個都有做。`trackClick()` 內部有 `if (!this.currentQueryId) return;` guard — `this.currentQueryId` 永遠是 null → 所有 click 被靜默丟棄。Server log 顯示 `query_id NULL violates not-null constraint`，但前端 Console 沒有任何 error。
-**解決方案**：POST SSE handler 的 `begin-nlweb-response` case 加 `analyticsTracker.startQuery()` 呼叫。**通則：當系統有多條 code path 到達同一個功能（GET SSE vs POST SSE），修改其中一條時必須搜尋所有 path 確認同步。搜尋方式：grep 關鍵 event name（如 `begin-nlweb-response`）找所有 handler。**
-**信心**：高（本地 DevTools 驗證 + DB 確認寫入）
-**檔案**：`static/news-search.js`, `static/analytics-tracker-sse.js`
-**日期**：2026-03-17
-
-### fetch() 不帶 credentials — httpOnly cookie 不會自動送出
-**問題**：`handlePostStreamingRequest` 和 `analytics-tracker-sse.js` 的 fetch 呼叫都沒有 `credentials: 'same-origin'`，導致 httpOnly cookie（access_token）不會被送出。Analytics event POST 到後端被 auth middleware 回 401，但 catch block 只用 `console.warn` 記錄 — 開發時極易忽略。
-**解決方案**：所有需要帶 auth cookie 的 fetch 加 `credentials: 'same-origin'`。同時把 analytics event endpoints 加到 `PUBLIC_ENDPOINTS`（analytics 不應因 token 過期而丟失）。**通則：httpOnly cookie 模式下，每個 fetch 呼叫都必須明確設 `credentials: 'same-origin'`，這不是 browser 預設行為。**
-**信心**：高
-**檔案**：`static/news-search.js`, `static/analytics-tracker-sse.js`, `code/python/webserver/middleware/auth.py`
-**日期**：2026-03-17
-
-### cookie secure flag 在 reverse proxy 後面永遠 False
-**問題**：`Set-Cookie` 的 `secure=request.secure` 在 nginx reverse proxy 後面永遠是 `False`（nginx 終止 SSL，後端收到的是 HTTP）。Cookie 沒有 Secure flag → 瀏覽器在 HTTPS 頁面不穩定地送出 cookie。
-**解決方案**：硬編碼 `secure=True`。Production 永遠是 HTTPS。本地開發用 `NLWEB_DEV_AUTH_BYPASS=true` 繞過 auth。
-**信心**：高
-**檔案**：`code/python/webserver/routes/auth.py`
-**日期**：2026-03-17
-
-### Windows asyncio ProactorEventLoop 與 psycopg 不相容
-**問題**：Windows 預設 `ProactorEventLoop`，psycopg（async mode）不支援，導致所有 DB 操作失敗：`Psycopg cannot use the 'ProactorEventLoop' to run in async mode`。Server 能啟動但 auth/analytics 全部壞掉。
-**解決方案**：在 `app-file.py` 的 `__main__` block 加 `asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())`。必須在 `asyncio.run()` 之前設定。
-**信心**：高
-**檔案**：`code/python/app-file.py`
-**日期**：2026-03-17
+> Analytics click event、fetch credentials、cookie secure flag、Windows asyncio 等 auth 相關教訓已移至 `lessons-auth.md`
 
 ## 文件維護 / 工具系統（2026-03-18）
 
@@ -224,6 +153,17 @@ type: feedback
 **通則**：**pipeline 模組修改後（特別是 storage backend 變更），必須端到端驗證 CLI 入口 → 實際 DB 寫入 → DB 查詢確認。** 中間任何斷裂都會造成「看起來在跑但沒效果」。
 **信心**：高
 **日期**：2026-03-18
+
+### /learn 只寫入不整理 → 文件漸漸腐化（2026-03-20）
+**問題**：文件整理時發現四個累積問題：(1) status.md 累積 6 個 `~~已完成~~` 刪除線項目（完成時只標記沒歸檔）。(2) decisions.md 的 superseded 條目留在 active 區（只標 tag 沒搬移）。(3) CLAUDE.md 和 delegation-patterns.md 重複寫了 Smoke Test / E2E Gate 規則（沒有指定 single source of truth）。(4) lessons-general.md 的 httpOnly auth 區長到 78 行 13 條（沒有按模組分拆門檻）。共同根因：/learn 只負責「寫入新內容」，沒有「整理既有內容」的步驟。
+**解決方案**：/learn 新增歸檔步驟：
+1. **完成即歸檔**：status.md 項目完成時同步移到 completed-work.md，不留刪除線
+2. **superseded 即搬移**：decisions.md 決策被取代時移到「歷史決策」區
+3. **Single source of truth**：規則只在一處寫完整版，其他地方一行指標
+4. **lessons 分拆門檻**：同一主題超過 3 條就獨立成 `lessons-{module}.md`
+**通則**：**文件系統需要「寫入」和「整理」兩個動作。只有寫入的系統會漸漸腐化。**
+**信心**：高（本次直接踩坑 — 清理了 4 類問題）
+**日期**：2026-03-20
 
 ## Skill 開發 / 優化（2026-03-19）
 
@@ -321,11 +261,10 @@ type: feedback
 
 ## 推論紀律（2026-03-19）
 
+> 詳細規則已寫入 `zoe.md` Gotchas「Confidently wrong」段落。以下為核心教訓摘要。
+
 ### 假說不是結論 — 推測必須可驗偽，且驗偽後才能確定
-**問題**：整個 session 多次 confidently 聲稱根因但沒有驗偽：(1)「cosine threshold 有效，從 10 降到 2」— 沒驗證 PG 是否真的被呼叫（實際走的是 Qdrant）。(2)「accumulatedData 殘留上次搜尋」— 沒驗證變數 scope（實際是 function local）。(3)「後端回 7 篇但前端不渲染」— 沒查 server log 確認走哪個 retrieval provider。每一個都是假說被當成結論，CEO 花時間幫忙驗偽才發現錯誤。
-**解決方案**：三個強制步驟：(1) **推測必須標記為假說**，不是結論。用「假說：...」開頭。(2) **列出驗偽計畫**：「如果假說正確，應該觀察到 X；如果錯誤，應該觀察到 Y」。(3) **驗偽後才能升級為結論**。最少最少要告訴 CEO 驗偽計畫，不要讓 CEO 每次都猜你是不是 confidently wrong。
-**通則**：**推測的信心等級 ≠ 推測的正確性。** 高信心的錯誤推測比低信心的正確推測更危險，因為它會阻止進一步調查。每個推測都要問自己：「我怎麼知道這是對的？我驗證了什麼？」
-**信心**：高（CEO 直接指正，本次 session 踩坑 3 次）
+**通則**：推測標為假說 → 列驗偽計畫 → 驗偽後才升級為結論。高信心 ≠ 高正確性。
 **日期**：2026-03-19
 
 ### 環境變數缺失 → 整個測試 session 測錯 backend
@@ -335,4 +274,60 @@ type: feedback
 **信心**：高（本次直接踩坑，3 輪 agent E2E 白跑）
 **日期**：2026-03-19
 
-*最後更新：2026-03-19*
+## Zoe 工作模式（2026-03-19）
+
+### 啟動時自作主張截斷必讀文件 → 批判品質不合格
+**問題**：Zoe 啟動時自己決定用 `limit` 截斷必讀文件（status.md limit:50、lessons-general.md limit:60、decisions.md limit:80），漏掉了 LLM 模型策略（第 173 行）和 Rate Limiter 決策（第 159 行）。**沒有任何指令叫 Zoe 截斷這些文件**——Zoe skill 的啟動流程寫的是「全部平行讀取」，是 Zoe 自己為了省 token 偷懶。結果批判 guardrail spec 時：(1) 不知道系統用什麼 LLM model。(2) 不知道 rate limiter 已有 active decision（DR 1/session + 3/IP）。(3) 把自己的無知怪給「memory 沒寫」，CEO 指出 decisions.md 就有寫。
+**解決方案**：啟動流程的必讀文件**必須完整讀取**，不可自作主張用 `limit` 截斷。沒有任何指令授權截斷。Zoe skill 已修正：decisions.md 從「掃最近 10 筆即可」改為「全部讀完」。如果文件太長，分段讀完再做任何判斷。
+**通則**：**不完整的 context 產出不可靠的判斷。** 自作主張省 token 是最差的節省方式——省下的讀取時間，會在錯誤判斷上加倍浪費。
+**信心**：高（CEO 直接指正，本次 session 踩坑）
+**日期**：2026-03-19
+
+### 批判 spec 前必須交叉比對 decisions.md
+**問題**：guardrail spec 的 P1-1 寫 `/ask` 30/min per IP，但 decisions.md 第 159-162 行已有 active decision：DR 1/session + 3/IP，一般查詢 5/session。兩組數字完全不同維度且未互相引用。因為沒讀完 decisions.md，批判時只說「沒數據」，沒指出「跟既有決策矛盾」——後者才是真正的問題。
+**解決方案**：審查任何 spec 前，先確認 decisions.md 中是否有同主題的 active decision。如果有，spec 應該引用或明確說明偏離理由。批判的重點從「你沒有數據」變成「你跟既有決策不一致」。
+**通則**：**decisions.md 是 single source of truth。Spec 不應該無視既有決策另起爐灶。**
+**信心**：高
+**日期**：2026-03-19
+
+### PII 過濾用 exact format validation + checksum，不用 loose regex
+**問題**：guardrail spec P2-3 用 `[A-Z][12]\d{8}` 匹配台灣身分證，false positive 高（公司統編、產品型號、門牌號都可能命中）。CEO 建議用 exact format match 避免。
+**解決方案**：台灣身分證有 weighted checksum（字母→兩位數，第一位×1 + 第二位×9 + 後續×8,7,6,5,4,3,2,1，mod 10 == 0）。信用卡有 Luhn algorithm。手機號碼有 `09` prefix + 固定 10 碼。加上 checksum/format validation 後，random 字串通過的機率大幅降低，幾乎消除 false positive，運算成本不變（純 CPU，不需 LLM）。
+**通則**：**有 checksum 的格式就用 checksum 驗證，不要只靠 regex pattern 匹配。** Regex 只是第一層篩，validation 才是確認。
+**信心**：高（CEO 提議，數學上正確）
+**日期**：2026-03-19
+
+## B2B SaaS 架構（2026-03-19）
+
+### B2B 環境的 IP rate limit 必須 bypass 已認證用戶
+**問題**：Guardrail spec 設 DR 3 併發/IP，但 B2B 企業客戶共享辦公室 NAT IP。4 個記者同時用 DR → 第 4 個被 429。IP 限制在 B2B 場景 = 合法阻斷服務。Gemini review 指出此問題。
+**解決方案**：IP 限制只套用在**未認證請求**（防爬蟲/DDoS）。已認證用戶（有 user_id）完全走 user_id/session 級限制，不受 IP 限制。判斷位置：auth middleware 解析 user_id 後，有 user_id → skip IP check。
+**通則**：**B2B SaaS 的 rate limit key 永遠是 user_id 或 tenant_id，不是 IP。** IP 只用於匿名流量。
+**信心**：高（Gemini 指出 + 邏輯正確）
+**日期**：2026-03-19
+
+### SSE 完整 message vs token-level streaming — output filter 的時空限制
+**問題**：PII filter 用 regex + checksum 比對（如身分證 10 碼）。若 SSE 改為逐 token streaming，`A123` 已送出、`456789` 才到，regex 來不及攔。Gemini review 指出此問題。
+**解決方案**：目前架構用完整 message（階段完成才送），PII filter 無此問題。但在 spec 加 constraint：PII filter 只適用完整 message。若未來改 token-level streaming，需加 token buffer（hold ≥10 字元等 checksum 完成）。
+**通則**：**任何基於 pattern matching 的 output filter 都有最小 window 需求。** Streaming 架構設計時必須確認 filter 的 window 需求是否被滿足。
+**信心**：高（Gemini 指出 + 工程原理正確）
+**日期**：2026-03-19
+
+### Global spending cap 可被武器化為 DoS — per-user budget 才是正解
+**問題**：Provider-level spending cap $50/day 是全域的。一個壞帳號刷爆 → 全平台斷流。等於幫攻擊者完成 DoS。Gemini review 指出此問題。
+**解決方案**：per-user 併發限制大幅稀釋風險（1 DR 併發 → 刷 $50 需串行 5.5 小時 → alert $30 在 3.3 小時觸發）。但長期需 per-user daily token budget（application layer 追蹤每用戶 LLM 消耗），provider cap 上調至 $150 作為防程式碼 bug 的底線。
+**通則**：**全域資源限制（spending cap、connection pool）不應是防用戶的工具，而是防系統 bug 的安全網。** 防用戶用 per-user quota。
+**信心**：高
+**日期**：2026-03-19
+
+## 前端 / CSS
+
+### CSS `!important` override 會覆蓋同 selector 的基礎定義 — 改 base 時必須搜 override 區
+**問題**：Phase 1-4 UI Redesign 在 CSS 檔案後段（~line 5400+）用 `!important` 強制覆蓋前段的基礎定義。修改基礎定義（如 `.log-entry.active .log-text` 從 `#FFEAA7` 改 `#2D3436`）後，後段的 `!important` override 仍然生效，導致文字顏色沒變。Debug 時容易以為「已經改了」但瀏覽器顯示的還是舊色。
+**解決方案**：修改任何 CSS 樣式前，先搜尋該 selector 在整個 CSS 檔案中的所有出現位置（`grep -n "selector-name" news-search.css`）。Phase 1-4 的 override 區在 line ~5300-5500，所有品牌化 override 都用 `!important`。改 base 無效時，必須同時改 override 區。
+**通則**：**大型 CSS 檔案中，同一 selector 可能被定義多次。越後面 + `!important` 的贏。** 改顏色前搜全文。
+**信心**：高（本次直接踩坑）
+**檔案**：`static/news-search.css`
+**日期**：2026-03-20
+
+*最後更新：2026-03-20*

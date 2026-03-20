@@ -50,3 +50,13 @@
 - 5. 完成後輸出格式完整？→ **Y**
 
 **得分**：5/5（含 NA 項）
+
+## 2026-03-20 — 第六次評估（UI Redesign Phase 5 品牌統一 session）
+
+- 1. Staleness verification 層級 1 有做嗎？→ **Y**（status.md Phase 5 待做→已完成、reference_brand_spec.md 審計結果 + CEO 回饋更新）
+- 2. 有 lesson 時，寫進了正確的 lessons-*.md？→ **Y**（1 lesson：CSS !important override 寫入 lessons-general.md）
+- 3. decisions.md 計數有更新嗎？→ **NA**（無新決策）
+- 4. 跨文件引用有用 indexer 搜確認嗎？→ **Y**（status.md + reference_brand_spec.md 同步）
+- 5. 完成後輸出格式完整？→ **Y**
+
+**得分**：5/5

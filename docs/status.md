@@ -15,7 +15,7 @@
 - **Infra Migration**（2026-03）：PostgreSQL hybrid search（pgvector + pg_bigm）+ Hetzner VPS 部署（twdubao.com + HTTPS + Cloudflare）+ CI/CD（GitHub Actions → SSH deploy → LINE 通知）
 - **Login 系統 B2B**（2026-03）：Email/Password + JWT + Session + Audit + B2B bootstrap token onboarding + 強制登入 + 117 tests pass + E2E 兩輪驗證通過
 - **Analytics 系統重整**（2026-03）：schema 統一（`schema_definitions.py`）+ async migration + 29 bugs 修復 + B2B 欄位對齊 + click event 修復 + VPS 驗證通過
-- **UI Redesign Phase 1-4**（2026-03-16）：藍灰工具風 → 金炭品牌化（讀豹主題），CSS 變數 + 主視覺 + icon + 全站顏色統一
+- **UI Redesign Phase 1-5**（2026-03-20）：藍灰工具風 → 金炭品牌化（讀豹主題），CSS 變數 + 主視覺 + icon + 全站顏色統一 + Phase 5: Auth 頁面/Email 模板/Reasoning Chain/Pinned Banner/Citation/進度條品牌化 + 「AI」→「讀豹」全站替換
 - **GCP Daily Cron**（2026-03-11）：每天 05:00 台灣時間自動 newest scan，第一輪 backfill 完成
 - **搜尋品質修復 + DB 清理 + E2E Gate**（2026-03-19）：虛假回應 guard、PG 日期 filter、MMR 向量、繁中 prompt、verification_status SSE、cosine threshold 0.50、DB dedup（325K→163K）、title dedup、source-info 修正 — 81+ 新測試、CEO 人工 E2E 通過（S1/S3/S5 PASS、S4 待 prompt 改造）
 
@@ -43,33 +43,19 @@
 
 ## 待處理
 
-### ~~BUG: Retrieval 0 結果時仍生成虛假回應~~ → 已修復（2026-03-19）
-- Guard 改為 `if not self.source_map`，8 tests
-
-### ~~Login 系統後續~~ → 已完成
-- ✅ Email 服務上線（Resend + Cloudflare Email Routing 完成）
-- ✅ Bootstrap token onboarding flow 完成（117/117 tests pass）
-- ✅ E2E 第一輪 8 個問題全部修復 + 第二輪驗證通過（2026-03-17）
-
 ### Analytics E2E 測試（待 indexed data）
 - queries 表驗證通過（user_id, org_id, query_length, embedding_model 皆正確）
 - 子表驗證待做：VPS 無 indexed data → retrieval 0 結果 → retrieved_documents / ranking_scores 空
 - 待全量 indexing 完成後自然驗證，或本地用 SQLite 跑 E2E
 
-### ~~Code Review 後續~~ → RSN-4 已完成（2026-03-19）
-- verification_status 從 Critic → Orchestrator → SSE → 前端 warning banner，6 tests
-
 ### SEC-6 後續
 - Phase 2：Extracted Knowledge（LLM 結構化輸出，Phase 1 驗證有效後）
 
-### ~~UI Redesign 收尾~~ → 已 commit 至 main（2026-03-16）
-- 細節微調待 CEO 目視檢查確認
-
-### Session 切換穩定性 ✅（2026-03-13 完成）
-- **問題**：搜尋中切換 session → 原 session 結果空白
-- **最終方案**：Cancel + Retry Button — 切 session 時直接 cancel stream，標記 `interruptedSearch`，切回顯示 retry 按鈕
-- **歷程**：嘗試過 auto re-search（無限迴圈）→ 背景 stream 繼續（stale reference + 跨 session 污染）→ 加 single-stream-per-mode 限制（還是卡住）→ 全部拆掉改 cancel + retry
-- **檔案**：`static/news-search.js`
+### ~~UI Redesign Phase 5：品牌一致性統一~~ → HIGH+MEDIUM 已完成（2026-03-20）
+- ✅ Auth 4 頁面品牌化 + Email 模板 5 封品牌化 + Reasoning Chain/Clarification/Pinned Banner/Citation/進度條
+- ✅ 全站「AI」→「讀豹」替換 + 「臺灣讀豹」統一命名 + 頁面標題
+- **殘餘 LOW**：Org Modal 管理按鈕、index.html spinner、Analytics/Indexing Dashboard
+- **待做**：Loading spinner 讀豹動畫（CEO 構想中）、citation「讀豹背景知識」字色調整
 
 ### 前端 UX 修復（待排）
 - 空結果 session 可點擊但顯示「此搜尋無結果」（目前點不進去）
@@ -88,11 +74,6 @@
 - 所有 `config/prompts.xml` 的 prompt 主體改為繁體中文（目前是英文 + 結尾加繁中指示，LLM 容易忽略）
 - 分批改 + 測試：SummarizeResultsPrompt → RankingPrompt → 其他
 - **優先級**：Medium（影響摘要語言品質）
-
-### ~~搜尋品質~~ → 已修復（2026-03-19）
-- ✅ 日期 filter PG 失效：`postgres_client.py` 加 kwargs filters 支援，12 tests
-- ✅ MMR 多元性無效：PG 回傳 5-tuple 含向量，19 tests
-- ✅ 英文摘要：`prompts.xml` 7 處改為繁體中文，7 tests
 
 ---
 

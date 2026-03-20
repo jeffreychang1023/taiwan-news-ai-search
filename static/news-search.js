@@ -1251,7 +1251,7 @@
                     showAdvancedPopup();
                 } else if (newMode === 'chat') {
                     btnSearch.textContent = '發送';
-                    searchInput.placeholder = '研究助理會參考摘要內容及您釘選的文章來回答...';
+                    searchInput.placeholder = '讀豹會參考摘要內容及您釘選的文章來回答...';
 
                     // chatContainer 已獨立於 resultsSection，不需要顯示 resultsSection
                     chatContainer.classList.add('active');
@@ -1877,6 +1877,17 @@
             if (abortSignal) fetchOptions.signal = abortSignal;
             const response = await fetch(url, fetchOptions);
 
+            if (response.status === 429 || response.status === 400 || response.status === 503) {
+                let errorMsg = '請稍後再試';
+                try {
+                    const errorData = await response.json();
+                    if (errorData.message) errorMsg = errorData.message;
+                } catch (e) { /* ignore parse errors */ }
+                const err = new Error(errorMsg);
+                err.httpStatus = response.status;
+                throw err;
+            }
+
             if (!response.ok) {
                 throw new Error(`HTTP error! status: ${response.status}`);
             }
@@ -2415,7 +2426,7 @@
                     <div class="ai-typing-dot"></div>
                     <div class="ai-typing-dot"></div>
                     <div class="ai-typing-dot"></div>
-                    <span id="progressMessage" style="margin-left: 8px; color: #666;">正在處理您的查詢...</span>
+                    <span id="progressMessage" style="margin-left: 8px; color: #2D3436;">正在處理您的查詢...</span>
                 </div>
             `;
             aiSummarySection.style.display = 'block';
@@ -2581,7 +2592,7 @@
 
             const sourceInfoText = displayCount > 0
                 ? `\u26A0\uFE0F 資料來源：基於 ${displayCount} 則報導生成`
-                : `\u26A0\uFE0F AI 生成回答（未找到直接相關報導）`;
+                : `\u26A0\uFE0F 讀豹生成回答（未找到直接相關報導）`;
 
             aiSummaryContent.innerHTML = `
                 <div class="summary-section ${isUpdate ? 'content-updated' : 'progressive-fade-in'}">
@@ -2709,18 +2720,18 @@
 
                 const notice = document.createElement('div');
                 notice.id = 'interrupted-search-notice';
-                notice.style.cssText = 'text-align: center; padding: 24px 20px; margin-bottom: 16px; background: var(--bg-secondary, #f5f5f5); border-radius: 8px; border: 1px solid var(--border-color, #ddd);';
+                notice.style.cssText = 'text-align: center; padding: 24px 20px; margin-bottom: 16px; background: #FFFDF5; border-radius: 8px; border: 1px solid #B2BEC3;';
 
                 const title = document.createElement('div');
-                title.style.cssText = 'font-size: 15px; margin-bottom: 8px; color: var(--text-secondary, #666);';
+                title.style.cssText = 'font-size: 15px; margin-bottom: 8px; color: #2D3436;';
                 title.textContent = `${modeLabel}被中斷`;
 
                 const queryDisplay = document.createElement('div');
-                queryDisplay.style.cssText = 'font-size: 13px; margin-bottom: 14px; color: var(--text-tertiary, #999);';
+                queryDisplay.style.cssText = 'font-size: 13px; margin-bottom: 14px; color: #B2BEC3;';
                 queryDisplay.textContent = `「${query}」`;
 
                 const retryBtn = document.createElement('button');
-                retryBtn.style.cssText = 'padding: 8px 20px; background: var(--accent-color, #b8860b); color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px;';
+                retryBtn.style.cssText = 'padding: 8px 20px; background: #FDCB6E; color: #2D3436; border: none; border-radius: 6px; cursor: pointer; font-size: 14px;';
                 retryBtn.textContent = `重新${modeLabel}`;
                 retryBtn.addEventListener('click', () => {
                     // Clear interrupted state
@@ -2917,7 +2928,7 @@
                         if (sourceInfoEl) {
                             sourceInfoEl.textContent = actualCount > 0
                                 ? `⚠️ 資料來源：基於 ${actualCount} 則報導生成`
-                                : `⚠️ AI 生成回答（未找到直接相關報導）`;
+                                : `⚠️ 讀豹生成回答（未找到直接相關報導）`;
                             console.log(`[Progressive] source-info updated to ${actualCount} articles`);
                         }
                     }
@@ -3212,7 +3223,7 @@
                         if (url.startsWith('urn:llm:knowledge:')) {
                             // Extract topic from URN for display
                             const topic = url.replace('urn:llm:knowledge:', '');
-                            return `<span class="citation-urn" title="AI 背景知識：${topic}">[${num}]<sup>AI</sup></span>`;
+                            return `<span class="citation-urn" title="讀豹背景知識：${topic}">[${num}]<sup>讀豹</sup></span>`;
                         }
                         // Bug #13: Handle private:// protocol (user-uploaded documents)
                         if (url.startsWith('private://')) {
@@ -3261,7 +3272,7 @@
                 let isClickable = true;
 
                 if (url.startsWith('urn:llm:knowledge:')) {
-                    sourceType = 'AI 背景知識';
+                    sourceType = '讀豹背景知識';
                     isClickable = false;
                 } else if (url.startsWith('private://')) {
                     sourceType = '私人文件';
@@ -4044,8 +4055,8 @@
             const container = document.createElement('div');
             container.className = 'reasoning-chain-container';
             container.style.cssText = `
-                background: #f8f9fa;
-                border-left: 4px solid #6366f1;
+                background: #FFFDF5;
+                border-left: 4px solid #FDCB6E;
                 border-radius: 8px;
                 padding: 20px;
                 margin-bottom: 24px;
@@ -4057,17 +4068,17 @@
             const header = document.createElement('div');
             header.style.cssText = 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; cursor: pointer;';
             header.innerHTML = `
-                <div style="font-size: 18px; font-weight: 700; color: #1a1a1a;">
+                <div style="font-size: 18px; font-weight: 700; color: #2D3436;">
                     🧠 推論過程
-                    <span style="color: #666; font-size: 14px; font-weight: 400;">
+                    <span style="color: #636e72; font-size: 14px; font-weight: 400;">
                         (${nodes.length} 個推論步驟${chainAnalysis?.max_depth !== undefined ? `, 深度 ${chainAnalysis.max_depth}` : ''})
                     </span>
                 </div>
                 <div style="display: flex; gap: 8px; align-items: center;">
-                    <button class="btn-share-reasoning" style="background: white; border: 1px solid #ddd; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 13px; transition: all 0.2s;">
+                    <button class="btn-share-reasoning" style="background: white; border: 1px solid #B2BEC3; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 13px; transition: all 0.2s;">
                         🔗 給其他 AI 驗證
                     </button>
-                    <button class="btn-toggle-chain" style="background: white; border: 1px solid #ddd; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 13px;">
+                    <button class="btn-toggle-chain" style="background: white; border: 1px solid #B2BEC3; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 13px;">
                         展開
                     </button>
                 </div>
@@ -4107,15 +4118,15 @@
         function createLogicInconsistencyWarning(count) {
             const alert = document.createElement('div');
             alert.style.cssText = `
-                background: #fef3c7;
-                border-left: 4px solid #f59e0b;
+                background: #FFEAA7;
+                border-left: 4px solid #FDCB6E;
                 padding: 12px 16px;
                 border-radius: 6px;
                 margin-bottom: 16px;
             `;
             alert.innerHTML = `
-                <div style="font-weight: 700; color: #92400e; margin-bottom: 4px;">⚠️ 邏輯一致性問題</div>
-                <div style="color: #78350f; font-size: 13px;">
+                <div style="font-weight: 700; color: #2D3436; margin-bottom: 4px;">⚠️ 邏輯一致性問題</div>
+                <div style="color: #2D3436; font-size: 13px;">
                     偵測到 ${count} 個推論步驟的信心度可能高於其前提（邏輯膨脹）。請檢視帶有 ⚠️ 標記的推論步驟。
                 </div>
             `;
@@ -4147,8 +4158,8 @@
         function createCriticalNodesAlert(criticalNodes, nodeMap) {
             const alert = document.createElement('div');
             alert.style.cssText = `
-                background: #fef3c7;
-                border-left: 4px solid #f59e0b;
+                background: #FFEAA7;
+                border-left: 4px solid #FDCB6E;
                 padding: 12px 16px;
                 border-radius: 6px;
                 margin-bottom: 16px;
@@ -4158,7 +4169,7 @@
                 const node = nodeMap[critical.node_id];
                 if (!node) return '';
                 return `
-                    <div style="margin-bottom: 8px; color: #78350f;">
+                    <div style="margin-bottom: 8px; color: #2D3436;">
                         <strong>「${node.claim.substring(0, 50)}${node.claim.length > 50 ? '...' : ''}」</strong>
                         影響 ${critical.affects_count} 個後續推論
                         ${critical.criticality_reason ? `<br><span style="font-size: 13px;">└─ ${critical.criticality_reason}</span>` : ''}
@@ -4167,7 +4178,7 @@
             }).join('');
 
             alert.innerHTML = `
-                <div style="font-weight: 700; color: #92400e; margin-bottom: 8px;">🚨 關鍵薄弱環節</div>
+                <div style="font-weight: 700; color: #2D3436; margin-bottom: 8px;">🚨 關鍵薄弱環節</div>
                 ${criticalHtml}
             `;
 
@@ -4194,8 +4205,8 @@
             nodeEl.setAttribute('data-affects', JSON.stringify(affectedIds));
 
             nodeEl.style.cssText = `
-                background: white;
-                border: 2px solid #e5e7eb;
+                background: #FFFFFF;
+                border: 2px solid #B2BEC3;
                 border-radius: 8px;
                 padding: 16px;
                 margin-bottom: 12px;
@@ -4205,7 +4216,7 @@
             const emoji = {deduction: '🔷', induction: '🔶', abduction: '🔸'}[node.reasoning_type] || '💭';
             const label = {deduction: '演繹', induction: '歸納', abduction: '溯因'}[node.reasoning_type];
             const score = node.confidence_score ?? inferScore(node.confidence);
-            const scoreColor = score >= 7 ? '#16a34a' : score >= 4 ? '#f59e0b' : '#dc2626';
+            const scoreColor = score >= 7 ? '#16a34a' : score >= 4 ? '#FDCB6E' : '#dc2626';
 
             // Get impact info
             let impactInfo = '';
@@ -4222,7 +4233,7 @@
             let warningsHtml = '';
             if (node.logic_warnings && node.logic_warnings.length > 0) {
                 warningsHtml = node.logic_warnings.map(w => `
-                    <div style="color: #f59e0b; font-size: 13px; margin-top: 4px;">
+                    <div style="color: #FDCB6E; font-size: 13px; margin-top: 4px;">
                         ⚠️ ${w}
                     </div>
                 `).join('');
@@ -4235,7 +4246,7 @@
                     const depIndex = Object.keys(nodeMap).indexOf(depId) + 1;
                     return `步驟 ${depIndex}`;
                 });
-                depsHtml = `<div style="color: #6366f1; font-size: 13px; margin-top: 8px;">
+                depsHtml = `<div style="color: #2D3436; font-size: 13px; margin-top: 8px;">
                     ↑ 依賴：${depLabels.join(', ')}
                 </div>`;
             }
@@ -4249,13 +4260,13 @@
 
             nodeEl.innerHTML = `
                 <div style="font-weight: 700; margin-bottom: 8px; display: flex; align-items: center; gap: 8px;">
-                    <span style="background: #f3f4f6; padding: 4px 8px; border-radius: 4px; font-size: 14px;">[${stepNumber}]</span>
+                    <span style="background: #FFEAA7; padding: 4px 8px; border-radius: 4px; font-size: 14px;">[${stepNumber}]</span>
                     <span>${emoji} ${label}</span>
                     <span style="color: ${scoreColor}; font-size: 14px; background: ${scoreColor}22; padding: 2px 8px; border-radius: 4px;">
                         信心度 ${score.toFixed(1)}/10
                     </span>
                 </div>
-                <div style="color: #1a1a1a; margin-bottom: 8px; line-height: 1.6;">「${node.claim}」</div>
+                <div style="color: #2D3436; margin-bottom: 8px; line-height: 1.6;">「${node.claim}」</div>
                 ${evidenceHtml}
                 ${depsHtml}
                 ${impactInfo}
@@ -4278,15 +4289,15 @@
                     const affects = JSON.parse(nodeEl.getAttribute('data-affects') || '[]');
 
                     // Highlight current node
-                    nodeEl.style.borderColor = '#6366f1';
-                    nodeEl.style.boxShadow = '0 4px 12px rgba(99, 102, 241, 0.2)';
+                    nodeEl.style.borderColor = '#FDCB6E';
+                    nodeEl.style.boxShadow = '0 4px 12px rgba(253, 203, 110, 0.3)';
 
-                    // Highlight dependencies (parents) - blue background
+                    // Highlight dependencies (parents) - gold background
                     dependsOn.forEach(depId => {
                         const depEl = document.getElementById(`node-${depId}`);
                         if (depEl) {
-                            depEl.style.backgroundColor = '#dbeafe';
-                            depEl.style.borderColor = '#3b82f6';
+                            depEl.style.backgroundColor = '#FFEAA7';
+                            depEl.style.borderColor = '#FDCB6E';
                         }
                     });
 
@@ -4303,8 +4314,8 @@
                 nodeEl.addEventListener('mouseleave', () => {
                     // Reset all highlights
                     nodes.forEach(n => {
-                        n.style.backgroundColor = 'white';
-                        n.style.borderColor = '#e5e7eb';
+                        n.style.backgroundColor = '#FFFFFF';
+                        n.style.borderColor = '#B2BEC3';
                         n.style.borderWidth = '2px';
                         n.style.boxShadow = 'none';
                     });
@@ -4424,7 +4435,7 @@
             typingDiv.className = 'chat-message assistant';
             typingDiv.id = 'chatTypingIndicator';
             typingDiv.innerHTML = `
-                <div class="chat-message-header">AI 助理</div>
+                <div class="chat-message-header">讀豹</div>
                 <div class="chat-message-bubble">
                     <div class="chat-typing-indicator">
                         <div class="dot"></div>
@@ -4540,7 +4551,7 @@
             const msgId = existingMsgId || `msg-${Date.now()}-${messageIdCounter++}`;
             messageDiv.setAttribute('data-msg-id', msgId);
 
-            const headerText = role === 'user' ? '你' : 'AI 助理';
+            const headerText = role === 'user' ? '你' : '讀豹';
 
             // For assistant messages, use marked.js for full Markdown rendering
             // For user messages, escape HTML for safety
@@ -4664,7 +4675,7 @@
                 const item = document.createElement('div');
                 item.className = 'pinned-dropdown-item';
 
-                const roleLabel = pinned.role === 'user' ? '你' : 'AI';
+                const roleLabel = pinned.role === 'user' ? '你' : '讀豹';
                 const truncated = truncateText(pinned.content, 40);
 
                 item.innerHTML = `
@@ -4927,7 +4938,7 @@
             messageDiv.className = 'chat-message assistant clarification';
 
             // Build clarification card HTML
-            let contentHTML = '<div class="chat-message-header">AI 助理</div>';
+            let contentHTML = '<div class="chat-message-header">讀豹</div>';
             contentHTML += '<div class="chat-message-bubble">';
             contentHTML += '<div class="clarification-card">';
 
@@ -4978,10 +4989,10 @@
                         <input type="text" class="custom-option-input"
                                placeholder="或自行輸入..."
                                data-question-id="${question.question_id}"
-                               style="flex: 1; padding: 6px 10px; border: 1px solid #ddd; border-radius: 16px; font-size: 0.9em;">
+                               style="flex: 1; padding: 6px 10px; border: 1px solid #B2BEC3; border-radius: 16px; font-size: 0.9em;">
                         <button class="option-chip custom-input-confirm"
                                 data-question-id="${question.question_id}"
-                                style="padding: 6px 12px; background: #e0e0e0;">
+                                style="padding: 6px 12px; background: #2D3436; color: #FFFFFF;">
                             確定
                         </button>
                     </div>
@@ -4992,16 +5003,16 @@
 
             // Global extra focus section (Bug #4: 自由聚焦選項) - redesigned as inline input + confirm
             contentHTML += `
-                <div class="clarification-extra-section" style="margin-top: 16px; padding-top: 12px; border-top: 1px solid #e0e0e0;">
-                    <div style="font-size: 0.9em; color: #555; margin-bottom: 6px;">
+                <div class="clarification-extra-section" style="margin-top: 16px; padding-top: 12px; border-top: 1px solid #B2BEC3;">
+                    <div style="font-size: 0.9em; color: #2D3436; margin-bottom: 6px;">
                         或直接輸入您的研究重點：
                     </div>
                     <div class="custom-input-group" style="display: flex; gap: 6px; align-items: center;">
                         <input type="text" class="clarification-extra-focus"
                                placeholder="例如：特定事件、人物、時間段..."
-                               style="flex: 1; padding: 6px 10px; border: 1px solid #ddd; border-radius: 16px; font-size: 0.9em;">
+                               style="flex: 1; padding: 6px 10px; border: 1px solid #B2BEC3; border-radius: 16px; font-size: 0.9em;">
                         <button class="option-chip free-start-confirm"
-                                style="padding: 6px 12px; background: #e0e0e0;">
+                                style="padding: 6px 12px; background: #FDCB6E; color: #2D3436;">
                             開始研究
                         </button>
                     </div>
@@ -5544,7 +5555,7 @@
                     const msgId = msg.msgId || `msg-${msg.timestamp}-${Math.random().toString(36).substr(2, 9)}`;
                     messageDiv.setAttribute('data-msg-id', msgId);
 
-                    const headerText = msg.role === 'user' ? '你' : 'AI 助理';
+                    const headerText = msg.role === 'user' ? '你' : '讀豹';
                     let formattedContent = msg.content;
                     if (msg.role === 'assistant') {
                         formattedContent = DOMPurify.sanitize(marked.parse(msg.content));
@@ -5659,7 +5670,7 @@
                 advancedSearchConfirmed = true;
             } else if (savedMode === 'chat') {
                 btnSearch.textContent = '發送';
-                searchInput.placeholder = '研究助理會參考摘要內容及您釘選的文章來回答...';
+                searchInput.placeholder = '讀豹會參考摘要內容及您釘選的文章來回答...';
                 chatContainer.classList.add('active');
                 chatInputContainer.appendChild(searchContainer);
                 chatInputContainer.style.display = 'block';
@@ -5741,7 +5752,7 @@
 
             // AI answers from search results
             if (sessionHistory.length > 0) {
-                content += `【AI 分析摘要】\n`;
+                content += `【讀豹分析摘要】\n`;
                 sessionHistory.forEach((session, idx) => {
                     if (session.data && session.data.answer) {
                         const plainAnswer = cleanHTMLContent(session.data.answer, 'plain');
@@ -5754,7 +5765,7 @@
             if (chatHistory.length > 0) {
                 content += `【自由對話紀錄】\n`;
                 chatHistory.forEach(msg => {
-                    const icon = msg.role === 'user' ? '👤 你' : '🤖 AI';
+                    const icon = msg.role === 'user' ? '👤 你' : '讀豹';
                     const plainContent = cleanHTMLContent(msg.content, 'plain');
                     content += `${icon}：${plainContent}\n\n`;
                 });
@@ -5802,7 +5813,7 @@
 
             // AI analysis
             if (sessionHistory.length > 0) {
-                content += `【AI 分析摘要】\n`;
+                content += `【讀豹分析摘要】\n`;
                 sessionHistory.forEach((session, idx) => {
                     if (session.data && session.data.answer) {
                         const cleanAnswer = cleanHTMLContent(session.data.answer, 'markdown');
@@ -5815,7 +5826,7 @@
             if (chatHistory.length > 0) {
                 content += `【自由對話紀錄】\n`;
                 chatHistory.forEach(msg => {
-                    const icon = msg.role === 'user' ? '👤 你' : '🤖 AI';
+                    const icon = msg.role === 'user' ? '👤 你' : '讀豹';
                     const cleanContent = cleanHTMLContent(msg.content, 'markdown');
                     content += `${icon}：${cleanContent}\n\n`;
                 });
@@ -5875,7 +5886,7 @@
 
             // AI analysis
             if (sessionHistory.length > 0) {
-                content += `## AI 分析摘要\n\n`;
+                content += `## 讀豹分析摘要\n\n`;
                 sessionHistory.forEach((session, idx) => {
                     if (session.data && session.data.answer) {
                         const cleanAnswer = cleanHTMLContent(session.data.answer, 'markdown');
@@ -5888,7 +5899,7 @@
             if (chatHistory.length > 0) {
                 content += `## 自由對話紀錄\n\n`;
                 chatHistory.forEach(msg => {
-                    const role = msg.role === 'user' ? '**你**' : '**AI 助理**';
+                    const role = msg.role === 'user' ? '**你**' : '**讀豹**';
                     const cleanContent = cleanHTMLContent(msg.content, 'markdown');
                     content += `${role}: ${cleanContent}\n\n`;
                 });
