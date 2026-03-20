@@ -88,7 +88,7 @@
 | 模組                     | 狀態      | 說明                                   |
 | ---------------------- | ------- | ------------------------------------ |
 | **M0: Indexing**       | 🟢 完成   | Crawler (7 Parser, Subprocess 隔離) + Indexing Pipeline |
-| **M1: Input**          | 🟡 部分完成 | Query Decomposition ✅ / Guardrails ❌ |
+| **M1: Input**          | 🟡 部分完成 | Query Decomposition ✅ / Guardrails Phase 1 ✅（待 CEO E2E）/ Phase 2 ❌ |
 | **M2: Retrieval**      | 🟡 部分完成 | Internal Search ✅ / Web Search ❌     |
 | **M3: Ranking**        | 🟢 完成   | LLM + XGBoost + MMR（BM25 已移除）    |
 | **M4: Reasoning**      | 🟢 完成   | Actor-Critic + 4 Agents + Tier 6 API |
@@ -104,21 +104,16 @@
 
 ### 已完成
 
-Track A-AB 共 25 個完成項目，涵蓋 Analytics、BM25、MMR、Reasoning、XGBoost、Crawler Subprocess、Dashboard 穩定性、三機協作、Chinatimes Multi-Category 修復等。
+Track A-AG 共 29 個完成項目，涵蓋 Analytics、BM25、MMR、Reasoning、XGBoost、Crawler Subprocess、Dashboard 穩定性、三機協作、Chinatimes Multi-Category 修復、Login B2B、UI Redesign 等。
 
 **詳細資訊**：見 `docs/archive/completed-work.md`
 
 ### 目前工作
 
-✅ **Analytics 系統完整清理**（2026-03-16）：schema 統一 + 29 bugs 修復 + B2B 對齊 + VPS 驗證通過
-✅ **GitHub Actions CI/CD 完成**（2026-03-13）：Push to main → auto deploy to VPS → LINE 通知
-🟡 **UI Redesign Phase 1-4 完成**（2026-03-13）：金炭品牌化換皮（讀豹主題），待收尾細節 + commit
 🔴 **上線 blocker：全量 Indexing**（桌機 TSV → Qwen3-4B embedding → PG → VPS）
-🔄 **Registry 總計 ~2,370,000 筆**（桌機 master，已同步至 GCP）
+🔄 **Registry 總計 ~2,370,000 筆**（桌機 master，已同步至 GCP，daily cron 追最新）
 
-**更早的完成項**：見 `docs/archive/completed-work.md`
-
-**規劃**：見 `docs/status.md`
+**規劃與詳細狀態**：見 `docs/status.md`
 
 ---
 
@@ -129,10 +124,11 @@ Track A-AB 共 25 個完成項目，涵蓋 Analytics、BM25、MMR、Reasoning、
 **關鍵**：被要求 debug 或診斷問題時，**必須**先讀取 memory 相關檔案，再開始調查。
 
 **流程**：
-1. 先讀 `~/.claude/projects/C--users-user-nlweb/memory/MEMORY.md`（專案 memory）
+1. 先讀 `memory/MEMORY.md`（專案根目錄下）
 2. 根據問題模組讀取對應 lessons 檔案（在 memory/ 目錄下）：
    - Crawler / Dashboard → `lessons-crawler.md`
    - VPS / Docker / 部署 / 資安 → `lessons-infra-deploy.md`
+   - Auth / Login / Cookie → `lessons-auth.md`
    - 其他或模組不明 → `lessons-general.md`（優先讀取）
 3. 確認是否為已知問題或類似 pattern
 4. 若為新問題，才開始從程式碼調查
@@ -148,6 +144,22 @@ Track A-AB 共 25 個完成項目，涵蓋 Analytics、BM25、MMR、Reasoning、
 - 可以優雅降級，但必須要有明確訊息表示已被降級。
 
 - 絕對不可以讓錯誤被無視。
+
+### Smoke Test：修改程式碼後必跑
+
+**關鍵**：任何修改 Python 程式碼的操作完成後必須執行 `cd code/python && python tools/smoke_test.py`。FAILED 則立即修復，不可跳過。
+
+**例外**：只修改 docs/、memory/、config YAML/JSON、static/ 前端檔案時不需要跑。
+
+**詳細規則與派工指引**：見 `memory/delegation-patterns.md`「Smoke Test Gate」段落
+
+### E2E Gate：程式碼改動在 E2E 測試通過前不算完成
+
+**關鍵**：Unit test + smoke test 通過 ≠ 完成。Pipeline：`Unit Test → Smoke Test → Agent E2E (DevTools) → CEO 人工 E2E → Pass = 完成`
+
+**例外**：只修改文件、config、或無法透過前端觸發的純後端邏輯時不需要跑。
+
+**詳細流程、環境驗證、prompt 模板**：見 `memory/delegation-patterns.md`「E2E Gate」段落
 
 ### 絕對禁止 Reward Hack
 
@@ -170,14 +182,14 @@ Track A-AB 共 25 個完成項目，涵蓋 Analytics、BM25、MMR、Reasoning、
 
 ### Python 版本
 
-**使用 Python 3.11**（非 3.13）。Python 3.13 會破壞 `qdrant-client` 相容性。
+**使用 Python 3.11**（非 3.13）。多個依賴套件尚未支援 3.13。
 
 ### Analytics 資料庫
 
-**雙資料庫支援**：系統透過 `ANALYTICS_DATABASE_URL` 環境變數自動偵測。
+**雙資料庫支援**：系統透過 `POSTGRES_CONNECTION_STRING` 環境變數自動偵測（fallback: `DATABASE_URL` → `ANALYTICS_DATABASE_URL`）。
 
 - **本地開發**：SQLite（預設，免設定）
-- **Production**：PostgreSQL（Neon.tech，設定 `ANALYTICS_DATABASE_URL`）
+- **Production**：VPS PostgreSQL（與 Auth / Search 共用 `nlweb` database）
 
 ### 程式碼風格
 

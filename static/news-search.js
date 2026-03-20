@@ -1053,7 +1053,8 @@
         let currentSearchEventSource = null;
 
         // Bug #23: Deep Research & Free Conversation abort infrastructure
-        let currentDeepResearchEventSource = null;
+        let currentDeepResearchEventSource = null; // kept for cancelAllActiveRequests compatibility
+        let currentDeepResearchAbortController = null;
         let currentFreeConvAbortController = null;
 
 
@@ -2689,6 +2690,11 @@
         // Bug #23: Cancel all active requests across all modes (search, DR, FC)
         function cancelAllActiveRequests() {
             cancelActiveSearch();
+            if (currentDeepResearchAbortController) {
+                currentDeepResearchAbortController.abort();
+                currentDeepResearchAbortController = null;
+            }
+            // Legacy: close EventSource if somehow still set
             if (currentDeepResearchEventSource) {
                 currentDeepResearchEventSource.close();
                 currentDeepResearchEventSource = null;
@@ -2989,8 +2995,34 @@
                 // Show error in list view instead of alert for better UX
                 const listView = document.getElementById('listView');
                 if (listView) {
-                    listView.innerHTML = `<div class="news-card"><div class="news-title">搜尋失敗</div><div class="news-excerpt">${escapeHTML(error.message)}</div></div>`;
+                    listView.innerHTML = `<div class="news-card"><div class="news-title">搜尋失敗</div><div class="news-excerpt visible">${escapeHTML(error.message)}</div></div>`;
                 }
+            }
+        }
+
+        // Show inline error in DR results area (replaces alert() calls)
+        function showDRError(message) {
+            const loadingStateEl = document.getElementById('loadingState');
+            if (loadingStateEl) loadingStateEl.classList.remove('active');
+
+            // Show resultsSection so the error card is visible
+            resultsSection.classList.add('active');
+
+            // Prefer researchView, fall back to listView
+            const researchViewEl = document.getElementById('researchView');
+            const listViewEl = document.getElementById('listView');
+            const targetEl = researchViewEl || listViewEl;
+            if (targetEl) {
+                targetEl.innerHTML = `<div class="news-card" style="border-left: 3px solid var(--brand-dark);">
+                    <div class="news-title">無法進行 Deep Research</div>
+                    <div class="news-excerpt visible">${escapeHTML(message)}</div>
+                </div>`;
+            }
+
+            // Auto-switch to research tab so user sees the error
+            const researchTab = document.querySelector('.tab[data-view="research"]');
+            if (researchTab) {
+                researchTab.click();
             }
         }
 
@@ -3112,97 +3144,175 @@
                 const oldProgress = document.getElementById('reasoning-progress');
                 if (oldProgress) oldProgress.remove();
 
-                // Use SSE streaming to get progress updates
-                const eventSource = new EventSource(deepResearchUrl.toString());
-                currentDeepResearchEventSource = eventSource; // Bug #23: store for external abort
+                // Use fetch + ReadableStream for SSE (allows reading 429/400/503 response body)
+                const drAbortController = new AbortController();
+                currentDeepResearchAbortController = drAbortController;
 
-                let fullReport = '';
-                let progressContainer = null;
-
-                eventSource.onmessage = (event) => {
-                    try {
-                        const data = JSON.parse(event.data);
-                        console.log('Deep Research SSE:', data);
-
-                        // Handle different message types
-                        if (data.message_type === 'begin-nlweb-response') {
-                            // Query started - capture conversation_id
-                            if (data.conversation_id) {
-                                currentConversationId = data.conversation_id;
-                                console.log('[Deep Research] Using backend conversation_id:', currentConversationId);
-                            }
-                        } else if (data.message_type === 'clarification_required') {
-                            // Phase 4: Clarification needed before proceeding (conversational)
-                            console.log('[Clarification] Request received:', data.clarification);
-                            addClarificationMessage(data.clarification, data.query, eventSource, savedQuery);
-                        } else if (data.message_type === 'intermediate_result') {
-                            // Progress update - show reasoning progress
-                            updateReasoningProgress(data);
-                        } else if (data.message_type === 'final_result') {
-                            // Final report received
-                            fullReport = data.final_report || '';
-
-                            // Close event source
-                            eventSource.close();
-                            currentDeepResearchEventSource = null;
-
-                            // Hide loading
-                            loadingState.classList.remove('active');
-                            setProcessingState(false); // Bug #23
-
-                            // Display results
-                            displayDeepResearchResults(fullReport, data, savedQuery);
-
-                            // Store deep research session in history for within-session restore
-                            sessionHistory.push({
-                                query: savedQuery,
-                                data: data,
-                                timestamp: Date.now(),
-                                isDeepResearch: true,
-                                researchReport: currentResearchReport ? { ...currentResearchReport } : null,
-                                argumentGraph: currentArgumentGraph ? [...currentArgumentGraph] : null,
-                                chainAnalysis: currentChainAnalysis ? { ...currentChainAnalysis } : null
-                            });
-
-                            // Update conversation history sidebar
-                            renderConversationHistory();
-
-                            // 自動建立/更新 session
-                            saveCurrentSession();
-                        } else if (data.message_type === 'complete') {
-                            // Stream complete - close connection
-                            eventSource.close();
-                            currentDeepResearchEventSource = null;
-                            setProcessingState(false); // Bug #23
-                            console.log('Deep Research stream complete');
-                        } else if (data.message_type === 'error') {
-                            console.error('Deep Research error:', data.error);
-                            eventSource.close();
-                            currentDeepResearchEventSource = null;
-                            loadingState.classList.remove('active');
-                            alert('Deep Research 發生錯誤: ' + data.error);
-                            setProcessingState(false); // Bug #23
-                        }
-                    } catch (e) {
-                        console.error('Failed to parse SSE data:', e);
-                    }
-                };
-
-                eventSource.onerror = (error) => {
-                    console.error('SSE connection error:', error);
-                    eventSource.close();
-                    currentDeepResearchEventSource = null;
-                    setProcessingState(false); // Bug #23
+                let drResponse;
+                try {
+                    drResponse = await fetch(deepResearchUrl.toString(), {
+                        credentials: 'same-origin',
+                        signal: drAbortController.signal
+                    });
+                } catch (fetchError) {
+                    currentDeepResearchAbortController = null;
                     loadingState.classList.remove('active');
-                    alert('Deep Research 連線錯誤');
-                };
+                    setProcessingState(false);
+                    if (fetchError.name === 'AbortError') {
+                        console.log('[Deep Research] Request aborted');
+                        return;
+                    }
+                    console.error('[Deep Research] Fetch error:', fetchError);
+                    showDRError('Deep Research 連線錯誤：' + fetchError.message);
+                    return;
+                }
+
+                // Handle guardrail / server errors (400, 429, 503 return JSON, not SSE)
+                if (drResponse.status === 429 || drResponse.status === 400 || drResponse.status === 503) {
+                    currentDeepResearchAbortController = null;
+                    loadingState.classList.remove('active');
+                    setProcessingState(false);
+                    let errorMsg = '請稍後再試';
+                    try {
+                        const errorData = await drResponse.json();
+                        if (errorData.message) errorMsg = errorData.message;
+                    } catch (e) { /* ignore parse errors */ }
+                    console.error('[Deep Research] Guardrail/server error:', drResponse.status, errorMsg);
+                    showDRError(errorMsg);
+                    return;
+                }
+
+                if (!drResponse.ok) {
+                    currentDeepResearchAbortController = null;
+                    loadingState.classList.remove('active');
+                    setProcessingState(false);
+                    showDRError('Deep Research 連線錯誤：HTTP ' + drResponse.status);
+                    return;
+                }
+
+                // Stream is OK — read SSE from ReadableStream
+                const drReader = drResponse.body.getReader();
+                const drDecoder = new TextDecoder();
+                let drBuffer = '';
+                let fullReport = '';
+
+                // Helper to close/clean up DR stream
+                function closeDRStream() {
+                    try { drReader.cancel(); } catch (e) {}
+                    currentDeepResearchAbortController = null;
+                }
+
+                try {
+                    while (true) {
+                        const { done, value } = await drReader.read();
+                        if (done) break;
+
+                        drBuffer += drDecoder.decode(value, { stream: true });
+
+                        // Process complete SSE messages (separated by double newlines)
+                        const messages = drBuffer.split('\n\n');
+                        drBuffer = messages.pop(); // Keep incomplete message in buffer
+
+                        for (const message of messages) {
+                            if (!message.trim()) continue;
+
+                            // Parse SSE format: "data: {...}"
+                            const lines = message.split('\n');
+                            for (const line of lines) {
+                                if (!line.startsWith('data: ')) continue;
+                                let data;
+                                try {
+                                    data = JSON.parse(line.slice(6));
+                                } catch (e) {
+                                    console.error('[Deep Research] Failed to parse SSE data:', e);
+                                    continue;
+                                }
+                                console.log('Deep Research SSE:', data);
+
+                                // Handle different message types
+                                if (data.message_type === 'begin-nlweb-response') {
+                                    // Query started - capture conversation_id
+                                    if (data.conversation_id) {
+                                        currentConversationId = data.conversation_id;
+                                        console.log('[Deep Research] Using backend conversation_id:', currentConversationId);
+                                    }
+                                } else if (data.message_type === 'clarification_required') {
+                                    // Phase 4: Clarification needed before proceeding (conversational)
+                                    console.log('[Clarification] Request received:', data.clarification);
+                                    // Pass drAbortController so submitClarification can abort this stream
+                                    addClarificationMessage(data.clarification, data.query, drAbortController, savedQuery);
+                                } else if (data.message_type === 'intermediate_result') {
+                                    // Progress update - show reasoning progress
+                                    updateReasoningProgress(data);
+                                } else if (data.message_type === 'final_result') {
+                                    // Final report received
+                                    fullReport = data.final_report || '';
+
+                                    closeDRStream();
+
+                                    // Hide loading
+                                    loadingState.classList.remove('active');
+                                    setProcessingState(false); // Bug #23
+
+                                    // Display results
+                                    displayDeepResearchResults(fullReport, data, savedQuery);
+
+                                    // Store deep research session in history for within-session restore
+                                    sessionHistory.push({
+                                        query: savedQuery,
+                                        data: data,
+                                        timestamp: Date.now(),
+                                        isDeepResearch: true,
+                                        researchReport: currentResearchReport ? { ...currentResearchReport } : null,
+                                        argumentGraph: currentArgumentGraph ? [...currentArgumentGraph] : null,
+                                        chainAnalysis: currentChainAnalysis ? { ...currentChainAnalysis } : null
+                                    });
+
+                                    // Update conversation history sidebar
+                                    renderConversationHistory();
+
+                                    // 自動建立/更新 session
+                                    saveCurrentSession();
+                                    return; // Done
+                                } else if (data.message_type === 'complete') {
+                                    // Stream complete
+                                    closeDRStream();
+                                    setProcessingState(false); // Bug #23
+                                    console.log('Deep Research stream complete');
+                                    return;
+                                } else if (data.message_type === 'error') {
+                                    console.error('[Deep Research] SSE error event:', data.error);
+                                    closeDRStream();
+                                    loadingState.classList.remove('active');
+                                    setProcessingState(false); // Bug #23
+                                    showDRError(data.error || 'Deep Research 發生錯誤');
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                } catch (streamError) {
+                    closeDRStream();
+                    loadingState.classList.remove('active');
+                    setProcessingState(false);
+                    if (streamError.name === 'AbortError') {
+                        console.log('[Deep Research] Stream aborted');
+                        return;
+                    }
+                    console.error('[Deep Research] Stream read error:', streamError);
+                    showDRError('Deep Research 串流錯誤：' + streamError.message);
+                }
 
             } catch (error) {
-                console.error('Deep Research error:', error);
-                currentDeepResearchEventSource = null;
+                currentDeepResearchAbortController = null;
                 loadingState.classList.remove('active');
                 setProcessingState(false); // Bug #23
-                alert('Deep Research 發生錯誤: ' + error.message);
+                if (error.name === 'AbortError') {
+                    console.log('[Deep Research] Aborted');
+                    return;
+                }
+                console.error('Deep Research error:', error);
+                showDRError('Deep Research 發生錯誤：' + (error.message || '未知錯誤'));
             }
         }
 
@@ -4538,7 +4648,7 @@
                     return;
                 }
                 console.error('Chat failed:', error);
-                addChatMessage('assistant', '抱歉，發生錯誤。請稍後再試。');
+                addChatMessage('assistant', error.message || '抱歉，發生錯誤。請稍後再試。');
             }
         }
 
@@ -5207,9 +5317,13 @@
                 });
             });
 
-            // Close event source
+            // Abort the DR stream (eventSource is now an AbortController; keep .close() as fallback for legacy callers)
             if (eventSource) {
-                eventSource.close();
+                if (typeof eventSource.abort === 'function') {
+                    eventSource.abort();
+                } else if (typeof eventSource.close === 'function') {
+                    eventSource.close();
+                }
             }
 
             // Build clarified query using natural language (方案 B)

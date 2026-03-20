@@ -148,7 +148,9 @@ class AppConfig:
                    "config_webserver.yaml", "config_nlweb.yaml", "config_conv_store.yaml"]
 
     def __init__(self):
-        load_dotenv()
+        import pathlib
+        _project_root = pathlib.Path(__file__).resolve().parent.parent.parent
+        load_dotenv(_project_root / '.env')
         # Set config directory - can be overridden by NLWEB_CONFIG_DIR environment variable
         self.config_directory = self._get_config_directory()
         self.base_output_directory = self._get_base_output_directory()

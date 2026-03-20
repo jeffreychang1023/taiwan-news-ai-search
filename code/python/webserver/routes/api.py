@@ -4,6 +4,7 @@ from aiohttp import web
 import asyncio
 import logging
 import json
+import os
 import time as time_mod
 from typing import Dict, Any
 from core.whoHandler import WhoHandler
@@ -12,6 +13,15 @@ from webserver.aiohttp_streaming_wrapper import AioHttpStreamingWrapper
 from core.retriever import get_vector_db_client
 from core.utils.utils import get_param
 from core.config import CONFIG
+from webserver.middleware.rate_limit import _get_client_ip
+from core.query_analysis.query_sanitizer import MAX_QUERY_LENGTH
+from webserver.middleware.concurrency_limiter import (
+    ConcurrencyLimiter,
+    SEARCH_SESSION_LIMIT,
+    SEARCH_IP_LIMIT,
+    DR_USER_LIMIT,
+    DR_IP_LIMIT,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -58,15 +68,110 @@ async def ask_handler(request: web.Request) -> web.Response:
         if user.get('org_id'):
             query_params['org_id'] = user['org_id']
 
+    # P1-2: Query length pre-check (before SSE stream starts — must return HTTP 400 JSON)
+    query = query_params.get('query', '')
+    if len(query) > MAX_QUERY_LENGTH:
+        client_ip = _get_client_ip(request)
+        user = request.get('user')
+        uid = user.get('id') if user and user.get('authenticated') else None
+        try:
+            from core.guardrail_logger import GuardrailLogger
+            await GuardrailLogger.get_instance().log_event(
+                event_type='query_rejected',
+                severity='info',
+                user_id=uid,
+                client_ip=client_ip,
+                details={'reason': 'query_too_long', 'length': len(query)},
+            )
+        except Exception as _log_err:
+            logger.warning(f"GuardrailLogger failed in ask_handler: {_log_err}")
+        return web.json_response(
+            {'error': 'query_too_long', 'message': '查詢過長，請縮短至 500 字元以內'},
+            status=400,
+        )
+
+    # P1-1b: General search concurrency check
+    client_ip = _get_client_ip(request)
+    user = request.get('user')
+    uid = user.get('id') if user and user.get('authenticated') else None
+    request_id = f"req_{int(time_mod.time() * 1000)}_{id(request)}"
+    session_id = query_params.get('session_id') or uid or client_ip
+
+    if uid:
+        conc_key = f"search:{session_id}"
+        conc_limit = SEARCH_SESSION_LIMIT
+    else:
+        conc_key = f"search_ip:{client_ip}"
+        conc_limit = SEARCH_IP_LIMIT
+
+    limiter = ConcurrencyLimiter.get_instance()
+    if not limiter.try_acquire(conc_key, request_id, conc_limit):
+        try:
+            from core.guardrail_logger import GuardrailLogger
+            await GuardrailLogger.get_instance().log_event(
+                event_type='concurrency_limit',
+                severity='warning',
+                user_id=uid,
+                client_ip=client_ip,
+                details={'key': conc_key, 'limit': conc_limit},
+            )
+        except Exception as _log_err:
+            logger.warning(f"GuardrailLogger failed (concurrency): {_log_err}")
+        return web.json_response(
+            {'error': 'rate_limited', 'message': '目前查詢量過大，請稍後再試', 'retry_after_seconds': 30},
+            status=429,
+        )
+
     # Check if SSE streaming is requested
     is_sse = request.get('is_sse', False)
     streaming = get_param(query_params, "streaming", str, "True")
     streaming = streaming not in ["False", "false", "0"]
-    
-    if is_sse or streaming:
-        return await handle_streaming_ask(request, query_params)
-    else:
-        return await handle_regular_ask(request, query_params)
+
+    dr_key = None
+    dr_request_id = None
+    try:
+        # P1-1b: DR concurrency check for /ask?generate_mode=deep_research
+        generate_mode = query_params.get('generate_mode', 'none')
+        if generate_mode == 'deep_research':
+            # Kill switch
+            if os.environ.get('GUARDRAIL_DR_ENABLED', 'true').lower() == 'false':
+                return web.json_response(
+                    {'error': 'dr_disabled', 'message': 'Deep Research 功能暫時關閉'},
+                    status=503,
+                )
+            if uid:
+                dr_key = f"dr_user:{uid}"
+                dr_limit = DR_USER_LIMIT
+            else:
+                dr_key = f"dr_ip:{client_ip}"
+                dr_limit = DR_IP_LIMIT
+            dr_request_id = f"dr_{request_id}"
+            if not limiter.try_acquire(dr_key, dr_request_id, dr_limit):
+                try:
+                    from core.guardrail_logger import GuardrailLogger
+                    await GuardrailLogger.get_instance().log_event(
+                        event_type='concurrency_limit',
+                        severity='warning',
+                        user_id=uid,
+                        client_ip=client_ip,
+                        details={'key': dr_key, 'limit': dr_limit, 'reason': 'dr_concurrency'},
+                    )
+                except Exception as _log_err:
+                    logger.warning(f"GuardrailLogger failed (DR concurrency): {_log_err}")
+                return web.json_response(
+                    {'error': 'rate_limited', 'message': 'Deep Research 同時只能進行一個，請等待完成後再試', 'retry_after_seconds': 30},
+                    status=429,
+                )
+
+        if is_sse or streaming:
+            return await handle_streaming_ask(request, query_params)
+        else:
+            return await handle_regular_ask(request, query_params)
+    finally:
+        # Always release slots — even if request crashes
+        limiter.release(conc_key, request_id)
+        if dr_key and dr_request_id:
+            limiter.release(dr_key, dr_request_id)
 
 
 async def handle_streaming_ask(request: web.Request, query_params: Dict[str, Any]) -> web.StreamResponse:
@@ -172,6 +277,7 @@ async def handle_streaming_ask(request: web.Request, query_params: Dict[str, Any
         await wrapper.write_stream({"message_type": "complete", "sender_info": {"id": "system", "name": "NLWeb"}})
         
     except Exception as e:
+        import traceback; traceback.print_exc()  # DEBUG: print full traceback to stderr
         logger.error(f"Error in streaming ask handler: {e}", exc_info=True)
         await wrapper.send_error_response(500, str(e))
     finally:
@@ -387,7 +493,100 @@ async def deep_research_handler(request: web.Request) -> web.Response:
             "error": "Missing query parameter"
         }, status=400)
 
+    # P1-2: Query length pre-check (before SSE stream starts — must return HTTP 400 JSON)
+    if len(query) > MAX_QUERY_LENGTH:
+        client_ip = _get_client_ip(request)
+        user = request.get('user')
+        uid = user.get('id') if user and user.get('authenticated') else None
+        try:
+            from core.guardrail_logger import GuardrailLogger
+            await GuardrailLogger.get_instance().log_event(
+                event_type='query_rejected',
+                severity='info',
+                user_id=uid,
+                client_ip=client_ip,
+                details={'reason': 'query_too_long', 'length': len(query)},
+            )
+        except Exception as _log_err:
+            logger.warning(f"GuardrailLogger failed in deep_research_handler: {_log_err}")
+        return web.json_response(
+            {'error': 'query_too_long', 'message': '查詢過長，請縮短至 500 字元以內'},
+            status=400,
+        )
+
     logger.info(f"Deep Research request: {query}")
+
+    # P1-1b: Kill switch
+    if os.environ.get('GUARDRAIL_DR_ENABLED', 'true').lower() == 'false':
+        return web.json_response(
+            {'error': 'dr_disabled', 'message': 'Deep Research 功能暫時關閉'},
+            status=503,
+        )
+
+    # P1-1b: Concurrency checks — general search slot + DR-specific slot
+    dr_client_ip = _get_client_ip(request)
+    dr_user = request.get('user')
+    dr_uid = dr_user.get('id') if dr_user and dr_user.get('authenticated') else None
+    dr_request_id = f"req_{int(time_mod.time() * 1000)}_{id(request)}"
+    dr_session_id = query_params.get('session_id') or dr_uid or dr_client_ip
+
+    if dr_uid:
+        dr_search_key = f"search:{dr_session_id}"
+        dr_search_limit = SEARCH_SESSION_LIMIT
+    else:
+        dr_search_key = f"search_ip:{dr_client_ip}"
+        dr_search_limit = SEARCH_IP_LIMIT
+
+    if dr_uid:
+        dr_conc_key = f"dr_user:{dr_uid}"
+        dr_conc_limit = DR_USER_LIMIT
+    else:
+        dr_conc_key = f"dr_ip:{dr_client_ip}"
+        dr_conc_limit = DR_IP_LIMIT
+
+    dr_limiter = ConcurrencyLimiter.get_instance()
+    dr_search_acquired = False
+    dr_slot_acquired = False
+
+    # Acquire general search slot
+    if not dr_limiter.try_acquire(dr_search_key, dr_request_id, dr_search_limit):
+        try:
+            from core.guardrail_logger import GuardrailLogger
+            await GuardrailLogger.get_instance().log_event(
+                event_type='concurrency_limit',
+                severity='warning',
+                user_id=dr_uid,
+                client_ip=dr_client_ip,
+                details={'key': dr_search_key, 'limit': dr_search_limit},
+            )
+        except Exception as _log_err:
+            logger.warning(f"GuardrailLogger failed (DR search concurrency): {_log_err}")
+        return web.json_response(
+            {'error': 'rate_limited', 'message': '目前查詢量過大，請稍後再試', 'retry_after_seconds': 30},
+            status=429,
+        )
+    dr_search_acquired = True
+
+    # Acquire DR-specific slot
+    dr_slot_id = f"dr_{dr_request_id}"
+    if not dr_limiter.try_acquire(dr_conc_key, dr_slot_id, dr_conc_limit):
+        dr_limiter.release(dr_search_key, dr_request_id)
+        try:
+            from core.guardrail_logger import GuardrailLogger
+            await GuardrailLogger.get_instance().log_event(
+                event_type='concurrency_limit',
+                severity='warning',
+                user_id=dr_uid,
+                client_ip=dr_client_ip,
+                details={'key': dr_conc_key, 'limit': dr_conc_limit, 'reason': 'dr_concurrency'},
+            )
+        except Exception as _log_err:
+            logger.warning(f"GuardrailLogger failed (DR concurrency): {_log_err}")
+        return web.json_response(
+            {'error': 'rate_limited', 'message': 'Deep Research 同時只能進行一個，請等待完成後再試', 'retry_after_seconds': 30},
+            status=429,
+        )
+    dr_slot_acquired = True
 
     try:
         # Create SSE response with proper headers
@@ -482,6 +681,13 @@ async def deep_research_handler(request: web.Request) -> web.Response:
         except Exception:
             pass
         return response
+
+    finally:
+        # Always release concurrency slots — even if request crashes
+        if dr_search_acquired:
+            dr_limiter.release(dr_search_key, dr_request_id)
+        if dr_slot_acquired:
+            dr_limiter.release(dr_conc_key, dr_slot_id)
 
 
 async def feedback_handler(request: web.Request) -> web.Response:

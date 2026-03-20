@@ -160,9 +160,9 @@ endpoints:
     # Specify the database type
     db_type: qdrant
     
-  # Option 2: Remote Qdrant server
+  # Option 2: Remote Qdrant server (disabled — migrated to PostgreSQL)
   qdrant_url:
-    enabled: true
+    enabled: false
     # Connect to a Qdrant server at a specific URL
     api_endpoint_env: QDRANT_URL
     # Optional API key for authentication

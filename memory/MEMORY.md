@@ -17,6 +17,7 @@
 | Crawler 除錯教訓 | `lessons-crawler.md` | Crawler 或 Dashboard 除錯時 |
 | 部署/資安除錯教訓 | `lessons-infra-deploy.md` | VPS、Docker、SSH 除錯時 |
 | Auth/Login 除錯教訓 | `lessons-auth.md` | Auth、httpOnly cookie、B2B login 除錯時 |
+| 前端除錯教訓 | `lessons-frontend.md` | CSS、JS、瀏覽器 cache、前端 UX 問題時 |
 | 通用除錯教訓 | `lessons-general.md` | 問題模組不明時優先讀取 |
 | VPS 部署狀態 | `project_infra_vps.md` | 部署或 VPS 相關工作時 |
 | DB/Indexing 狀態 | `project_data_status.md` | 修改 Crawler 寫入邏輯或確認資料庫總量時 |

@@ -1,6 +1,6 @@
 # NLWeb 決策日誌
 
-> 從 Notion 決策日誌 DB 導出（2026-03-03）+ 持續更新。共 50 筆。
+> 從 Notion 決策日誌 DB 導出（2026-03-03）+ 持續更新。共 51 筆。
 > 欄位：Decision / Category / Modules / Date / Status / Reason / Tradeoff
 
 ---
@@ -156,10 +156,10 @@
 - **Reason**: Deep research 需 30秒~數分鐘。用戶等待時看到分析階段進度（Analyst → Critic → Writer）、中間結果、引用來源，而非空白等待。透明度提升信任感，且讓用戶可提前判斷方向是否正確。
 - **Tradeoff**: 前端狀態機更複雜（多階段進度條 + 中間結果更新），但用戶體驗顯著提升
 
-### Rate Limiter: IP + session_id 雙層並行限制
-- **Category**: technical | **Modules**: M5-Output, M6-Infra | **Date**: 2026-02-15 | **Status**: pending
-- **Reason**: 防 DDoS/能量消耗攻擊。Client IP 為主限制鍵（無法僞造），session_id 為輔助。DR 1/session + 3/IP，一般查詢 5/session。In-memory asyncio 方案（單實例部署）。SSE 斷線 TTL 10分鐘自動釋放 slot。
-- **Tradeoff**: 共享 IP（公司/VPN）可能誤殺，IP 級 DR limit 設稍寬（3）緩解
+### Rate Limiter: user_id 為主、IP 為輔的雙層併發限制
+- **Category**: technical | **Modules**: M5-Output, M6-Infra | **Date**: 2026-02-15（updated 2026-03-19） | **Status**: pending
+- **Reason**: 防 DDoS/能量消耗攻擊。B2B 模型下所有使用者已認證，以 **user_id 為主要限制鍵**（比 IP 更精確，不受共享 IP 影響）。**IP 限制只套用在未認證請求**（防爬蟲/DDoS），已認證用戶完全走 user_id/session 級限制。DR 1/session，一般查詢 5/session。In-memory asyncio 方案（單實例部署）+ TTL 5 分鐘清理僵屍記錄。SSE 斷線 TTL 10分鐘自動釋放 slot。
+- **Tradeoff**: 依賴 auth middleware 先解析 user_id。同 IP 的已認證用戶互不影響，但未認證請求的 IP 限制（DR 3/IP）可能誤擋共享 IP 的未登入用戶
 
 ---
 
@@ -175,20 +175,10 @@
 - **Reason**: 簡單問題（query 分析、意圖偵測、基本排序）用 gpt-4o-mini 控制成本。Reasoning module（Analyst/Critic/Writer 多輪迭代）用 gpt-5.1 確保分析品質。每次查詢 2-5 次 LLM call，混合使用平衡成本與品質。
 - **Tradeoff**: 雙模型需管理路由邏輯，但比全用大模型省成本，比全用小模型品質更好
 
-### ~~Vector DB: Qdrant~~ → 已被 PostgreSQL + pgvector 取代
-- **Category**: technical | **Modules**: M6-Infra | **Date**: 2025-11 | **Status**: superseded (2026-03)
-- **Reason**: 原：Qdrant 提供語意搜尋核心能力。已由 PostgreSQL + pgvector + pg_bigm hybrid search 取代（`retrieval_providers/postgres_client.py`）。Qdrant 相關檔案（`qdrant.py`、`qdrant_uploader.py`）仍保留供參考但不再用於 production retrieval。
-- **Tradeoff**: 放棄 Qdrant 專業向量 DB 進階功能，換取 PostgreSQL 一體化架構
-
 ### Analytics: 雙 DB（本地 SQLite / Production PostgreSQL）
 - **Category**: technical | **Modules**: M6-Infra | **Date**: 2025-12 | **Status**: active
 - **Reason**: 透過 `POSTGRES_CONNECTION_STRING` 環境變數自動偵測切換（fallback: `DATABASE_URL` → `ANALYTICS_DATABASE_URL`）。本地開發用 SQLite（免設定），Production 用 VPS PostgreSQL（與 Auth / Search 共用 `nlweb` database）。查詢日誌、效能監控、使用者行為追蹤。~~將隨 infra migration 整合~~ → 已整合完成。
 - **Tradeoff**: 雙 DB 需維護相容性，但本地開發零設定成本
-
-### ~~Embedding: 雙模型 Profile Switching（OpenAI 1536D / bge-m3 1024D）~~ → 已被 Qwen3-4B 取代
-- **Category**: technical | **Modules**: M6-Infra, M2-Retrieval | **Date**: 2026-01 | **Status**: superseded (2026-02)
-- **Reason**: 原：QDRANT_PROFILE env var 控制 online/offline 模式。已由 Qwen3-Embedding-4B 取代（`embedding_providers/qwen3_embedding.py`）。詳見 Qwen3-4B 決策條目。
-- **Tradeoff**: 原 Profile 機制已不再使用
 
 ### 資料庫架構：從 3DB（Qdrant+SQLite+Neon PG）整合至 PostgreSQL 一體化
 - **Category**: technical | **Modules**: M2-Retrieval, M6-Infra | **Date**: 2026-02 | **Status**: active
@@ -287,3 +277,24 @@
 - **Category**: process | **Modules**: Claude Code Skills | **Date**: 2026-03-18 | **Status**: active
 - **Reason**: Anthropic 官方文章核心觀點是「好 skill 只做好一件事」，不是追求覆蓋率。現有 14 個 skill 已覆蓋日常需求，問題在品質（缺 Gotchas、大型單檔浪費 context、description 不精準）不在數量。優化順序：/learn → /zoe → newest-scan 拆檔 → crawler-monitor → 其餘。後續用 autoresearch 方法論（binary eval + 單變數 mutation）針對性迭代。
 - **Tradeoff**: 放棄 nlweb-verify、crawler-runbook 等新 skill 提案（至少目前）。接受現有覆蓋缺口，換取既有 skill 的品質提升。Autoresearch 的具體執行方式待定。
+
+### Guardrail Phase 1：6 項防禦全部實作
+- **Category**: technical | **Modules**: M1-Input, M5-Output, M6-Infra | **Date**: 2026-03-20 | **Status**: active（待 CEO E2E）
+- **Reason**: 上線前最小可行防禦。P1-1 併發限制（user_id 為主、IP 為輔）+ P1-2 QuerySanitizer（500 字、模板變數剝離）+ P1-3 Prompt 防洩漏 + P1-4 Chunk 隔離標記（隨機 token 邊界）+ P1-5 Spending Cap（$100/月、alert 30/50/80/100%）+ P1-6 Event Logging（guardrail_events table）。
+- **Tradeoff**: Phase 1 不攔截（只消毒+記錄），Phase 2 才開始攔截明確惡意查詢。頻率限制等上線數據再設。
+
+---
+
+## 歷史決策（已被取代）
+
+> 保留供理解「為什麼曾經這樣做」的背景。
+
+### ~~Vector DB: Qdrant~~ → 已被 PostgreSQL + pgvector 取代
+- **Category**: technical | **Modules**: M6-Infra | **Date**: 2025-11 | **Status**: superseded (2026-03)
+- **Reason**: 原：Qdrant 提供語意搜尋核心能力。已由 PostgreSQL + pgvector + pg_bigm hybrid search 取代（`retrieval_providers/postgres_client.py`）。Qdrant 相關檔案（`qdrant.py`、`qdrant_uploader.py`）仍保留供參考但不再用於 production retrieval。
+- **Tradeoff**: 放棄 Qdrant 專業向量 DB 進階功能，換取 PostgreSQL 一體化架構
+
+### ~~Embedding: 雙模型 Profile Switching（OpenAI 1536D / bge-m3 1024D）~~ → 已被 Qwen3-4B 取代
+- **Category**: technical | **Modules**: M6-Infra, M2-Retrieval | **Date**: 2026-01 | **Status**: superseded (2026-02)
+- **Reason**: 原：QDRANT_PROFILE env var 控制 online/offline 模式。已由 Qwen3-Embedding-4B 取代（`embedding_providers/qwen3_embedding.py`）。詳見 Qwen3-4B 決策條目。
+- **Tradeoff**: 原 Profile 機制已不再使用

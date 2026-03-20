@@ -7,12 +7,12 @@ Unified Analytics Schema Definitions — Schema v2 (ML-ready)
 Single source of truth for all analytics table schemas.
 Both analytics_db.py and query_logger.py import from here.
 
-Tables (7):
+Tables (8):
   queries, retrieved_documents, ranking_scores, user_interactions,
-  feature_vectors, user_feedback, tier_6_enrichment
+  feature_vectors, user_feedback, tier_6_enrichment, guardrail_events
 
-ALLOWED_COLUMNS: 101 unique entries (security whitelist for dynamic queries)
-Indexes: 18 (get_index_sql returns 18 CREATE INDEX statements)
+ALLOWED_COLUMNS: 105 unique entries (security whitelist for dynamic queries)
+Indexes: 22 (get_index_sql returns 22 CREATE INDEX statements)
 
 Schema version: 2
 """
@@ -33,6 +33,7 @@ ALLOWED_TABLES = {
     'feature_vectors',
     'user_feedback',
     'tier_6_enrichment',
+    'guardrail_events',
 }
 
 ALLOWED_COLUMNS = {
@@ -77,6 +78,8 @@ ALLOWED_COLUMNS = {
     # tier_6_enrichment
     'source_type', 'cache_hit', 'latency_ms', 'timeout_occurred',
     'result_count', 'metadata',
+    # guardrail_events
+    'event_type', 'severity', 'client_ip', 'details',
 }
 
 # ---------------------------------------------------------------------------
@@ -263,6 +266,18 @@ def get_sqlite_schema() -> Dict[str, str]:
                 metadata TEXT,
                 schema_version INTEGER DEFAULT 2,
                 FOREIGN KEY (query_id) REFERENCES queries(query_id) ON DELETE CASCADE
+            )
+        """,
+        'guardrail_events': """
+            CREATE TABLE IF NOT EXISTS guardrail_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp REAL NOT NULL,
+                event_type TEXT NOT NULL,
+                severity TEXT NOT NULL DEFAULT 'info',
+                user_id TEXT,
+                client_ip TEXT,
+                details TEXT,
+                schema_version INTEGER DEFAULT 2
             )
         """,
     }
@@ -454,6 +469,18 @@ def get_postgres_schema() -> Dict[str, str]:
                 FOREIGN KEY (query_id) REFERENCES queries(query_id) ON DELETE CASCADE
             )
         """,
+        'guardrail_events': """
+            CREATE TABLE IF NOT EXISTS guardrail_events (
+                id SERIAL PRIMARY KEY,
+                timestamp DOUBLE PRECISION NOT NULL,
+                event_type VARCHAR(100) NOT NULL,
+                severity VARCHAR(20) NOT NULL DEFAULT 'info',
+                user_id VARCHAR(255),
+                client_ip VARCHAR(45),
+                details TEXT,
+                schema_version INTEGER DEFAULT 2
+            )
+        """,
     }
 
 
@@ -497,4 +524,9 @@ def get_index_sql(db_type: str = 'sqlite') -> List[str]:
         # tier_6_enrichment
         "CREATE INDEX IF NOT EXISTS idx_tier_6_query ON tier_6_enrichment(query_id)",
         "CREATE INDEX IF NOT EXISTS idx_tier_6_source_type ON tier_6_enrichment(source_type)",
+        # guardrail_events
+        "CREATE INDEX IF NOT EXISTS idx_guardrail_timestamp ON guardrail_events(timestamp)",
+        "CREATE INDEX IF NOT EXISTS idx_guardrail_event_type ON guardrail_events(event_type)",
+        "CREATE INDEX IF NOT EXISTS idx_guardrail_severity ON guardrail_events(severity)",
+        "CREATE INDEX IF NOT EXISTS idx_guardrail_user_id ON guardrail_events(user_id)",
     ]

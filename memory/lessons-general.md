@@ -83,19 +83,7 @@ type: feedback
 
 ## API / Frontend
 
-### CSS selector 對不上 JS 動態渲染元素 — 必須查 JS 原始碼確認 class name
-**問題**：UI redesign 為左側欄 session items 加 B_Black.png 背景，CSS 用 `.session-item` 作為 selector。但 session items 是 JS 動態渲染的（`news-search.js` line ~6773），實際 class 是 `left-sidebar-session-item`。CSS 規則完全沒生效，hard refresh 也看不到效果。
-**解決方案**：**靜態 HTML 中找不到的元素，必須搜尋 JS 中的 `createElement` / `innerHTML` / template literal 確認實際 class name。** 搜尋方式：用 grep 找 container ID（如 `leftSidebarSessions`），追蹤到 render 函式，看 `.className =` 或 template 中的 class 定義。不要從 CSS 檔案反推 class name — CSS 裡的可能是猜的。
-**信心**：高（本次直接踩坑）
-**檔案**：`static/news-search.css`, `static/news-search.js`
-**日期**：2026-03
-
-### CSS opacity 繼承導致 hover 閃爍 — 用 filter:brightness 或直接移除
-**問題**：`.left-sidebar-session-item:hover` 加了 `opacity: 0.85`，導致滑鼠移到子元素（dropdown 刪除/重新命名按鈕）時快速閃爍。原因：CSS `opacity` 作用於整個 compositing layer 包含所有子元素，子元素 hover 觸發父元素重繪 → hover 判定不穩定 → 閃爍迴圈。
-**解決方案**：(1) 改用 `filter: brightness(0.85)` 不一定能解（本案中未解）。(2) **最有效：直接移除 hover 效果 + 移除相關 transition**。如果 hover 效果不是必要的 UX，不要為了修復閃爍而添加更多 CSS — 拿掉最乾淨。
-**信心**：高（本次直接踩坑，CEO 明確指示「不要這效果」）
-**檔案**：`static/news-search.css`
-**日期**：2026-03
+> CSS selector / opacity / hover 相關教訓已移至 `lessons-frontend.md`
 
 > Auth / Login 相關教訓已移至 `lessons-auth.md`
 
@@ -320,14 +308,34 @@ type: feedback
 **信心**：高
 **日期**：2026-03-19
 
-## 前端 / CSS
+> 前端 / CSS / JS / 瀏覽器相關教訓已移至 `lessons-frontend.md`
 
-### CSS `!important` override 會覆蓋同 selector 的基礎定義 — 改 base 時必須搜 override 區
-**問題**：Phase 1-4 UI Redesign 在 CSS 檔案後段（~line 5400+）用 `!important` 強制覆蓋前段的基礎定義。修改基礎定義（如 `.log-entry.active .log-text` 從 `#FFEAA7` 改 `#2D3436`）後，後段的 `!important` override 仍然生效，導致文字顏色沒變。Debug 時容易以為「已經改了」但瀏覽器顯示的還是舊色。
-**解決方案**：修改任何 CSS 樣式前，先搜尋該 selector 在整個 CSS 檔案中的所有出現位置（`grep -n "selector-name" news-search.css`）。Phase 1-4 的 override 區在 line ~5300-5500，所有品牌化 override 都用 `!important`。改 base 無效時，必須同時改 override 區。
-**通則**：**大型 CSS 檔案中，同一 selector 可能被定義多次。越後面 + `!important` 的贏。** 改顏色前搜全文。
-**信心**：高（本次直接踩坑）
-**檔案**：`static/news-search.css`
+## 開發環境 / Server 管理（2026-03-20）
+
+> .news-excerpt CSS display:none 教訓已移至 `lessons-frontend.md`
+
+### PowerShell `set` 不是設環境變數 — 用 `$env:VAR="value"`
+**問題**：在 PowerShell 用 `set POSTGRES_CONNECTION_STRING=...` 啟動 server，Python 讀不到 env var，fallback 到 Qdrant。`set` 在 PowerShell 是 `Set-Variable`（程式變數），不是環境變數。CMD 的 `set` 才是環境變數。
+**解決方案**：PowerShell 設環境變數用 `$env:POSTGRES_CONNECTION_STRING="..."`。CMD 用 `set POSTGRES_CONNECTION_STRING=...`。
+**信心**：高
+**日期**：2026-03-20
+
+### load_dotenv() 預設找 cwd 的 .env — project root 的 .env 不會自動載入
+**問題**：`app-file.py` 從 `code/python/` 啟動，`load_dotenv()` 預設找 cwd，`.env` 在兩層上面的 `nlweb/.env`。Server 啟動後所有 env var 都是空的。
+**解決方案**：用 `pathlib.Path(__file__).resolve().parent.parent.parent / '.env'` 指定絕對路徑。三個入口點（app-file.py, app-aiohttp.py, config.py）都要改。
+**信心**：高
+**日期**：2026-03-20
+
+### Qdrant 和 PostgreSQL 同時 enabled — server 走了 Qdrant
+**問題**：`config_retrieval.yaml` 的 `qdrant_url` 和 `postgres` 兩個 endpoint 都是 `enabled: true`。Server routing 選了 Qdrant，但 Qdrant 的向量維度是 1536（舊 OpenAI），現在 embedding model 是 1024（Qwen3-4B），導致 dimension mismatch → 所有搜尋失敗。
+**解決方案**：`qdrant_url: enabled: false`。**通則：DB 遷移後，舊 provider 的 config 必須關閉，不能留 enabled。** 本次花了大量時間 debug「[Errno 22] Invalid argument」，根因其實只是 config 沒關。
+**信心**：高（浪費 30+ 分鐘 debug 才找到）
+**日期**：2026-03-20
+
+### Claude Code 不應該啟動 server — 殭屍 process 管理不可靠
+**問題**：從 Claude Code 的 Bash tool 用 `&` 或 `run_in_background` 啟動 server，產生多個殭屍 process 搶 port 8000。`taskkill //PID ... //F` 有時殺不掉，stderr 被吞（看不到 traceback），process 清理不乾淨。整個 session 累積了 3+ 個殭屍 server。
+**解決方案**：(1) Server 由 CEO 從自己的 terminal（PowerShell/CMD）啟動，不從 Claude Code 啟動。(2) 殺 Python process 用 `Get-Process python* | Stop-Process -Force`（PowerShell），而非 `taskkill`。(3) 每次啟動前先確認 port 8000 只有一個 process。
+**信心**：高（本次 session 踩坑多次）
 **日期**：2026-03-20
 
 *最後更新：2026-03-20*

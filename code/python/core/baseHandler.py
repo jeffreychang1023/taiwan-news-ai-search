@@ -37,6 +37,7 @@ from core.utils.message_senders import MessageSender
 from misc.logger.logger import get_logger, LogLevel
 from misc.logger.logging_config_helper import get_configured_logger
 from core.config import CONFIG
+from core.query_analysis.query_sanitizer import QuerySanitizer
 logger = get_configured_logger("nlweb_handler")
 
 # Analytics logging
@@ -75,6 +76,15 @@ class NLWebHandler:
             self.site = [s.strip() for s in self.site.split(",") if s.strip()]
 
         self.query = get_param(self.query_params, "query", str, "")
+
+        # P1-2: Sanitize query (strip template vars and control chars).
+        # Length rejection is handled upstream in api.py (HTTP 400 before SSE).
+        # Here we only sanitize — not reject — and store changes for async logging.
+        _sanitize_result = QuerySanitizer.sanitize(self.query)
+        if _sanitize_result['sanitized']:
+            self.query = _sanitize_result['cleaned_query']
+        self._sanitize_changes: list = _sanitize_result['changes']  # logged in runQuery()
+
         self.prev_queries = get_param(self.query_params, "prev", list, [])
         self.last_answers = get_param(self.query_params, "last_ans", list, [])
         self.model = get_param(self.query_params, "model", str, "gpt-4.1-mini")
@@ -262,6 +272,21 @@ class NLWebHandler:
             await asyncio.sleep(0.15)
         except Exception as e:
             logger.warning(f"Failed to log query start: {e}")
+
+        # P1-2: Log sanitization changes to guardrail_events (async context)
+        if getattr(self, '_sanitize_changes', None):
+            try:
+                from core.guardrail_logger import GuardrailLogger
+                await GuardrailLogger.get_instance().log_event(
+                    event_type='query_sanitized',
+                    severity='info',
+                    user_id=self.user_id,
+                    client_ip=None,  # IP not available in handler; logged via api.py if needed
+                    details={'changes': self._sanitize_changes},
+                )
+                logger.info(f"[Guardrail] Query sanitized: {self._sanitize_changes}")
+            except Exception as _gl_err:
+                logger.warning(f"GuardrailLogger failed in runQuery: {_gl_err}")
 
         try:
             # Send begin-nlweb-response message at the start

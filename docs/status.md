@@ -2,7 +2,7 @@
 
 > 合併自 CONTEXT.md + NEXT_STEPS.md。單一狀態檔案。
 
-**最後更新**：2026-03-19
+**最後更新**：2026-03-20
 
 ---
 
@@ -35,6 +35,14 @@
 - **腳本**: `run_indexing.sh`（從 `code/python/` 目錄執行）
 - **完成後**: 全量 pg_dump → scp → VPS pg_restore → 上線
 
+### Guardrail Phase 1（待 CEO E2E 驗證）
+- **實作完成**：P1-1 併發限制 + P1-2 QuerySanitizer + P1-3 Prompt 防洩漏 + P1-4 Chunk 隔離 + P1-5 Spending Cap（$100/月）+ P1-6 Event Logging
+- **Agent E2E**：5/7 PASS（T4 skip, T7 code review）
+- **CEO E2E Round 1**：發現 `.news-excerpt` CSS bug → 已修復 → Agent Round 2 PASS
+- **待做**：CEO E2E Round 2（併發限制 + DR 恢復 + Free Conversation 錯誤顯示）
+- **Spec**：`docs/specs/guardrail-spec.md`
+- **Plan**：`docs/archive/plans/guardrail-phase1-plan.md`
+
 ### GCP Crawler
 - **Daily Cron**: 每天 05:00 台灣時間自動 newest scan（6 sources）
 - **Registry**: ~2,370,000 筆（桌機 master，已同步至 GCP）
@@ -51,11 +59,9 @@
 ### SEC-6 後續
 - Phase 2：Extracted Knowledge（LLM 結構化輸出，Phase 1 驗證有效後）
 
-### ~~UI Redesign Phase 5：品牌一致性統一~~ → HIGH+MEDIUM 已完成（2026-03-20）
-- ✅ Auth 4 頁面品牌化 + Email 模板 5 封品牌化 + Reasoning Chain/Clarification/Pinned Banner/Citation/進度條
-- ✅ 全站「AI」→「讀豹」替換 + 「臺灣讀豹」統一命名 + 頁面標題
-- **殘餘 LOW**：Org Modal 管理按鈕、index.html spinner、Analytics/Indexing Dashboard
-- **待做**：Loading spinner 讀豹動畫（CEO 構想中）、citation「讀豹背景知識」字色調整
+### UI Redesign 殘餘（LOW 優先級）
+- Org Modal 管理按鈕、index.html spinner、Analytics/Indexing Dashboard
+- Loading spinner 讀豹動畫（CEO 構想中）、citation「讀豹背景知識」字色調整
 
 ### 前端 UX 修復（待排）
 - 空結果 session 可點擊但顯示「此搜尋無結果」（目前點不進去）

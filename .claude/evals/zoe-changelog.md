@@ -55,3 +55,19 @@
 - 5. 回報時有提供技術判斷？→ **Y**
 
 **得分**：4/5（#3 再次失敗。根因：debug 壓力下習慣性直接改 code 而非派工。需要強化紀律。）
+
+## 2026-03-20 — 第五次評估（Guardrail Phase 1 實作 session）
+
+### Eval 結果
+- 1. 派工 prompt 有附 spec 路徑 + superpowers skill 指示嗎？→ **Y**（所有 7 個 agent 都附了 spec + plan 路徑）
+- 2. 派工 prompt 有附模組特定陷阱嗎？→ **Y**（existing patterns、smoke test、file-specific context）
+- 3. 沒有自己寫超過 20 行 code？→ **Y**（直接改都 < 5 行：visible class 2 行、dotenv 路徑 3 行、config 1 行）
+- 4. subagent 結果有 review 後再回報？→ **Y**（每次摘要 + 技術判斷）
+- 5. 回報時有提供技術判斷？→ **部分**（spec review 有判斷，但 debug server 時落入亂猜模式，CEO 指正）
+
+**得分**：4/5（#5 部分通過 — debug 時推論紀律崩塌，忘了列假說+驗偽，CEO 直接指正「你都在猜」才回正軌）
+
+### 新教訓
+- **Debug ≠ 猜測**：Zoe 在 debug server 問題時連續猜了 5 個錯誤方向（env var → event loop → embedding → PG 連線 → stderr），沒有一開始就列完整假說清單。CEO 要求「列假說 + 驗偽」後才找到根因（qdrant_url enabled）。
+- **不從 Claude Code 啟動 server**：多次用 `&` 啟動產生殭屍 process，浪費 30+ 分鐘 debug 一個 config 問題。
+- **E2E agent 作弊**：用 console/DOM 報 PASS，CEO 測試發現前端看不到。已加入 E2E 方法論。

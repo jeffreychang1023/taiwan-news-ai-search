@@ -16,7 +16,10 @@ from dotenv import load_dotenv
 
 # Load .env BEFORE any application imports so module-level os.environ.get() calls
 # (e.g. JWT_SECRET in auth_service.py) pick up the values.
-load_dotenv()
+# Use project root path (nlweb/.env), not cwd (code/python/)
+import pathlib
+_project_root = pathlib.Path(__file__).resolve().parent.parent.parent
+load_dotenv(_project_root / '.env')
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
@@ -57,4 +60,6 @@ async def main():
 
 
 if __name__ == "__main__":
+    if sys.platform == "win32":
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
     asyncio.run(main())

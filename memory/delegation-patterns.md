@@ -92,12 +92,17 @@ Code 修改 → Unit Test (TDD) → Smoke Test → Agent E2E (DevTools) → 修 
 
 ### 環境驗證（E2E 前必做）
 
-啟動 server 前：
-1. `netstat -ano | grep ":8000.*LISTENING"` → kill 舊 process
-2. `export POSTGRES_CONNECTION_STRING="postgresql://nlweb:nlweb_dev@localhost:5432/nlweb"`
-3. 啟動 server 後，搜一次 → 查 log 確認無 `qdrant_client` 錯誤
+**Server 啟動由 CEO 負責**（不從 Claude Code 啟動）：
+- Claude Code 的 Bash `&` 背景 process 會產生殭屍，stderr 被吞看不到 traceback
+- CEO 用 PowerShell：`$env:POSTGRES_CONNECTION_STRING="postgresql://nlweb:nlweb_dev@localhost:5432/nlweb"` + `python app-file.py`
+- 或直接 `python app-file.py`（已修 dotenv 自動載入 `nlweb/.env`）
 
-**為什麼**：缺 env var 會 fallback 到 Qdrant，所有 PG 相關修復都不會被測到。
+**E2E agent 啟動前確認**：
+1. Server 已在跑（CEO 啟動的）
+2. `curl http://localhost:8000/` → 200
+3. 搜一次 → 查 CEO terminal log 確認無 `qdrant_client` 錯誤（應看到 `postgres_client` log）
+
+**為什麼**：(1) `config_retrieval.yaml` 的 `qdrant_url` 曾同時 enabled，server 走了 Qdrant（2026-03-20 踩坑 30+ 分鐘）。(2) PowerShell 的 `set` 不設 env var（要用 `$env:`）。(3) 殭屍 server process 搶 port 導致 request 到了舊 server。
 
 ### 派工 E2E agent 的 prompt 模板
 
