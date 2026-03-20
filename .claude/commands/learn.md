@@ -14,6 +14,7 @@ description: |
 ## Gotchas
 
 - **staleness verification 被跳過**：最常見的失誤。層級 1 每次都做，沒有例外。
+- **「session 中已更新」不等於「已正確更新」**：同一 session 多次改同一檔案時，最後一次 /learn 容易假設「之前改過了」而跳過驗證。必須 **re-read 實際檔案內容** 確認，不可靠記憶。特別是 status.md 的暫時 tag（如「待 E2E 驗證」）在 E2E 通過後必須移除。
 - **只更新 docs/ 忘了 memory/**：「更新文件」= docs/ + memory/ 兩邊都要。
 - **MEMORY.md 寫了實質內容**：`memory/MEMORY.md` 是純索引（只放指標）。教訓寫 `lessons-*.md`。
 - **lessons 重複記錄**：已有類似 lesson → 更新信心等級，不要新增重複條目。
