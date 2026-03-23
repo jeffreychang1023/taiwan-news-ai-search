@@ -145,11 +145,11 @@ class PgVectorClient(RetrievalClientBase):
                         logger.info(f"Connecting to PostgreSQL at {self.host}:{self.port}/{self.dbname} with user {self.username}")
                         
                         # Set up async connection pool with reasonable defaults
-                        conninfo = f"host={self.host} port={self.port} dbname={self.dbname} user={self.username} password={self.password}"
+                        conninfo = f"host={self.host} port={self.port} dbname={self.dbname} user={self.username} password={self.password} connect_timeout=5"
                         self._pool = AsyncConnectionPool(
                             conninfo=conninfo,
                             min_size=1,
-                            max_size=10, 
+                            max_size=10,
                             open=False # Don't open immediately, we will do it explicitly later
                         )
                         # Explicitly open the pool as recommended in newer psycopg versions
@@ -168,6 +168,10 @@ class PgVectorClient(RetrievalClientBase):
                                     logger.warning("pgvector extension not found in the database")
                     
                     except Exception as e:
+                        logger.error(
+                            f"無法連線到 PostgreSQL ({self.host}:{self.port})。"
+                            f"是不是忘記開 Docker Desktop？"
+                        )
                         logger.exception(f"Error creating PostgreSQL connection pool: {e}")
                         raise
         

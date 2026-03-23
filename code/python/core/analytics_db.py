@@ -6,7 +6,7 @@ Database abstraction layer for analytics logging system.
 
 Supports both SQLite (local development) and PostgreSQL (production).
 Uses async connections for PostgreSQL to avoid blocking the event loop.
-Reads DATABASE_URL (or ANALYTICS_DATABASE_URL fallback).
+Reads POSTGRES_CONNECTION_STRING (fallback: DATABASE_URL, ANALYTICS_DATABASE_URL).
 Uses AsyncConnectionPool for PostgreSQL to avoid per-query connection overhead.
 """
 
@@ -211,7 +211,7 @@ class AnalyticsDB:
         """Create tables on PostgreSQL."""
         try:
             async with await psycopg.AsyncConnection.connect(
-                self.database_url, autocommit=True
+                self.database_url, autocommit=True, connect_timeout=5
             ) as conn:
                 async with conn.cursor() as cur:
                     for table_name, create_sql in get_postgres_schema().items():
@@ -230,6 +230,10 @@ class AnalyticsDB:
 
             logger.info("Analytics database initialized (PostgreSQL async)")
         except Exception as e:
+            logger.error(
+                f"無法連線到 PostgreSQL ({self.database_url.split('@')[1] if '@' in self.database_url else self.database_url})。"
+                f"是不是忘記開 Docker Desktop？"
+            )
             logger.error(f"Failed to initialize analytics database: {e}", exc_info=True)
 
     def _init_database_sync(self):
@@ -280,15 +284,15 @@ class AnalyticsDB:
             conn.row_factory = sqlite3.Row
             return conn
 
-    def adapt_query(self, query: str) -> str:
+    def adapt_query_sync(self, query: str) -> str:
         # [DEPRECATED] Use async methods which handle adaptation internally.
         if self.db_type == 'postgres':
             return query.replace('?', '%s')
         return query
 
-    def execute(self, conn, query: str, params: Optional[Tuple] = None):
+    def execute_sync(self, conn, query: str, params: Optional[Tuple] = None):
         # [DEPRECATED] Use async self.execute(query, params) instead.
-        adapted_query = self.adapt_query(query)
+        adapted_query = self.adapt_query_sync(query)
         cursor = conn.cursor()
         if params:
             cursor.execute(adapted_query, params)
@@ -296,9 +300,9 @@ class AnalyticsDB:
             cursor.execute(adapted_query)
         return cursor
 
-    def executemany(self, conn, query: str, params_list: List[Tuple]):
+    def executemany_sync(self, conn, query: str, params_list: List[Tuple]):
         # [DEPRECATED] No async equivalent yet; migrate callers when needed.
-        adapted_query = self.adapt_query(query)
+        adapted_query = self.adapt_query_sync(query)
         cursor = conn.cursor()
         cursor.executemany(adapted_query, params_list)
         return cursor

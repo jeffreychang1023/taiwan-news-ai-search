@@ -20,6 +20,7 @@
 - **搜尋品質修復 + DB 清理 + E2E Gate**（2026-03-19）：虛假回應 guard、PG 日期 filter、MMR 向量、繁中 prompt、verification_status SSE、cosine threshold 0.50、DB dedup（325K→163K）、title dedup、source-info 修正 — 81+ 新測試、CEO 人工 E2E 通過（S1/S3/S5 PASS、S4 已由 Prompt 全面繁中改造解決）
 - **Guardrail Phase 1**（2026-03-20）：併發限制 + QuerySanitizer + Prompt 防洩漏 + Chunk 隔離 + Spending Cap + Event Logging — 3 新模組、Agent E2E + CEO E2E 通過
 - **Prompt 全面繁中改造**（2026-03-23）：config/prompts.xml 所有 prompt 改造為繁體中文（含 5 個 inline prompts）、18 個 dead code prompt 歸檔至 legacy/、Reasoning agents 精簡冗詞
+- **Guardrail Phase 2**（2026-03-23）：Injection Detection（regex + TypeAgent LLM）+ Relevance Detection（log-only）+ PII Filter — CEO E2E 通過
 
 **詳細歷史**：見 `docs/archive/completed-work.md`
 
@@ -35,9 +36,8 @@
 - **腳本**: `run_indexing.sh`（從 `code/python/` 目錄執行），skill: `/run-indexing`
 - **完成後**: 全量 pg_dump → scp → VPS pg_restore → 上線
 
-### Guardrail Phase 2（待排）
-- **Phase 1 已完成**（2026-03-20）：P1-1~P1-6 全部實作 + CEO E2E 通過
-- **Phase 2 待排**：Prompt Injection 偵測、Relevance Detection 啟用、PII 過濾
+### Guardrail Phase 3（Placeholder，待上線後數據驅動）
+- **Phase 1+2 已完成**：併發限制、QuerySanitizer、Prompt 防洩漏、Chunk 隔離、Spending Cap、Event Logging、Injection Detection、Relevance Detection（log-only）、PII Filter
 - **Spec**：`docs/specs/guardrail-spec.md`
 
 ### GCP Crawler

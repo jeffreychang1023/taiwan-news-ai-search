@@ -35,12 +35,12 @@ DEFAULT_CONNECTION_STRING = "postgresql://nlweb:nlweb_dev@localhost:5432/nlweb"
 
 # Batching
 EMBED_BATCH_SIZE = 8       # texts sent to model per encode() call
-EMBED_BLOCK_SIZE = 100     # texts per thermal-check block
+EMBED_BLOCK_SIZE = 50      # texts per thermal-check block (was 100, halved for better temp control)
 DB_INSERT_BATCH_SIZE = 500  # chunks inserted per DB transaction
 
-# GPU thermal protection (matches S3 pipeline)
-GPU_TEMP_LIMIT = 83
-GPU_TEMP_RESUME = 75
+# GPU thermal protection
+GPU_TEMP_LIMIT = 78        # pause embedding above this (was 83, too close to throttle point)
+GPU_TEMP_RESUME = 70       # resume below this (was 75)
 
 
 # ---------------------------------------------------------------------------
@@ -127,8 +127,7 @@ def _embed_texts(texts: list[str]) -> np.ndarray:
 
     all_embeddings = []
     for i in range(0, len(texts), EMBED_BLOCK_SIZE):
-        if i > 0:
-            _wait_for_gpu_cooldown()
+        _wait_for_gpu_cooldown()
 
         block = texts[i:i + EMBED_BLOCK_SIZE]
         embs = model.encode(block, batch_size=EMBED_BATCH_SIZE, show_progress_bar=False)
@@ -173,12 +172,16 @@ class PostgreSQLUploader:
         from psycopg.rows import dict_row
 
         try:
-            self._conn = psycopg.connect(self.connection_string, row_factory=dict_row)
+            self._conn = psycopg.connect(self.connection_string, row_factory=dict_row, connect_timeout=5)
             self._connected = True
             logger.info(f"PostgreSQL connected: {self._mask_dsn(self.connection_string)}")
             return self._conn
         except Exception as e:
             self._connected = False
+            logger.error(
+                f"無法連線到 PostgreSQL。"
+                f"是不是忘記開 Docker Desktop？"
+            )
             logger.error(f"PostgreSQL connection failed: {e}")
             raise
 

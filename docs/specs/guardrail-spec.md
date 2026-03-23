@@ -1,8 +1,8 @@
 # Guardrails System Specification
 
 > **Owner**: 讀豹 Team
-> **Last Updated**: 2026-03-20
-> **Status**: Phase 1 實作完成（待 CEO E2E 驗證）、Phase 2 待排
+> **Last Updated**: 2026-03-23
+> **Status**: Phase 1 完成（2026-03-20）、Phase 2 完成（2026-03-23 CEO E2E 通過）、Phase 3 Placeholder
 
 ---
 
@@ -359,9 +359,12 @@ boundary = secrets.token_hex(8)  # e.g. "a8f9c2b1e3d47f06"
 
 ---
 
-## Phase 2: 強化防禦（上線後 1-2 月）
+## Phase 2: 強化防禦 — ~~上線後 1-2 月~~ 已完成（2026-03-23）
 
 > 目標：加入 LLM-based 偵測，覆蓋 prompt injection 和輸出安全。
+>
+> **實作狀態**：P2-1 ✅ + P2-2 ✅（log-only，CEO 決定不 enforce）+ P2-3 ✅
+> **CEO 決策**：TypeAgent 用於 LLM detection、Relevance Detection 保持 log-only（新聞覆蓋面廣，false positive 風險 > 實際收益）、PII 平行實作
 
 ### P2-1: Prompt Injection 偵測模組
 
@@ -632,6 +635,17 @@ LLM 判定結果：
 ---
 
 ## Changelog
+
+### 2026-03-23 - Phase 2 Implementation + CEO E2E
+- P2-1 Prompt Injection Detection：dual-layer（regex + TypeAgent LLM），預設 log-only，GUARDRAIL_INJECTION_BLOCK=true 時攔截 malicious
+- P2-2 Relevance Detection：啟用 log-only 模式（CEO 決定不 enforce — 新聞覆蓋面廣，合法查詢被誤攔風險高）
+- P2-3 PII Filter：身分證 checksum + Luhn 信用卡 + 手機 + email，hook 在 message_senders.py
+- Bug fix：injection_blocked SSE 訊息 race condition（asyncio.create_task → await）+ 前端 inner try/catch 吞 error（throw → Promise.reject）
+- CEO 決策：TypeAgent for LLM detection、Relevance Detection 永遠 log-only、PII 平行實作
+
+### 2026-03-20 - Phase 1 Implementation + CEO E2E
+- P1-1~P1-6 全部實作 + Agent E2E + CEO E2E 兩輪通過
+- Bug fix：.news-excerpt CSS display:none、DR EventSource→fetch+ReadableStream、alert→inline card
 
 ### 2026-03-19 - Initial Specification + CTO Review (2 rounds)
 - 完成威脅模型（T1-T6）、三階段防禦架構、現有防禦盤點、整合點與成本分析

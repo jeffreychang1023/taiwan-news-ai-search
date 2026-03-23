@@ -88,7 +88,7 @@
 | 模組                     | 狀態      | 說明                                   |
 | ---------------------- | ------- | ------------------------------------ |
 | **M0: Indexing**       | 🟢 完成   | Crawler (7 Parser, Subprocess 隔離) + Indexing Pipeline |
-| **M1: Input**          | 🟡 部分完成 | Query Decomposition ✅ / Guardrails Phase 1 ✅（待 CEO E2E）/ Phase 2 ❌ |
+| **M1: Input**          | 🟢 完成   | Query Decomposition ✅ / Guardrails Phase 1+2 ✅ |
 | **M2: Retrieval**      | 🟡 部分完成 | Internal Search ✅ / Web Search ❌     |
 | **M3: Ranking**        | 🟢 完成   | LLM + XGBoost + MMR（BM25 已移除）    |
 | **M4: Reasoning**      | 🟢 完成   | Actor-Critic + 4 Agents + Tier 6 API |

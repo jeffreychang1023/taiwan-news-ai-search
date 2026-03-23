@@ -27,6 +27,7 @@ import core.ranking as ranking
 import core.query_analysis.required_info as required_info
 import traceback
 import core.query_analysis.relevance_detection as relevance_detection
+import core.query_analysis.prompt_guardrails as prompt_guardrails
 import core.fastTrack as fastTrack
 from core.fastTrack import site_supports_standard_retrieval
 import core.post_ranking as post_ranking
@@ -134,6 +135,7 @@ class NLWebHandler:
         self.query_done = False
         self.query_is_irrelevant = False
         self.requires_decontextualization = False
+        self.injection_verdict = None  # Set by PromptGuardrails.do()
 
         self.tool_routing_results = []
         self.state = NLWebHandlerState(self)
@@ -401,7 +403,8 @@ class NLWebHandler:
      #   tasks.append(asyncio.create_task(analyze_query.DetectItemType(self).do()))
      #   tasks.append(asyncio.create_task(analyze_query.DetectMultiItemTypeQuery(self).do()))
      #   tasks.append(asyncio.create_task(analyze_query.DetectQueryType(self).do()))
-     #   tasks.append(asyncio.create_task(relevance_detection.RelevanceDetection(self).do()))
+        tasks.append(asyncio.create_task(relevance_detection.RelevanceDetection(self).do()))
+        tasks.append(asyncio.create_task(prompt_guardrails.PromptGuardrails(self).do()))
         tasks.append(asyncio.create_task(memory.Memory(self).do()))
      #   tasks.append(asyncio.create_task(required_info.RequiredInfo(self).do()))
         
@@ -418,7 +421,11 @@ class NLWebHandler:
         finally:
             self.pre_checks_done_event.set()  # Signal completion regardless of errors
             self.state.set_pre_checks_done()
-         
+
+        # P2-1: Skip retrieval if query was blocked by guardrails
+        if self.query_done:
+            return
+
         # Wait for retrieval to be done
         if not self.retrieval_done_event.is_set():
             # Skip retrieval for sites without embeddings

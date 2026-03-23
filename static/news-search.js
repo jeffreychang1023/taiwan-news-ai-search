@@ -1948,6 +1948,13 @@
                                         showTimeFilterRelaxedWarning(data.content);
                                         break;
 
+                                    case 'injection_blocked': {
+                                        // Guardrail P2-1: query blocked by injection detection
+                                        const blockMsg = data.message || '此查詢無法處理，請嘗試其他查詢方式。';
+                                        reader.cancel();
+                                        return Promise.reject(new Error(blockMsg));
+                                    }
+
                                     case 'progress':
                                         console.log('[Progress]', data.stage, data.message);
                                         if (onProgress) onProgress(data.stage, data.message, data.percent);

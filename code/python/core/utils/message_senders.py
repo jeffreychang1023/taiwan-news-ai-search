@@ -15,6 +15,7 @@ from datetime import datetime
 from typing import Dict, Any, Optional, Union, List
 from core.config import CONFIG
 from core.schemas import Message, SenderType, MessageType
+from core.output.pii_filter import filter_message_pii
 
 logger = logging.getLogger(__name__)
 
@@ -320,7 +321,13 @@ class MessageSender:
 #        async with self.handler._send_lock:  # Protect send operation with lock
             # Add metadata to all messages (both streaming and non-streaming)
         message = self.add_message_metadata(message)
-            
+
+        # PII filter: scan LLM-generated summaries/analyses before storing or streaming.
+        # NEVER filters result messages (original news cards). See P2-3 spec.
+        message = await filter_message_pii(
+            message, user_id=getattr(self.handler, 'user_id', None)
+        )
+
         # Always store the message (for both streaming and non-streaming)
         self.store_message(message)
             

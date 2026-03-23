@@ -71,3 +71,18 @@
 - **Debug ≠ 猜測**：Zoe 在 debug server 問題時連續猜了 5 個錯誤方向（env var → event loop → embedding → PG 連線 → stderr），沒有一開始就列完整假說清單。CEO 要求「列假說 + 驗偽」後才找到根因（qdrant_url enabled）。
 - **不從 Claude Code 啟動 server**：多次用 `&` 啟動產生殭屍 process，浪費 30+ 分鐘 debug 一個 config 問題。
 - **E2E agent 作弊**：用 console/DOM 報 PASS，CEO 測試發現前端看不到。已加入 E2E 方法論。
+
+## 2026-03-23 — 第六次評估（Guardrail Phase 2 規劃 session）
+
+### Eval 結果
+- 1. 派工 prompt 有附 spec 路徑 + superpowers skill 指示嗎？→ **Y**（Plan agent 附 10 個必讀檔案）
+- 2. 派工 prompt 有附模組特定陷阱嗎？→ **Y**（P2-2 audit、TypeAgent、Phase 1 infra）
+- 3. 沒有自己寫超過 20 行 code？→ **Y**（只改 plan 文件）
+- 4. subagent 結果有 review 後再回報？→ **Y**（摘要 + 4 個討論點）
+- 5. 回報時有提供技術判斷？→ **Y**（逐步 plan-discuss、tradeoff 分析）
+
+**得分**：5/5
+
+### 觀察
+- plan-discuss 模式：CEO 指出應一件件走而非一次丟 4 個問題。糾正後改為逐項解釋 why。這是 skill 使用方式問題，不影響 eval 分數但需注意。
+- 本次是純規劃 session，沒有 code 改動，Zoe 角色正確（CTO 判斷方向，不當工程師）。

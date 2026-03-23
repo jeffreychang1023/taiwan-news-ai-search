@@ -1,6 +1,6 @@
 # NLWeb 決策日誌
 
-> 從 Notion 決策日誌 DB 導出（2026-03-03）+ 持續更新。共 53 筆。
+> 從 Notion 決策日誌 DB 導出（2026-03-03）+ 持續更新。共 54 筆。
 > 欄位：Decision / Category / Modules / Date / Status / Reason / Tradeoff
 
 ---
@@ -292,6 +292,11 @@
 - **Category**: technical | **Modules**: M1-Input, M5-Output, M6-Infra | **Date**: 2026-03-20 | **Status**: active
 - **Reason**: 上線前最小可行防禦。P1-1 併發限制（user_id 為主、IP 為輔）+ P1-2 QuerySanitizer（500 字、模板變數剝離）+ P1-3 Prompt 防洩漏 + P1-4 Chunk 隔離標記（隨機 token 邊界）+ P1-5 Spending Cap（$100/月、alert 30/50/80/100%）+ P1-6 Event Logging（guardrail_events table）。
 - **Tradeoff**: Phase 1 不攔截（只消毒+記錄），Phase 2 才開始攔截明確惡意查詢。頻率限制等上線數據再設。
+
+### Guardrail Phase 2：Injection Detection + Relevance Detection + PII Filter
+- **Category**: technical | **Modules**: M1-Input, M5-Output | **Date**: 2026-03-23 | **Status**: active
+- **Reason**: Phase 1 基礎上加入 LLM-based 偵測。P2-1 Injection Detection 雙層（regex 快篩 + TypeAgent LLM 判定），預設 log-only，kill switch 開啟時攔截 malicious。P2-2 Relevance Detection 啟用但永遠 log-only（CEO 決定：新聞覆蓋面廣，false positive 風險 > 攔截收益）。P2-3 PII Filter 身分證 checksum + Luhn 信用卡 + 手機 + email，只過濾 LLM 摘要不動原始卡片。
+- **Tradeoff**: Relevance Detection 不 enforce 代表無關查詢仍消耗 API 成本，但避免誤攔合法查詢。Injection block 模式下 regex 命中仍觸發 LLM（多一次 call），確保判定精確。
 
 ---
 

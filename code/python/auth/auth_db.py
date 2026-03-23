@@ -226,7 +226,7 @@ class AuthDB:
         """Create tables on PostgreSQL."""
         try:
             async with await psycopg.AsyncConnection.connect(
-                self.database_url, autocommit=True
+                self.database_url, autocommit=True, connect_timeout=5
             ) as conn:
                 async with conn.cursor() as cur:
                     for table_name, create_sql in self._get_postgres_schema().items():
@@ -245,6 +245,10 @@ class AuthDB:
 
             logger.info("Auth database initialized (PostgreSQL async)")
         except Exception as e:
+            logger.error(
+                f"無法連線到 PostgreSQL ({self.database_url.split('@')[1] if '@' in self.database_url else self.database_url})。"
+                f"是不是忘記開 Docker Desktop？"
+            )
             logger.error(f"Failed to initialize auth database: {e}", exc_info=True)
 
     def _init_database_sync(self):

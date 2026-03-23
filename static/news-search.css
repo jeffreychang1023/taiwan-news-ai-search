@@ -5470,13 +5470,13 @@
             background: #FBF5E6 !important;
         }
 
-        /* source-link: replace #3b82f6 link color */
+        /* source-link: blue for clickable citations */
         .source-link {
-            color: #2D3436 !important;
+            color: #3498db !important;
         }
 
         .source-link:hover {
-            color: #2D3436 !important;
+            color: #2980b9 !important;
             background-color: #FFEAA7 !important;
         }
 
