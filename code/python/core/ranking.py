@@ -104,12 +104,12 @@ class Ranking:
     CONVERSATION_SEARCH = 3
 
     # This is the default ranking prompt, in case, for some reason, we can't find the site_type.xml file.
-    RANKING_PROMPT = ["""Assign a score between 0 and 100 to the following {site.itemType}
-based on how relevant it is to the user's question.
-If the score is above 50, provide a short description of the item highlighting the relevance to the user's question, without mentioning the user's question.
-The user's question is: {request.query}. The item's description is {item.description}""",
-    {"score" : "integer between 0 and 100",
-     "description" : "short description of the item"}]
+    RANKING_PROMPT = ["""針對以下 {site.itemType}，評估與使用者提問的相關程度，給予 0-100 分。
+若分數高於 50，撰寫一段與使用者提問相關的簡短描述，不提及使用者問題本身。
+使用者提問：{request.query}
+項目描述：{item.description}""",
+    {"score" : "0-100 整數",
+     "description" : "項目簡短描述"}]
 
     RANKING_PROMPT_NAME = "RankingPrompt"
      

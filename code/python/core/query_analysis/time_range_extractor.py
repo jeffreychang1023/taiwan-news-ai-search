@@ -350,17 +350,17 @@ class TimeRangeExtractor:
         try:
             current_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
 
-            prompt = f"""Extract time range from the query: "{query}"
+            prompt = f"""從查詢中擷取時間範圍："{query}"
 
-Current date: {current_date}
+今天日期：{current_date}
 
-Analyze the query and identify:
-1. Is there a temporal constraint? (yes/no)
-2. Type: 'relative' (e.g., "last 3 days"), 'absolute' (e.g., "2024-01-15"), 'event-based' (e.g., "since the election"), or 'none'
-3. If relative: How many days back from today?
-4. If event-based: What is the event anchor?
+分析查詢並判斷：
+1. 是否含時間條件？（yes/no）
+2. 類型：'relative'（如「最近 3 天」）、'absolute'（如「2024-01-15」）、'event-based'（如「選舉以來」）、或 'none'
+3. 若為 relative：距今幾天？
+4. 若為 event-based：錨定事件為何？
 
-Return only the JSON structure, no explanation."""
+只回傳 JSON 結構，不需解釋。"""
 
             response_structure = {
                 "is_temporal": "boolean - true if query has time constraint",

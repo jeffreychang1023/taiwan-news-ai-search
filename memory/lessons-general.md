@@ -94,6 +94,14 @@ type: feedback
 
 > Analytics click event、fetch credentials、cookie secure flag、Windows asyncio 等 auth 相關教訓已移至 `lessons-auth.md`
 
+## Prompt 改造（2026-03-23）
+
+### Prompt 繁中改造時不可動程式碼層語法
+**問題**：將 `config/prompts.xml` 的 RankingPrompt 改造為繁中時，把跳脫引號 `\"{request.query}\"` 改成中文引號 `「{request.query}」`。跳脫引號是程式碼層的技術手段，讓 LLM 看到變數邊界；改掉可能 break prompt 解析或改變 LLM 收到的 token 結構。
+**解決方案**：Prompt 改造只改「自然語言指令」部分。以下屬程式碼層，不可動：(1) 跳脫符號 `\"`、(2) template 變數 `{request.query}`、(3) XML 結構標籤 `<promptString>` `<returnStruc>`、(4) JSON key 名稱。**通則：語言改造 ≠ 程式碼重構，兩者邊界須嚴格區分。**
+**信心**：高（CEO 即時攔截）
+**日期**：2026-03-23
+
 ## 文件維護 / 工具系統（2026-03-18）
 
 ### /learn 未執行 → 文件大規模腐化
@@ -338,4 +346,21 @@ type: feedback
 **信心**：高（本次 session 踩坑多次）
 **日期**：2026-03-20
 
-*最後更新：2026-03-20*
+## GPU / 長時間 Batch（2026-03-22）
+
+### GPU thermal protection 參數設太高 — 83°C 長時間跑導致電腦過熱
+**問題**：`postgresql_uploader.py` 的 GPU 溫度保護原設 `GPU_TEMP_LIMIT=83`、`GPU_TEMP_RESUME=75`、每 100 texts 檢查一次。RTX 3060 筆電版持續跑在 83°C 附近，接近 NVIDIA thermal throttle 點（83-87°C），GPU 實測飆到 85°C。另外第一個 embedding block 完全不檢查溫度（`if i > 0` 條件跳過）。
+**解決方案**：(1) `GPU_TEMP_LIMIT` 83→78°C (2) `GPU_TEMP_RESUME` 75→70°C (3) `EMBED_BLOCK_SIZE` 100→50（更頻繁檢查）(4) 移除 `if i > 0`，每個 block 都檢查。速度稍慢但 GPU 壽命和穩定性優先。
+**通則**：**GPU intensive batch 的溫度保護應保守設定（低於 throttle 點 5-8°C），而非貼近 throttle 點。** 長時間運行的累積熱量比短暫 burst 嚴重得多。
+**信心**：高（CEO 反映電腦過熱，GPU 實測 85°C）
+**檔案**：`code/python/indexing/postgresql_uploader.py`
+**日期**：2026-03-22
+
+### Windows Update 自動重啟打斷長時間 batch
+**問題**：indexing batch 跑了 17 小時後被 Windows Update 自動重啟打斷。Event Log 顯示 `MoUsoCoreWorker.exe`（Windows Update Orchestrator）在 03-21 19:20 觸發 Service Pack 安裝重啟。
+**解決方案**：跑長時間 batch 前暫停 Windows Update（Settings → Windows Update → 暫停更新 7 天）。`pg_batch.py` 的 checkpoint 機制正常保護了進度（重跑自動 resume），但白白浪費了 GPU 載入時間和已處理但未寫入 done file 的工作。
+**通則**：**長時間 batch（數天級）前，先關掉所有自動重啟機制（Windows Update、scheduled tasks）。** Checkpoint 保護數據不丟，但不保護時間不浪費。
+**信心**：高（Event Log 確認根因）
+**日期**：2026-03-22
+
+*最後更新：2026-03-22*

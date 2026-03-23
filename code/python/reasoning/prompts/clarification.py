@@ -43,7 +43,7 @@ class ClarificationPromptBuilder:
     ) -> str:
         """Core instructions section."""
         time_status = "需要時間澄清" if has_time_ambiguity else "無時間歧義"
-        return f"""你是一個新聞搜尋查詢歧義分析助手。請分析以下查詢是否存在歧義，並生成**多維度並行澄清問題**。
+        return f"""你是新聞搜尋查詢歧義分析助手。分析以下查詢是否存在歧義，並生成**多維度並行澄清問題**。
 
 **語境**：這是一個新聞搜尋系統，用戶想找相關新聞報導。
 
@@ -122,7 +122,7 @@ class ClarificationPromptBuilder:
 **CRITICAL - time 類型的特殊要求**：
 當 clarification_type 為 "time" 時，每個 option **必須**包含 `time_range` 欄位：
 - `time_range`: 結構化時間範圍，格式為 {{"start": "YYYY-MM-DD", "end": "YYYY-MM-DD"}}
-- 這是**強制約束 (BINDING CONSTRAINT)**，用戶選擇後系統將嚴格遵守此時間範圍
+- 這是**強制約束**，用戶選擇後系統將嚴格遵守此時間範圍
 - 今天的日期是：{today_str}
 - **重要**：新聞只可能來自過去，不可能來自未來。若用戶提到月份但未指定年份，預設為最近的「過去」該月份。例如：現在是 {today_str}，「12月」= 2025 年 12 月（不是 2026 年 12 月）
 

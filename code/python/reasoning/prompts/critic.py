@@ -82,7 +82,7 @@ class CriticPromptBuilder:
         monitor_section: str
     ) -> str:
         """Build base review prompt."""
-        return f"""你是一個無情的 **邏輯審查員 (Logic & Quality Controller)**。
+        return f"""你是無情的 **邏輯審查員**。
 
 你的唯一任務是審核 Analyst 提交的研究報告草稿。
 
@@ -132,7 +132,7 @@ class CriticPromptBuilder:
 *當 Analyst 試圖解釋某個現象的原因時：*
 
 - **最佳解釋推論**：Analyst 提出的解釋是否為最合理的？
-- **替代解釋 (Alternative Explanations)**：Analyst 是否考慮了至少 3 種可能的解釋？還是直接跳到了最聳動的結論？
+- **替代解釋**：Analyst 是否考慮了至少 3 種可能的解釋？還是直接跳到了最聳動的結論？
 - **合理性評估**：是否存在「相關非因果」的謬誤？
 
 ---
@@ -143,7 +143,7 @@ class CriticPromptBuilder:
 
 ### 📋 A. 事實準確性 (Factual Accuracy)
 
-- [ ] **來源支持**：所有關鍵事實陳述（Fact）是否都附帶了來源引用 (Source ID)？
+- [ ] **來源支持**：所有關鍵事實陳述是否都附帶了來源引用？
 - [ ] **可信度權重**：是否過度放大了低可信度來源的權重？
 - [ ] **引用驗證**：引用的數據/日期與上下文是否一致？
 

@@ -672,7 +672,7 @@ class GenerateAnswer(NLWebHandler):
 
             if has_research_report:
                 # Has previous Deep Research report - use it as primary context
-                prompt = f"""你是一個專業的台灣新聞分析助手。用戶之前進行了一次深度研究，現在針對該研究結果進行追問。
+                prompt = f"""你是專業台灣新聞分析助手。用戶先前進行深度研究，現針對該研究結果追問。
 
 {system_context}
 {research_report_context}
@@ -688,7 +688,7 @@ class GenerateAnswer(NLWebHandler):
 
 請用繁體中文回答，保持專業且資訊豐富。"""
             elif has_cached_articles:
-                prompt = f"""You are an AI assistant helping with Taiwan news analysis. You have access to news articles from the user's previous search.
+                prompt = f"""你是專業台灣新聞分析助手，可參考用戶先前搜尋的新聞報導。
 
 {system_context}
 {conversation_context}{article_context}{pinned_articles_context}當前問題: {self.query}
@@ -715,7 +715,7 @@ class GenerateAnswer(NLWebHandler):
 請用繁體中文回答，保持專業且資訊豐富。"""
             else:
                 # No cached articles - provide general conversational response
-                prompt = f"""You are an AI assistant helping with questions about Taiwan news and current events.
+                prompt = f"""你是專業台灣新聞分析助手，協助回答台灣新聞與時事相關問題。
 
 {system_context}
 {conversation_context}{article_context}{pinned_articles_context}當前問題: {self.query}

@@ -180,7 +180,7 @@ class WriterPromptBuilder:
                 reject_warning += "\n- " + "\n- ".join(critic_review.source_issues)
             reject_warning += "\n\n---\n\n"
 
-        return f"""你是 **報告編輯 (Writer Agent)**。
+        return f"""你是 **報告編輯**。
 
 你負責將 Analyst 的研究草稿與 Critic 的審查意見整合為最終報告。
 

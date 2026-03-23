@@ -28,7 +28,7 @@ class CoVPromptBuilder:
         Returns:
             Prompt string for LLM claim extraction
         """
-        return f"""你是一個 **事實宣稱提取器 (Claim Extractor)**。
+        return f"""你是 **事實宣稱提取器**。
 
 你的任務是從研究報告中提取所有**可驗證的事實宣稱**。
 
@@ -146,7 +146,7 @@ class CoVPromptBuilder:
             for i, c in enumerate(claims)
         ])
 
-        return f"""你是一個 **事實驗證器 (Fact Verifier)**。
+        return f"""你是 **事實驗證器**。
 
 你的任務是驗證每個事實宣稱是否有來源支持。
 

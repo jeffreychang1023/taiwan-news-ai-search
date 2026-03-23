@@ -1,6 +1,6 @@
 # NLWeb 決策日誌
 
-> 從 Notion 決策日誌 DB 導出（2026-03-03）+ 持續更新。共 51 筆。
+> 從 Notion 決策日誌 DB 導出（2026-03-03）+ 持續更新。共 53 筆。
 > 欄位：Decision / Category / Modules / Date / Status / Reason / Tradeoff
 
 ---
@@ -278,8 +278,18 @@
 - **Reason**: Anthropic 官方文章核心觀點是「好 skill 只做好一件事」，不是追求覆蓋率。現有 14 個 skill 已覆蓋日常需求，問題在品質（缺 Gotchas、大型單檔浪費 context、description 不精準）不在數量。優化順序：/learn → /zoe → newest-scan 拆檔 → crawler-monitor → 其餘。後續用 autoresearch 方法論（binary eval + 單變數 mutation）針對性迭代。
 - **Tradeoff**: 放棄 nlweb-verify、crawler-runbook 等新 skill 提案（至少目前）。接受現有覆蓋缺口，換取既有 skill 的品質提升。Autoresearch 的具體執行方式待定。
 
+### Prompt 語言政策：一律繁中，只保留英文例外
+- **Category**: product | **Modules**: M1-Input, M3-Ranking, M4-Reasoning, M5-Output | **Date**: 2026-03-23 | **Status**: active
+- **Reason**: LLM 收到英文 prompt 時預設英文回應，結尾加繁中指示效果不穩定。將所有 prompt 主體改為繁中後，LLM 輸出語言一致性顯著提升。語言規則：「一律使用繁體中文回應，除非使用者明確要求用英文」。暫不支援日文/法文等其他語言，待有使用者反映再評估。
+- **Tradeoff**: 若未來需要多語言服務，prompt 需要額外處理。英文 only 例外保留彈性，不需大改。
+
+### 來源權威性評分：專業匹配優先，不細分媒體等級
+- **Category**: product | **Modules**: M4-Reasoning | **Date**: 2026-03-23 | **Status**: active
+- **Reason**: 原 RankingPromptForGenerate 將媒體依「可信度」分等級（大媒體/政府高分，獨立媒體低分）。所有收錄來源皆為可信來源（crawler whitelist 已把關），差異只在「專業匹配度」。評分改為：專業匹配 100 / 政府機構 95 / 一般來源 80。避免對特定媒體有預設偏見，讓排序更公平。
+- **Tradeoff**: 放棄媒體品牌加成，排序更依賴「內容與查詢的專業匹配度」。若未來需要媒體信譽數據，可在 XGBoost features 層加入。
+
 ### Guardrail Phase 1：6 項防禦全部實作
-- **Category**: technical | **Modules**: M1-Input, M5-Output, M6-Infra | **Date**: 2026-03-20 | **Status**: active（待 CEO E2E）
+- **Category**: technical | **Modules**: M1-Input, M5-Output, M6-Infra | **Date**: 2026-03-20 | **Status**: active
 - **Reason**: 上線前最小可行防禦。P1-1 併發限制（user_id 為主、IP 為輔）+ P1-2 QuerySanitizer（500 字、模板變數剝離）+ P1-3 Prompt 防洩漏 + P1-4 Chunk 隔離標記（隨機 token 邊界）+ P1-5 Spending Cap（$100/月、alert 30/50/80/100%）+ P1-6 Event Logging（guardrail_events table）。
 - **Tradeoff**: Phase 1 不攔截（只消毒+記錄），Phase 2 才開始攔截明確惡意查詢。頻率限制等上線數據再設。
 

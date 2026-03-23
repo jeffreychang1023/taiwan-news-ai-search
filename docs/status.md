@@ -2,7 +2,7 @@
 
 > 合併自 CONTEXT.md + NEXT_STEPS.md。單一狀態檔案。
 
-**最後更新**：2026-03-20
+**最後更新**：2026-03-23
 
 ---
 
@@ -17,7 +17,9 @@
 - **Analytics 系統重整**（2026-03）：schema 統一（`schema_definitions.py`）+ async migration + 29 bugs 修復 + B2B 欄位對齊 + click event 修復 + VPS 驗證通過
 - **UI Redesign Phase 1-5**（2026-03-20）：藍灰工具風 → 金炭品牌化（讀豹主題），CSS 變數 + 主視覺 + icon + 全站顏色統一 + Phase 5: Auth 頁面/Email 模板/Reasoning Chain/Pinned Banner/Citation/進度條品牌化 + 「AI」→「讀豹」全站替換
 - **GCP Daily Cron**（2026-03-11）：每天 05:00 台灣時間自動 newest scan，第一輪 backfill 完成
-- **搜尋品質修復 + DB 清理 + E2E Gate**（2026-03-19）：虛假回應 guard、PG 日期 filter、MMR 向量、繁中 prompt、verification_status SSE、cosine threshold 0.50、DB dedup（325K→163K）、title dedup、source-info 修正 — 81+ 新測試、CEO 人工 E2E 通過（S1/S3/S5 PASS、S4 待 prompt 改造）
+- **搜尋品質修復 + DB 清理 + E2E Gate**（2026-03-19）：虛假回應 guard、PG 日期 filter、MMR 向量、繁中 prompt、verification_status SSE、cosine threshold 0.50、DB dedup（325K→163K）、title dedup、source-info 修正 — 81+ 新測試、CEO 人工 E2E 通過（S1/S3/S5 PASS、S4 已由 Prompt 全面繁中改造解決）
+- **Guardrail Phase 1**（2026-03-20）：併發限制 + QuerySanitizer + Prompt 防洩漏 + Chunk 隔離 + Spending Cap + Event Logging — 3 新模組、Agent E2E + CEO E2E 通過
+- **Prompt 全面繁中改造**（2026-03-23）：config/prompts.xml 所有 prompt 改造為繁體中文（含 5 個 inline prompts）、18 個 dead code prompt 歸檔至 legacy/、Reasoning agents 精簡冗詞
 
 **詳細歷史**：見 `docs/archive/completed-work.md`
 
@@ -26,22 +28,17 @@
 ## 進行中
 
 ### 全量 Indexing（上線 blocker）
-- **來源**: `data/crawler/articles/`（463 TSV 檔案，~2M+ 篇）
-- **桌機進度**: ~236,744 / ~2M 篇（~11.5%），幾乎只有 chinatimes 完成
+- **來源**: `data/crawler/articles/`（475 TSV 檔案，~2M+ 篇）
+- **桌機進度**: 224,179 articles / 769,413 chunks（33/475 TSV 完成，chinatimes 33/51、其餘 6 source 未開始）
 - **VPS 測試資料**: 500 articles / 1,841 chunks（chinatimes 258 + udn 213 + cna 29）— 可做基本 E2E 測試
-- **⚠️ 重要**: 舊 `.indexing_done` 是 Qdrant 時代殘留（標 458/463 完成，不反映 PG 狀態）。ltn、cna、udn、einfo、esg 皆未 indexed 進 PG，需重建 `.indexing_done` 後重跑。
-- **已修復**: 2 個截斷 checkpoint（LTN）+ 1 個 DB timeout checkpoint（chinatimes）已清除
-- **速度**: ~5.6 chunks/sec（GPU 溫控頻繁暫停）
-- **腳本**: `run_indexing.sh`（從 `code/python/` 目錄執行）
+- **GPU 溫度保護**: 78°C 暫停 / 70°C 恢復 / 每 50 texts 檢查（2026-03-22 從 83/75/100 調低）
+- **腳本**: `run_indexing.sh`（從 `code/python/` 目錄執行），skill: `/run-indexing`
 - **完成後**: 全量 pg_dump → scp → VPS pg_restore → 上線
 
-### Guardrail Phase 1（待 CEO E2E 驗證）
-- **實作完成**：P1-1 併發限制 + P1-2 QuerySanitizer + P1-3 Prompt 防洩漏 + P1-4 Chunk 隔離 + P1-5 Spending Cap（$100/月）+ P1-6 Event Logging
-- **Agent E2E**：5/7 PASS（T4 skip, T7 code review）
-- **CEO E2E Round 1**：發現 `.news-excerpt` CSS bug → 已修復 → Agent Round 2 PASS
-- **待做**：CEO E2E Round 2（併發限制 + DR 恢復 + Free Conversation 錯誤顯示）
+### Guardrail Phase 2（待排）
+- **Phase 1 已完成**（2026-03-20）：P1-1~P1-6 全部實作 + CEO E2E 通過
+- **Phase 2 待排**：Prompt Injection 偵測、Relevance Detection 啟用、PII 過濾
 - **Spec**：`docs/specs/guardrail-spec.md`
-- **Plan**：`docs/archive/plans/guardrail-phase1-plan.md`
 
 ### GCP Crawler
 - **Daily Cron**: 每天 05:00 台灣時間自動 newest scan（6 sources）
@@ -76,10 +73,11 @@
 - 前端需要篩選 UI（日期選擇器、作者欄位等）
 - 後端 `_build_filters` 已支援 gte/lte operator，需擴充 field 支援
 
-### Prompt 語言改造（待排）
-- 所有 `config/prompts.xml` 的 prompt 主體改為繁體中文（目前是英文 + 結尾加繁中指示，LLM 容易忽略）
-- 分批改 + 測試：SummarizeResultsPrompt → RankingPrompt → 其他
-- **優先級**：Medium（影響摘要語言品質）
+### Deep Research Ranking 整合研究（待排）
+- 目前深度研究有獨立 ranking path：LLM 多維度評分（RankingPromptForGenerate）→ LLM 多元性重排（DiversityReranking），共兩次 LLM call
+- 一般搜尋已有 MMR 演算法做多元性（毫秒級，零成本），深度研究未使用
+- **研究方向**：用 MMR 取代 DiversityReranking LLM call，減少一次 LLM round trip，降低延遲與成本
+- **優先級**：Medium（影響深度研究速度）
 
 ---
 
