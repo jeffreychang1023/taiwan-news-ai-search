@@ -21,7 +21,7 @@ class PostRanking:
             # nothing to do
             return
 
-        if self.handler.generate_mode in ("summarize", "unified"):
+        if self.handler.generate_mode == "summarize":
             await SummarizeResults(self.handler).do()
             return
         

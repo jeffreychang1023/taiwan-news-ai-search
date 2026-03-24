@@ -39,7 +39,8 @@ class UserQdrantProvider:
         user_id: str,
         top_k: int = 10,
         source_ids: Optional[List[str]] = None,
-        query_params: Optional[Dict] = None
+        query_params: Optional[Dict] = None,
+        org_id: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """
         Search user's private documents.
@@ -50,11 +51,12 @@ class UserQdrantProvider:
             top_k: Number of results to return
             source_ids: Optional list of source_ids to filter (if None, search all user's sources)
             query_params: Optional query parameters for embedding provider
+            org_id: Optional organization identifier (for filtering)
 
         Returns:
             List of result dictionaries with content and metadata
         """
-        logger.info(f"Searching user documents: user_id={user_id}, top_k={top_k}")
+        logger.info(f"Searching user documents: user_id={user_id}, org_id={org_id}, top_k={top_k}")
 
         try:
             start_time = time.time()
@@ -78,6 +80,15 @@ class UserQdrantProvider:
                     models.FieldCondition(
                         key="source_id",
                         match=models.MatchAny(any=source_ids)
+                    )
+                )
+
+            # Add org_id filter if provided
+            if org_id:
+                filter_conditions.append(
+                    models.FieldCondition(
+                        key="org_id",
+                        match=models.MatchValue(value=org_id)
                     )
                 )
 
@@ -106,6 +117,7 @@ class UserQdrantProvider:
                 "User documents search completed",
                 {
                     "user_id": user_id,
+                    "org_id": org_id,
                     "embedding_time": f"{embedding_time:.2f}s",
                     "retrieval_time": f"{retrieval_time:.2f}s",
                     "total_time": f"{total_time:.2f}s",

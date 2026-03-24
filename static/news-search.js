@@ -2234,14 +2234,15 @@
 
             if (!aiSummarySection || !aiSummaryContent) {
                 console.warn('[populateResultsFromAPI] aiSummarySection or aiSummaryContent not found in DOM');
-            } else if (data.summary && data.summary.message) {
-                // We have a summary (from summarize mode)
+            } else if (data.nlws && data.nlws.answer) {
+                // AI-generated answer (unified/generate mode) — preferred over summary
+                const formattedAnswer = convertMarkdownToHtml(data.nlws.answer);
                 aiSummaryContent.innerHTML = `
                     <div class="summary-section">
-                        <div class="summary-content">${escapeHTML(data.summary.message)}</div>
+                        <div class="summary-content">${formattedAnswer}</div>
                     </div>
                     <div class="summary-footer">
-                        <div class="source-info">⚠️ 資料來源：基於 ${articles.length} 則報導生成</div>
+                        <div class="source-info">讀豹基於 ${articles.length} 則報導生成</div>
                         <div class="feedback-buttons">
                             <button class="btn-feedback" data-rating="positive">👍 有幫助</button>
                             <button class="btn-feedback" data-rating="negative">👎 不準確</button>
@@ -2249,16 +2250,14 @@
                     </div>
                 `;
                 aiSummarySection.style.display = 'block';
-            } else if (data.nlws && data.nlws.answer) {
-                // We have an AI-generated answer (from generate mode)
-                // Convert markdown links to HTML and preserve <br> tags for proper rendering
-                const formattedAnswer = convertMarkdownToHtml(data.nlws.answer);
+            } else if (data.summary && data.summary.message) {
+                // Fallback: summary-only mode (summarize mode, no AI answer)
                 aiSummaryContent.innerHTML = `
                     <div class="summary-section">
-                        <div class="summary-content">${formattedAnswer}</div>
+                        <div class="summary-content">${escapeHTML(data.summary.message)}</div>
                     </div>
                     <div class="summary-footer">
-                        <div class="source-info">⚠️ 資料來源：基於 ${articles.length} 則報導生成</div>
+                        <div class="source-info">讀豹基於 ${articles.length} 則報導生成</div>
                         <div class="feedback-buttons">
                             <button class="btn-feedback" data-rating="positive">👍 有幫助</button>
                             <button class="btn-feedback" data-rating="negative">👎 不準確</button>
@@ -2599,8 +2598,8 @@
                              !aiSummaryContent.querySelector('.skeleton-summary');
 
             const sourceInfoText = displayCount > 0
-                ? `\u26A0\uFE0F 資料來源：基於 ${displayCount} 則報導生成`
-                : `\u26A0\uFE0F 讀豹生成回答（未找到直接相關報導）`;
+                ? `讀豹基於 ${displayCount} 則報導生成`
+                : `讀豹生成回答（未找到直接相關報導）`;
 
             aiSummaryContent.innerHTML = `
                 <div class="summary-section ${isUpdate ? 'content-updated' : 'progressive-fade-in'}">
@@ -2940,8 +2939,8 @@
                         const sourceInfoEl = document.querySelector('#aiSummaryContent .source-info');
                         if (sourceInfoEl) {
                             sourceInfoEl.textContent = actualCount > 0
-                                ? `⚠️ 資料來源：基於 ${actualCount} 則報導生成`
-                                : `⚠️ 讀豹生成回答（未找到直接相關報導）`;
+                                ? `讀豹基於 ${actualCount} 則報導生成`
+                                : `讀豹生成回答（未找到直接相關報導）`;
                             console.log(`[Progressive] source-info updated to ${actualCount} articles`);
                         }
                     }

@@ -62,7 +62,7 @@ class PrevQueryDecontextualizer(NoOpDecontextualizer):
         response = await self.run_prompt(self.DECONTEXTUALIZE_QUERY_PROMPT_NAME, 
                                          level="high", verbose=True)
         logger.info(f"response: {response}")
-        if response is None:
+        if not response:
             logger.info("No response from decontextualizer")
             self.handler.requires_decontextualization = False
             self.handler.decontextualized_query = self.handler.query
@@ -125,7 +125,7 @@ class ContextUrlDecontextualizer(PrevQueryDecontextualizer):
             return
         
         response = await self.run_prompt(self.DECONTEXTUALIZE_QUERY_PROMPT_NAME, level="high", verbose=False)
-        if response is None:
+        if not response:
             self.handler.requires_decontextualization = False
             await self.handler.state.precheck_step_done(self.STEP_NAME)
             return

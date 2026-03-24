@@ -795,8 +795,8 @@ class GenerateAnswer(NLWebHandler):
             response = await PromptRunner(self).run_prompt(self.SYNTHESIZE_PROMPT_NAME, timeout=100, verbose=False, max_length=2048)
             logger.debug(f"Synthesis response received")
 
-            # Check if response is None (prompt not found or LLM error)
-            if response is None:
+            # Check if response is None or empty (prompt not found or LLM error)
+            if not response:
                 logger.error("Synthesis prompt returned None - prompt may not be found or LLM error occurred")
                 message = {
                     "message_type": msg_type,

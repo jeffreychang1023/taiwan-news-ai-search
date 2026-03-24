@@ -205,14 +205,14 @@ async def ask_llm(
     if provider_name not in CONFIG.llm_endpoints:
         error_msg = f"Unknown provider '{provider_name}'"
         logger.error(error_msg)
-        return {}
+        return None
 
     # Get provider config using the helper method
     provider_config = CONFIG.get_llm_provider(provider_name)
     if not provider_config or not provider_config.models:
         error_msg = f"Missing model configuration for provider '{provider_name}'"
         logger.error(error_msg)
-        return {}
+        return None
 
     # Get llm_type for dispatch
     llm_type = provider_config.llm_type
@@ -233,7 +233,7 @@ async def ask_llm(
         except ValueError as e:
             error_msg = str(e)
             logger.error(error_msg)
-            return {}
+            return None
         
         # Simply call the provider's get_completion method without locking
         # Each provider should handle thread-safety internally
@@ -247,7 +247,7 @@ async def ask_llm(
         
     except asyncio.TimeoutError:
         logger.error(f"LLM call timed out after {timeout}s with provider {provider_name}")
-        return {}
+        return None
     except Exception as e:
         error_msg = f"LLM call failed: {type(e).__name__}: {str(e)}"
         logger.error(f"Error with provider {provider_name}: {error_msg}")
@@ -265,7 +265,7 @@ async def ask_llm(
             }
         )
 
-        return {}
+        return None
 
 
 def get_available_providers() -> list:
