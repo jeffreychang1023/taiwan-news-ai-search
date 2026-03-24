@@ -94,40 +94,6 @@ type: feedback
 
 > Analytics click event、fetch credentials、cookie secure flag、Windows asyncio 等 auth 相關教訓已移至 `lessons-auth.md`
 
-## LLM 回應處理（2026-03-23）
-
-### ask_llm() error 回傳 `{}` 而非 `None` — 下游 None check 全失效
-**問題**：`core/llm.py` 的 `ask_llm()` 在 5 個 error path（unknown provider、missing config、provider load fail、timeout、general exception）全部 `return {}`。下游 `decontextualize.py`、`generate_answer.py` 用 `if response is None:` 檢查，但 `{}` 不是 None，穿越 check 後嘗試讀 key → KeyError → 整個查詢 crash。LLM 一慢（8s timeout）就 100% 重現。
-**解決方案**：雙層修復：(1) `ask_llm()` 的所有 error path 改為 `return None`（語意正確：error = 無回應，不是「回應為空 dict」）(2) 所有 `run_prompt` 的 caller 把 `if response is None:` 改為 `if not response:`（防禦性：同時 catch None 和 `{}`）。影響 3 個檔案：`llm.py`、`decontextualize.py`、`generate_answer.py`。
-**通則**：**API wrapper 的 error return 值必須與「合法但空的回應」有明確區分。** `{}` 可以是合法的 JSON 回應（碰巧沒有 key），`None` 才代表「呼叫失敗」。下游 caller 應同時處理兩者（`if not response`），但上游 wrapper 不能混用。
-**信心**：高（LLM timeout 後 decontextualizer graceful fallback 而非 crash）
-**檔案**：`core/llm.py`, `core/query_analysis/decontextualize.py`, `methods/generate_answer.py`
-**日期**：2026-03-23
-
-### UserQdrantProvider 簽名缺 org_id — wrapper 與 provider 參數不同步
-**問題**：`user_data_retriever.py` 的 `search_user_documents()` wrapper 接受 `org_id` 並透傳給 `UserQdrantProvider.search_user_documents()`，但後者簽名沒有 `org_id` → `unexpected keyword argument`。Free conversation 模式搜尋私人文件時 100% 觸發。
-**解決方案**：在 `UserQdrantProvider.search_user_documents()` 加入 `org_id: Optional[str] = None` + 對應的 Qdrant filter condition。
-**通則**：**加 wrapper 層的參數時，必須同步更新底層 provider 簽名。** 類似 lessons-general 的「前後端 API 參數不同步」，但這次是 Python 層內的 wrapper↔provider 不同步。
-**信心**：高
-**檔案**：`retrieval_providers/user_qdrant_provider.py`
-**日期**：2026-03-23
-
-### Unified mode 多餘 LLM call — PostRanking 的 SummarizeResultsPrompt 不該跑
-**問題**：Unified mode 在 `post_ranking.py` 跑 `SummarizeResultsPrompt`（LLM call #1 產生 `summary`），再在 `api.py` 跑 `SynthesizePromptForGenerate`（LLM call #2 產生 `answer`）。Live 搜尋只顯示 `answer`，`summary` 完全浪費。更嚴重的是 session restore 時 `populateResultsFromAPI` 先檢查 `data.summary` → 渲染了使用者從未看過的 `summary` 文字（且用 `escapeHTML` 丟失格式），而非使用者實際看到的 `answer`（用 `convertMarkdownToHtml` 保留格式）。CEO 觀察到「切換搜尋後摘要內容變了、格式消失」。
-**解決方案**：(1) `post_ranking.py` 只對 `summarize` mode 跑 `SummarizeResults`，unified mode 跳過（省一次 LLM call）(2) `populateResultsFromAPI` 先檢查 `nlws.answer` 再 fallback `summary`（防禦舊 localStorage 資料）。
-**通則**：**合併模式（unified）必須審查各子模式的 LLM call 是否都有對應的前端消費者。** 沒人 render 的 LLM output = 浪費成本 + 潛在的 restore 不一致。
-**信心**：高（CEO E2E 觀察 + 程式碼追蹤確認）
-**檔案**：`core/post_ranking.py`, `static/news-search.js`
-**日期**：2026-03-23
-
-## Prompt 改造（2026-03-23）
-
-### Prompt 繁中改造時不可動程式碼層語法
-**問題**：將 `config/prompts.xml` 的 RankingPrompt 改造為繁中時，把跳脫引號 `\"{request.query}\"` 改成中文引號 `「{request.query}」`。跳脫引號是程式碼層的技術手段，讓 LLM 看到變數邊界；改掉可能 break prompt 解析或改變 LLM 收到的 token 結構。
-**解決方案**：Prompt 改造只改「自然語言指令」部分。以下屬程式碼層，不可動：(1) 跳脫符號 `\"`、(2) template 變數 `{request.query}`、(3) XML 結構標籤 `<promptString>` `<returnStruc>`、(4) JSON key 名稱。**通則：語言改造 ≠ 程式碼重構，兩者邊界須嚴格區分。**
-**信心**：高（CEO 即時攔截）
-**日期**：2026-03-23
-
 ## 文件維護 / 工具系統（2026-03-18）
 
 ### /learn 未執行 → 文件大規模腐化

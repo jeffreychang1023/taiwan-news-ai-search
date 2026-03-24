@@ -32,7 +32,7 @@ Phase 2 完成後自動 retry 所有 failed URLs（cron 接力）。
                                     ↓
                                 merge_registry.py → 桌機
                                     ↓
-                                桌機跑 indexing pipeline → Qdrant
+                                桌機跑 indexing pipeline → PostgreSQL
 ```
 
 ---

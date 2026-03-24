@@ -88,7 +88,7 @@ AnalyticsDB (core/analytics_db.py)
 - `on_startup`：呼叫 `AnalyticsDB.get_instance().initialize()`，建立所有表（CREATE IF NOT EXISTS）
 - `on_cleanup`：呼叫 `analytics_db.close()`，關閉 connection pool
 
-**注意**：`analytics_db.py` 中有一套較精簡的 schema（`_get_sqlite_schema()` / `_get_postgres_schema()`），與 `query_logger.py` 中的 schema（Schema v2，含更多 ML 欄位）不同。實際生產使用的 schema 由 `query_logger.py` 初始化，`analytics_db.py` 的 schema 為較早期版本。詳見第 5 節。
+**Schema 來源**：`analytics_db.py` 與 `query_logger.py` 均從 `core/schema_definitions.py` import schema（Single Source of Truth）。兩者使用同一套 Schema v2 定義。
 
 **已廢棄的同步介面**（保留向後相容）：
 - `connect()` → 同步連線物件
@@ -653,48 +653,55 @@ top_results 以 `MAX(score)` GROUP BY doc_url，取前 K 筆。
 
 ## 8. 已知限制與待做
 
-### P2：Login 整合（未完成）
+### ~~P2：Login 整合~~ → 大致完成（2026-03）
 
-- `queries.user_id` 目前可能為 "anonymous"（未登入或未傳入 user_id）
-- `queries.org_id` 目前 nullable，B2B 完整整合後應改為 NOT NULL
-- database-spec.md 規劃：auth middleware 保證每個 request 都有身份後，改為 NOT NULL
+- ✅ Login 系統 + B2B 已完成，前端 auth guard 強制登入，正常使用下 `user_id` / `org_id` 皆為真實 UUID
+- `queries.user_id` 技術上仍接受 "anonymous"（`log_query_start()` 預設值），但 auth guard 確保前端不會發生
+- `queries.org_id` 保持 nullable — 目前僅 B2B 使用者模型，未來可能開放 API 讓第三方整合至自家產品，屆時 org_id 語意會不同
+- **待做**：若開放 API 模式，需重新定義 user_id / org_id 語意與 NOT NULL 策略
 
-### P3：Schema cleanup（未完成）
+### ~~P3：Schema cleanup~~ → 已無實際問題
 
-- database-spec.md 提到 `ranking_scores.bm25_score` → `text_search_score` rename，但程式碼中的 `ranking_scores` 表本就無 `bm25_score` 欄位，此 rename 可能是 `retrieved_documents` 表相關欄位的 cleanup，需確認
-- `export_training_data` 查詢中的 `rd.text_search_score` 欄位在 `retrieved_documents` schema 中不存在，可能導致 NULL 值
+- `export_training_data` SQL 使用 `rd.bm25_score`（正確欄位），不存在 `text_search_score` 問題
+- `ranking_scores` 表本就無 `bm25_score` 欄位，database-spec.md 提到的 rename 不適用
+- 無需額外 cleanup
 
-### P4：DB 整合（未完成）
+### ~~P4：DB 整合~~ → 已完成（2026-03）
 
-- Analytics 表目前透過獨立的 `ANALYTICS_DATABASE_URL`（Neon.tech）運作，尚未遷移至 VPS PostgreSQL（同一個 `nlweb` database）
-- 遷移時機：全量 indexing 完成後，與 pg_dump → VPS 一起進行
+- ✅ Analytics 已遷移至 VPS PostgreSQL（`POSTGRES_CONNECTION_STRING`），與 Auth / Search 共用同一個 `nlweb` database
+- `ANALYTICS_DATABASE_URL` 保留為 legacy fallback，但 production 不再使用 Neon.tech
 
-### 兩套 Schema 並存問題
+### ~~兩套 Schema 並存問題~~ → 已解決（2026-03）
 
-- `analytics_db.py` 有一套精簡 schema（缺少 v2 ML 欄位、`feature_vectors`、`user_feedback` 表）
-- `query_logger.py` 有完整的 Schema v2（含所有 ML 欄位）
-- `AnalyticsDB.initialize()` 使用 `analytics_db.py` 的 schema 建表，若資料庫是空的，之後 `query_logger.py` 的 schema migration 才補上 v2 欄位，可能造成短暫不一致
-- 建議：統一至單一 schema 定義
+- ✅ `core/schema_definitions.py` 作為 Single Source of Truth
+- `analytics_db.py` 和 `query_logger.py` 均 import from `schema_definitions`
+- 7 張表 + 18 個 index + ALLOWED_COLUMNS whitelist 統一管理
 
-### Worker Thread vs Async
+### Worker Thread vs Async（仍存在）
 
-- `QueryLogger` 使用 Python `threading.Thread` + `Queue` 的 worker 模式，寫入仍走同步 `AnalyticsDB.connect()`（deprecated）
-- `AnalyticsHandler` / `RankingAnalyticsHandler` 則使用新的 async `AnalyticsDB.fetchone/fetchall/execute`
+- `QueryLogger` 仍使用 `threading.Thread` + `Queue` 的 worker 模式，寫入走同步 `AnalyticsDB.connect()`（deprecated 介面）
+- `AnalyticsHandler` / `RankingAnalyticsHandler` 使用 async `AnalyticsDB.fetchone/fetchall/execute`
 - 兩套接口並存，QueryLogger 應遷移至 async（async queue + async write）
+- **優先級低**：目前 worker thread 運作穩定，不影響功能
 
-### E2E 測試缺失
+### E2E 測試（部分覆蓋）
 
-- Analytics 寫入無 E2E 測試覆蓋
-- `test_indexing_updates.py`, `test_llm_api_decisions.py`, `test_tier6_api_clients.py` 均為 unit/integration，無 analytics 端到端驗證
-- dashboard 讀取 API 無自動化測試
+- ✅ `docs/e2etest.md` 有完整 A1-C2 checklist（手動 E2E）
+- ✅ `queries` 表寫入已驗證（A6：user_id, org_id, query_length, embedding_model）
+- ✅ Click event 前端→後端已驗證（A11a-f：startQuery + click tracking）
+- ✅ B2B 欄位存在性已驗證（C1-C2）
+- ❌ `retrieved_documents` / `ranking_scores` 子表寫入 — 待全量 indexing 完成後自然驗證（A7-A9）
+- ❌ `tier_6_enrichment` — checklist 未覆蓋
+- ❌ Dashboard 讀取 API 無自動化 pytest（B1-B4 為手動）
 
 ### XGBoost 訓練資料收集狀態
 
-- Phase A（infrastructure）進行中
+- Phase A（infrastructure）完成
 - Phase B 需 500+ 點擊才能開始訓練
 - `feature_vectors` 表已建立但 `populate_feature_vectors()` 尚未實作
-- `ranking_scores` 中 `xgboost_shadow` 行為尚待確認是否實際寫入
+- `ranking_scores` 中 `xgboost_shadow` 行為尚待確認是否實際寫入（需 indexed data）
 
 ---
 
 *Created: 2026-03-16*
+*Updated: 2026-03-18*

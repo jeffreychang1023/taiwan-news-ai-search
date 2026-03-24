@@ -22,6 +22,7 @@ description: |
 - **status.md「最近完成」粒度太細**：只記大功能，不記個別 bugfix。超 10 項移 completed-work.md。
 - **跨文件引用漏更新**：一個事實出現在 3-4 份文件，改一份時 indexer 搜全部。
 - **CLAUDE.md 塞了流水帳**：每個 session 都 load CLAUDE.md。已完成的項目不要留在「目前工作」，移除或指向 status.md。不放 bugfix 細節、commit hash、日期。
+- **只寫入不整理**：寫新 lesson/status/decision 時，同步清理既有內容（B3 歸檔整理）。不整理 = 下次清理的成本更高。
 - **memory/ 路徑混淆**：專案 memory 在 `C:/users/user/nlweb/memory/`（git 內），不是 `~/.claude/projects/.../memory/`。
 
 ---
@@ -52,7 +53,10 @@ description: |
 |---------|------|
 | Crawler / Dashboard | `memory/lessons-crawler.md` |
 | VPS / Docker / 部署 / 資安 | `memory/lessons-infra-deploy.md` |
+| Auth / Login / Cookie | `memory/lessons-auth.md` |
 | 其他 | `memory/lessons-general.md` |
+
+**分拆門檻**：同一主題在 `lessons-general.md` 超過 3 條 → 獨立成 `lessons-{module}.md` + 在 `MEMORY.md` 加指標。
 
 **memory/ 路徑**：永遠用 `C:/users/user/nlweb/memory/`（git repo 內），不是 `~/.claude/projects/.../memory/`。
 
@@ -91,7 +95,18 @@ git diff --stat HEAD~20
 
 一個事實可能出現在多份文件中。修改一處時用 indexer 搜尋關鍵詞，確認所有引用處。
 
-### B3. Staleness Verification（不可跳過）
+### B3. 歸檔整理（寫入的同時整理）
+
+寫入新內容時同步檢查：
+
+| 檢查 | 動作 |
+|------|------|
+| status.md 有 `~~已完成~~` 項目 | 移到 `completed-work.md`，不留刪除線 |
+| decisions.md 有 `superseded` 條目在 active 區 | 移到底部「歷史決策」區 |
+| 規則出現在多份文件 | 保留一份完整版，其他改為一行指標 |
+| lessons-general.md 某主題超過 3 條 | 獨立成 `lessons-{module}.md` + 更新 `MEMORY.md` |
+
+### B4. Staleness Verification（不可跳過）
 
 **層級 1（每次強制）**：對受影響 spec，讀取「已知限制」「待做」「未完成」段落，逐項驗證：
 - 已完成 → 加刪除線 + 完成日期
@@ -114,7 +129,7 @@ git diff --stat HEAD~20
 
 **`/learn specs`**：對 `docs/specs/` 所有 spec 做層級 2 全文驗證（每月或大 milestone 後用）。
 
-### B4. 更新文件（依優先順序 + 格式規則）
+### B5. 更新文件（依優先順序 + 格式規則）
 
 **1. `docs/specs/*-spec.md`**（staleness verification）
 - 已完成的待做項目：`~~原文~~ → 已完成（YYYY-MM）` 格式
@@ -144,7 +159,7 @@ git diff --stat HEAD~20
 
 **6. `memory/delegation-patterns.md`**
 
-### B5. Cross-doc 一致性
+### B6. Cross-doc 一致性
 
 | 事實 | 出現位置 |
 |------|---------|
@@ -154,7 +169,7 @@ git diff --stat HEAD~20
 
 用 indexer 搜尋關鍵詞確認沒有殘留過時引用。
 
-### B6. Source of Truth 順序
+### B7. Source of Truth 順序
 
 ```
 程式碼 → Spec → Docs 指南 → Systemmap → Progress

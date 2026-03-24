@@ -457,6 +457,12 @@ python -m auth.bootstrap_cli --revoke <token_id>
 | ~~E7~~ | Login modal 密碼欄位清空 | Medium | ✅ |
 | ~~E8~~ | 忘記密碼 reset password 品牌化頁面 | High | ✅ |
 
+### 待調查 (2026-03-18)
+
+| # | 問題 | 狀態 |
+|---|------|------|
+| I1 | `bootstrap_tokens` schema spec vs code 落差 — spec 設計有 `org_id`、`created_by`（user_id）、`used_by`（user_id）、CLI 支援 `--list/--revoke`；code 是簡化版：`org_name_hint`、無 `created_by`、`used_by_email`、CLI 只有 `--org/--expires`。目前 code 功能正常可用，但設計完整度未達 spec 水準。待調查：落差是 code review 削減？debug 簡化？agent 未完整實作？ | 待調查 |
+
 ### Will Be Invalidated by Infra Migration
 
 | # | 問題 | 說明 |

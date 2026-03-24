@@ -1,15 +1,5 @@
 {
   "hooks": {
-    "PreCompact": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node .claude/scripts/suggest-compact.js --reset"
-          }
-        ]
-      }
-    ],
     "PreToolUse": [
       {
         "matcher": "Grep",
@@ -23,29 +13,11 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node .claude/scripts/suggest-compact.js"
-          }
-        ]
-      },
-      {
         "matcher": "Edit|Write",
         "hooks": [
           {
             "type": "command",
-            "command": "python .claude/scripts/py-compile-check.py"
-          }
-        ]
-      },
-      {
-        "matcher": "TodoWrite",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node .claude/scripts/suggest-compact.js --milestone"
+            "command": "python C:/users/user/nlweb/.claude/scripts/py-compile-check.py"
           }
         ]
       }

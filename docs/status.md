@@ -2,7 +2,7 @@
 
 > 合併自 CONTEXT.md + NEXT_STEPS.md。單一狀態檔案。
 
-**最後更新**：2026-03-23
+**最後更新**：2026-03-24
 
 ---
 
@@ -29,12 +29,17 @@
 ## 進行中
 
 ### 全量 Indexing（上線 blocker）
-- **來源**: `data/crawler/articles/`（475 TSV 檔案，~2M+ 篇）
-- **桌機進度**: 224,179 articles / 769,413 chunks（33/475 TSV 完成，chinatimes 33/51、其餘 6 source 未開始）
+- **來源**: `data/crawler/articles/`（481 TSV 檔案，~2M+ 篇）
+- **雲端 GPU Embedding（進行中）**：GCP L4 on-demand VM（europe-west1-c）跑 `cloud_embed.py`
+  - 進度：156/481 TSV 完成（32%），輸出 6.8 GB（.jsonl + .npy）
+  - 速率：~18 chunks/s effective（Qwen3-4B INT8）
+  - GCS bucket：`gs://nlweb-indexing-batch/`（TSV 上傳完畢）
+  - 預計剩餘：~68 小時
+  - OOM 修復：sub-batch 30K chunks/call（2026-03-24）
+- **桌機進度（暫停）**: 242,259 articles / 831,078 chunks（33/475 TSV 完成）— 雲端接手
 - **VPS 測試資料**: 500 articles / 1,841 chunks（chinatimes 258 + udn 213 + cna 29）— 可做基本 E2E 測試
-- **GPU 溫度保護**: 78°C 暫停 / 70°C 恢復 / 每 50 texts 檢查（2026-03-22 從 83/75/100 調低）
-- **腳本**: `run_indexing.sh`（從 `code/python/` 目錄執行），skill: `/run-indexing`
-- **完成後**: 全量 pg_dump → scp → VPS pg_restore → 上線
+- **腳本**: `cloud_embed.py`（雲端）, `run_indexing.sh`（桌機，暫停）, skill: `/run-indexing`
+- **完成後流程**: 雲端 .jsonl+.npy → 下載 → bulk INSERT 到桌機 PG → pg_dump → scp → VPS pg_restore → 上線
 
 ### Guardrail Phase 3（Placeholder，待上線後數據驅動）
 - **Phase 1+2 已完成**：併發限制、QuerySanitizer、Prompt 防洩漏、Chunk 隔離、Spending Cap、Event Logging、Injection Detection、Relevance Detection（log-only）、PII Filter
@@ -72,6 +77,12 @@
 - 支援 date range、author 等結構化篩選條件
 - 前端需要篩選 UI（日期選擇器、作者欄位等）
 - 後端 `_build_filters` 已支援 gte/lte operator，需擴充 field 支援
+
+### Private Documents 遷移至 PG（待排）
+- `UserQdrantProvider` 仍依賴 Qdrant，但系統已全面遷移至 PostgreSQL
+- `get_qdrant_client()` 讀到 PG connection string → `Unknown scheme: postgresql`
+- Free conversation 搜尋私人文件永遠 fail（graceful fallback 回空結果，不影響一般搜尋）
+- **修法**：私人文件也遷移到 PG（跟主搜尋統一），或架設獨立 Qdrant instance
 
 ### Deep Research Ranking 整合研究（待排）
 - 目前深度研究有獨立 ranking path：LLM 多維度評分（RankingPromptForGenerate）→ LLM 多元性重排（DiversityReranking），共兩次 LLM call

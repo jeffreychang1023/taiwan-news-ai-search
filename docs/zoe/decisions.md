@@ -1,6 +1,6 @@
 # NLWeb 決策日誌
 
-> 從 Notion 決策日誌 DB 導出（2026-03-03）+ 持續更新。共 55 筆。
+> 從 Notion 決策日誌 DB 導出（2026-03-03）+ 持續更新。共 51 筆。
 > 欄位：Decision / Category / Modules / Date / Status / Reason / Tradeoff
 
 ---
@@ -50,11 +50,6 @@
 - **Category**: technical | **Modules**: M0-Indexing | **Date**: 2025-12 | **Status**: active
 - **Reason**: POC 驗證最佳參數。曾嘗試用句間 cosine similarity 切分，發現中文寫作每句語意向量差異大，不適合。實驗後發現 170 字 + 句號邊界 + overlap 約等於文章一段，效果最好。
 - **Tradeoff**: 放棄語意切分（semantic chunking），改用長度優先 + 句號邊界的簡單方案
-
-### Cloud GPU Embedding: GCP L4 VM 跑一次性全量 embedding，不改模型
-- **Category**: technical | **Modules**: M0-Indexing, M6-Infra | **Date**: 2026-03 | **Status**: active
-- **Reason**: 桌機 RTX 3060 跑 Qwen3-4B INT8 全量 indexing（481 TSV / ~2M 篇）需數週（GPU 溫控頻繁暫停）。改用 GCP L4 on-demand VM（Free Trial credits NTD 9,079），embed-only 腳本輸出 .jsonl+.npy，之後 bulk load 回 PG。不換小模型（保持 embedding 品質一致性）。VM 用完即刪。
-- **Tradeoff**: 花費 NTD ~2,400 credits + 等 ~3 天，但保持與桌機相同的 Qwen3-4B embedding 品質。選擇 on-demand 而非 Spot（Spot 被 preempt，穩定性差）
 
 ### Crawler/Indexing 與 Serving 完全分離
 - **Category**: technical | **Modules**: M6-Infra, M0-Indexing, crawler | **Date**: 2025-11 | **Status**: active
@@ -270,7 +265,7 @@
 ### Transactional Email：Resend SaaS + Cloudflare Email Routing（非自架 SMTP）
 - **Category**: technical | **Modules**: Auth, M6-Infra | **Date**: 2026-03-16 | **Status**: active
 - **Reason**: 系統需發送 transactional email（帳號啟用、密碼重設、鎖定通知、邀請信）。`email_service.py` 已整合 Resend SDK，零改動可上線。自架 SMTP（Postfix）到達率差（無 IP reputation，企業信箱會進垃圾郵件），維護成本高。Resend 免費額度 3000 封/月，B2B 初期綽綽有餘。官方收信 email 用 Cloudflare Email Routing 免費轉寄到 Gmail。
-- **需要設定**：(1) Resend 帳號 + API key → VPS env var `RESEND_API_KEY` (2) Cloudflare DNS 加 SPF/DKIM/DMARC records（Resend 提供）(3) `RESEND_FROM_EMAIL=noreply@twdubao.com` (4) Cloudflare Email Routing 設 `support@twdubao.com` 轉寄
+- **需要設定**：(1) Resend 帳號 + API key → VPS env var [問 CEO] (2) Cloudflare DNS 加 SPF/DKIM/DMARC records（Resend 提供）(3) 發信地址 `noreply@twdubao.com` (4) Cloudflare Email Routing 設 `support@twdubao.com` 轉寄到指定信箱 [問 CEO]
 - **Tradeoff**: 依賴第三方 SaaS（但 transactional email 量極小，免費額度足夠；到達率遠優於自架）
 
 ### E2E Gate：程式碼改動在 E2E 測試通過前不算完成
@@ -283,25 +278,10 @@
 - **Reason**: Anthropic 官方文章核心觀點是「好 skill 只做好一件事」，不是追求覆蓋率。現有 14 個 skill 已覆蓋日常需求，問題在品質（缺 Gotchas、大型單檔浪費 context、description 不精準）不在數量。優化順序：/learn → /zoe → newest-scan 拆檔 → crawler-monitor → 其餘。後續用 autoresearch 方法論（binary eval + 單變數 mutation）針對性迭代。
 - **Tradeoff**: 放棄 nlweb-verify、crawler-runbook 等新 skill 提案（至少目前）。接受現有覆蓋缺口，換取既有 skill 的品質提升。Autoresearch 的具體執行方式待定。
 
-### Prompt 語言政策：一律繁中，只保留英文例外
-- **Category**: product | **Modules**: M1-Input, M3-Ranking, M4-Reasoning, M5-Output | **Date**: 2026-03-23 | **Status**: active
-- **Reason**: LLM 收到英文 prompt 時預設英文回應，結尾加繁中指示效果不穩定。將所有 prompt 主體改為繁中後，LLM 輸出語言一致性顯著提升。語言規則：「一律使用繁體中文回應，除非使用者明確要求用英文」。暫不支援日文/法文等其他語言，待有使用者反映再評估。
-- **Tradeoff**: 若未來需要多語言服務，prompt 需要額外處理。英文 only 例外保留彈性，不需大改。
-
-### 來源權威性評分：專業匹配優先，不細分媒體等級
-- **Category**: product | **Modules**: M4-Reasoning | **Date**: 2026-03-23 | **Status**: active
-- **Reason**: 原 RankingPromptForGenerate 將媒體依「可信度」分等級（大媒體/政府高分，獨立媒體低分）。所有收錄來源皆為可信來源（crawler whitelist 已把關），差異只在「專業匹配度」。評分改為：專業匹配 100 / 政府機構 95 / 一般來源 80。避免對特定媒體有預設偏見，讓排序更公平。
-- **Tradeoff**: 放棄媒體品牌加成，排序更依賴「內容與查詢的專業匹配度」。若未來需要媒體信譽數據，可在 XGBoost features 層加入。
-
 ### Guardrail Phase 1：6 項防禦全部實作
 - **Category**: technical | **Modules**: M1-Input, M5-Output, M6-Infra | **Date**: 2026-03-20 | **Status**: active
 - **Reason**: 上線前最小可行防禦。P1-1 併發限制（user_id 為主、IP 為輔）+ P1-2 QuerySanitizer（500 字、模板變數剝離）+ P1-3 Prompt 防洩漏 + P1-4 Chunk 隔離標記（隨機 token 邊界）+ P1-5 Spending Cap（$100/月、alert 30/50/80/100%）+ P1-6 Event Logging（guardrail_events table）。
 - **Tradeoff**: Phase 1 不攔截（只消毒+記錄），Phase 2 才開始攔截明確惡意查詢。頻率限制等上線數據再設。
-
-### Guardrail Phase 2：Injection Detection + Relevance Detection + PII Filter
-- **Category**: technical | **Modules**: M1-Input, M5-Output | **Date**: 2026-03-23 | **Status**: active
-- **Reason**: Phase 1 基礎上加入 LLM-based 偵測。P2-1 Injection Detection 雙層（regex 快篩 + TypeAgent LLM 判定），預設 log-only，kill switch 開啟時攔截 malicious。P2-2 Relevance Detection 啟用但永遠 log-only（CEO 決定：新聞覆蓋面廣，false positive 風險 > 攔截收益）。P2-3 PII Filter 身分證 checksum + Luhn 信用卡 + 手機 + email，只過濾 LLM 摘要不動原始卡片。
-- **Tradeoff**: Relevance Detection 不 enforce 代表無關查詢仍消耗 API 成本，但避免誤攔合法查詢。Injection block 模式下 regex 命中仍觸發 LLM（多一次 call），確保判定精確。
 
 ---
 

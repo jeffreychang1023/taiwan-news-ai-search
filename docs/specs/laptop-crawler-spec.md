@@ -4,7 +4,7 @@
 
 三機協作分散爬取負載。筆電負責中量任務（UDN sitemap gap fill + MOEA backfill）。
 筆電只負責爬取（crawler-only），不跑 indexing pipeline。
-TSV 收集後回桌機跑 indexing → Qdrant。
+TSV 收集後回桌機跑 indexing → PostgreSQL。
 
 ---
 

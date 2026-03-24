@@ -71,7 +71,7 @@ Auth 頁面 4 個 + Email 模板 5 封 + Reasoning Chain + Clarification Card + 
 
 ### 待做（CEO 回饋）
 - Loading spinner → 讀豹動畫（CEO 構想中，具體做法待定）
-- Citation「讀豹背景知識」字色調整為炭色
+- ~~Citation「讀豹背景知識」字色調整為炭色~~ → 已修（2026-03-20）
 
 ### 違規色 → 正確色對照
 

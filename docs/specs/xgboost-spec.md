@@ -4,11 +4,11 @@
 
 **Purpose**: Replace LLM-based ranking with XGBoost machine learning model to reduce cost by 80%+ and latency by 60%+ while maintaining or improving accuracy through learned user behavior patterns.
 
-**Status**: 🔄 Phase A - Infrastructure Preparation (Week 1-2)
+**Status**: 🔄 Phase B - Data Collection (waiting for 500+ clicks)
 
 **Timeline**: 9 weeks total
-- Phase A: Infrastructure (Week 1-2) - IN PROGRESS
-- Phase B: Data Collection (Week 3-6) - Waiting for 500+ clicks
+- Phase A: Infrastructure (Week 1-2) - ✅ COMPLETED (shadow mode running in production)
+- Phase B: Data Collection (Week 3-6) - IN PROGRESS (waiting for 500+ clicks)
 - Phase C: Training & Deployment (Week 7-9) - Three progressive models
 
 ---
@@ -514,7 +514,7 @@ def test_model_inference():
 
 #### 2.4 Documentation
 
-**File**: `algo/XGBoost_implementation.md` (THIS FILE)
+**File**: `docs/specs/xgboost-spec.md` (THIS FILE)
 
 **Sections**:
 - ✅ Architecture overview
@@ -524,7 +524,7 @@ def test_model_inference():
 - 🔄 Deployment strategy (Phase C)
 - 🔄 Monitoring & rollback (Phase C)
 
-**File**: `algo/Week4_ML_Enhancements.md`
+**File**: `docs/archive/algo-reviews/Week4_ML_Enhancements.md`
 
 **Updates Needed**:
 - Correct pipeline order: LLM → XGBoost → MMR (not LLM → MMR → XGBoost)
@@ -975,8 +975,8 @@ code/python/
 ## References
 
 - **Analytics Schema**: `.claude/CLAUDE.md` (Analytics Database Schema section)
-- **BM25 Implementation**: `algo/BM25_implementation.md`
-- **MMR Implementation**: `algo/MMR_implementation.md`
-- **Future ML Plans**: `algo/Week4_ML_Enhancements.md`
+- **BM25 Implementation**: `docs/specs/bm25-spec.md`
+- **MMR Implementation**: `docs/specs/mmr-spec.md`
+- **Future ML Plans**: `docs/archive/algo-reviews/Week4_ML_Enhancements.md`
 - **XGBoost Documentation**: https://xgboost.readthedocs.io/
 - **LambdaMART Paper**: Burges (2010) - "From RankNet to LambdaRank to LambdaMART"

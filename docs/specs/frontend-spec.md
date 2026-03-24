@@ -463,26 +463,35 @@ function renderAnswerProgressive(answerData) {
 
 ```css
 :root {
-    /* 主色調 */
-    --color-primary: #3b82f6;
-    --color-primary-hover: #2563eb;
+    /* 品牌色（讀豹金炭主題） */
+    --color-primary: #FDCB6E;
+    --color-primary-hover: #d4a84b;
+    --color-primary-light: #FFEAA7;
+    --color-primary-bg: #FFEAA7;
 
-    /* 文字顏色 */
-    --color-text-primary: #1f2937;
-    --color-text-secondary: #4b5563;
-    --color-text-muted: #9ca3af;
+    /* 文字 */
+    --color-text: #2D3436;
+    --color-text-secondary: #2D3436;
+    --color-text-tertiary: #636e72;
+    --color-text-muted: #B2BEC3;
 
-    /* 背景顏色 */
-    --color-bg-primary: #ffffff;
-    --color-bg-secondary: #f3f4f6;
-    --color-bg-hover: #e5e7eb;
+    /* 背景 */
+    --color-bg: #FBF5E6;
+    --color-bg-hover: #FFF8E1;
+    --color-bg-card: #FFFDF5;
+    --color-bg-section: #FFF8E1;
 
     /* 邊框 */
-    --color-border: #e5e7eb;
+    --color-border: #B2BEC3;
+    --color-border-light: #dfe6e9;
+
+    /* 狀態 */
+    --color-success: #059669;
+    --color-danger: #dc2626;
 
     /* 陰影 */
-    --shadow-sm: 0 1px 2px rgba(0,0,0,0.05);
-    --shadow-md: 0 4px 6px rgba(0,0,0,0.1);
+    --shadow-sm: 0 1px 3px rgba(0,0,0,0.1);
+    --shadow-md: 0 4px 12px rgba(0,0,0,0.12);
 }
 ```
 
